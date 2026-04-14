@@ -16,25 +16,21 @@ export default function DashboardPage() {
         <DashboardCard
           title="Eventos este Mes"
           value="12"
-          description="+2 desde el mes pasado"
           icon={<Calendar size={20} />}
         />
         <DashboardCard
           title="Clientes Activos"
           value="48"
-          description="+5 nuevos clientes"
           icon={<Users size={20} />}
         />
         <DashboardCard
           title="Ingresos Estimados"
           value="$12,450"
-          description="+15% respecto al mes anterior"
           icon={<DollarSign size={20} />}
         />
         <DashboardCard
           title="Viandas Pendientes"
           value="156"
-          description="Para entrega esta semana"
           icon={<Activity size={20} />}
         />
       </div>
