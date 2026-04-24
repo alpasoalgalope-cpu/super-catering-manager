@@ -45,12 +45,16 @@ const newUnit = (name: string): UnitRecord => ({
   water: 0, observations: "", details: [], isExpanded: true,
 })
 
-export default function EventSalesForm({ commercialRules = [], coordinators = [], vehicles = [], clients = [] }: any) {
+export default function EventSalesForm({ initialEventId, initialCompany, commercialRules = [], coordinators = [], vehicles = [], clients = [] }: any) {
   // Master event selection
   const [events, setEvents] = useState<EventMaster[]>([])
-  const [selectedEventId, setSelectedEventId] = useState("")
-  const [selectedCompany, setSelectedCompany] = useState("")
+  const [selectedEventId, setSelectedEventId] = useState(initialEventId || "")
+  const [selectedCompany, setSelectedCompany] = useState(initialCompany || "")
   const [loadingEvents, setLoadingEvents] = useState(true)
+
+  // Edición en caliente
+  const [savedHeaderId, setSavedHeaderId] = useState<string | null>(null)
+  const [isFetchingData, setIsFetchingData] = useState(false)
 
   // Form state
   const [deliveryTime, setDeliveryTime] = useState("")
@@ -78,30 +82,157 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
   const availableCompanies = useMemo(() => selectedEvent?.event_projections?.map(p => p.company_name) || [], [selectedEvent])
   const projectedPax = useMemo(() => selectedEvent?.event_projections?.find(p => p.company_name === selectedCompany)?.projected_pax || 0, [selectedEvent, selectedCompany])
 
-  // Pre-populate delivery point from venue
+  // Pre-populate delivery point from venue or existing header
   useEffect(() => {
-    if (selectedEvent?.venues?.meeting_point) {
-      setDeliveryPoint(selectedEvent.venues.meeting_point)
-    } else if (selectedEvent?.venues?.name) {
-      setDeliveryPoint(selectedEvent.venues.name)
+    if (!savedHeaderId) {
+      if (selectedEvent?.venues?.meeting_point) {
+        setDeliveryPoint(selectedEvent.venues.meeting_point)
+      } else if (selectedEvent?.venues?.name) {
+        setDeliveryPoint(selectedEvent.venues.name)
+      }
+      if (selectedEvent?.venues?.address) {
+        setDeliveryAddress(selectedEvent.venues.address)
+      }
     }
-    if (selectedEvent?.venues?.address) {
-      setDeliveryAddress(selectedEvent.venues.address)
-    }
-  }, [selectedEvent])
+  }, [selectedEvent, savedHeaderId])
 
-  // Reset company when event changes
+  // Reset company when event changes IF it wasn't pre-filled by link
   useEffect(() => {
+    if (initialEventId === selectedEventId && initialCompany) return
     setSelectedCompany("")
   }, [selectedEventId])
+
+  // Auto-fetch data para Edición en Caliente
+  useEffect(() => {
+    const fetchExistingSale = async () => {
+      if (!selectedEventId || !selectedCompany) {
+        setSavedHeaderId(null)
+        setUnits([newUnit("Micro 1")])
+        return
+      }
+
+      setIsFetchingData(true)
+      try {
+        // Buscar cabecera
+        const { data: header, error: hErr } = await supabase
+          .from('event_sales_headers')
+          .select('*')
+          .eq('event_master_id', selectedEventId)
+          .eq('company_name', selectedCompany)
+          .maybeSingle()
+
+        if (hErr) throw hErr
+
+        if (header) {
+          setSavedHeaderId(header.id)
+          if (header.delivery_time) setDeliveryTime(header.delivery_time)
+          if (header.delivery_point) setDeliveryPoint(header.delivery_point)
+          if (header.delivery_address) setDeliveryAddress(header.delivery_address)
+
+          // Buscar Unidades
+          const { data: dbUnits, error: uErr } = await supabase
+            .from('event_sales_units')
+            .select('*')
+            .eq('header_id', header.id)
+            .order('created_at', { ascending: true })
+          
+          if (uErr) throw uErr
+
+          // Buscar flota asiganda a esta empresa en este evento
+          const cRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany.toLowerCase())
+          let assignedBuses: any[] = []
+          if (cRecord?.id) {
+             const { data: ab } = await supabase
+               .from('event_bus_assignments')
+               .select('*')
+               .eq('event_id', selectedEventId)
+               .eq('client_id', cRecord.id)
+             if (ab) assignedBuses = ab
+          }
+
+          if (dbUnits && dbUnits.length > 0) {
+            const mappedUnits: UnitRecord[] = dbUnits.map(du => {
+              let parsedDetails = []
+              try {
+                if (du.special_breakdown) {
+                  parsedDetails = JSON.parse(du.special_breakdown).map((d: any) => ({
+                    id: crypto.randomUUID(),
+                    category: d.type,
+                    qty: d.qty,
+                    obs: d.note
+                  }))
+                }
+              } catch (e) {}
+
+              // Mapear el micro asignado
+              // Asumimos 1-a-1 por la estructura actual o el primero disponible que coincida
+              // (Simplificación aceptable. Lo más seguro es que la app persista luego todo sobreescribiendo).
+              let v_id = ""
+              let c_id = ""
+              if (assignedBuses.length > 0) {
+                 const busRecord = assignedBuses.shift()
+                 v_id = busRecord.vehicle_id
+                 c_id = busRecord.coordinator_id || ""
+              }
+
+              return {
+                id: crypto.randomUUID(),
+                name: du.unit_name || "Micro",
+                vehicle_id: v_id,
+                coordinator_id: c_id,
+                sold: Number(du.sold_qty) || 0,
+                liberated: Number(du.liberated_qty) || 0,
+                traditional: Number(du.traditional) || 0,
+                vegetarian: Number(du.vegetarian) || 0,
+                vegana: Number(du.vegana) || 0,
+                sin_tacc: Number(du.sin_tacc) || 0,
+                water: Number(du.water_qty) || 0,
+                observations: du.observations || "",
+                details: parsedDetails,
+                isExpanded: true
+              }
+            })
+            setUnits(mappedUnits)
+          } else {
+            setUnits([newUnit("Micro 1")])
+          }
+        } else {
+          setSavedHeaderId(null)
+          setUnits([newUnit("Micro 1")])
+          setDeliveryTime("")
+        }
+      } catch (err: any) {
+        console.error("Error cargando venta existente", err)
+      } finally {
+        setIsFetchingData(false)
+      }
+    }
+
+    fetchExistingSale()
+  }, [selectedEventId, selectedCompany, clients])
 
   // --- Commercial Rule ---
   const activeRule = useMemo(() => {
     if (!selectedCompany) return null
-    return commercialRules.find((r: any) =>
-      r.company_name?.toLowerCase().trim() === selectedCompany?.toLowerCase().trim()
-    ) || null
-  }, [selectedCompany, commercialRules])
+    // Primero buscar por ID (más seguro)
+    const cRecord = clients.find((c: any) => c.name?.toLowerCase().trim() === selectedCompany?.toLowerCase().trim())
+    const cRule = commercialRules.find((r: any) => 
+      (r.client_id && r.client_id === cRecord?.id) || 
+      (r.company_name?.toLowerCase().trim() === selectedCompany?.toLowerCase().trim())
+    )
+    
+    if (cRule) return cRule
+
+    // Fallback simplificado si no hay regla
+    if (cRecord) {
+      return {
+        company_name: cRecord.name,
+        price_base: 0, // Indicará que no hay regla válida
+        noRuleFound: true
+      }
+    }
+    return null
+  }, [selectedCompany, commercialRules, clients])
 
   // --- Unit Handlers ---
   const addUnit = () => setUnits(prev => [...prev, newUnit(`Micro ${prev.length + 1}`)])
@@ -130,12 +261,19 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
       water: acc.water + (Number(u.water) || 0)
     }), { sold: 0, liberated: 0, trad: 0, veg: 0, vegan: 0, st: 0, water: 0 })
 
+    const unitsValidity = units.map(u => {
+      const sumCat = (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
+      const sumOp = (Number(u.sold) || 0) + (Number(u.liberated) || 0)
+      return { id: u.id, isValid: sumCat === sumOp }
+    })
+    const allValid = unitsValidity.every(v => v.isValid) && selectedEventId !== "" && selectedCompany !== ""
+
     if (!activeRule) {
       return {
         ...consolidated,
         amount: 0,
-        allValid: false,
-        unitsValidity: [],
+        allValid,
+        unitsValidity,
         CupoGratis: 0,
         SinTaccExcedentes: 0,
         SinTaccFacturables: 0,
@@ -165,12 +303,6 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
       (SinTaccFacturables * (price_sintacc_effective - price_base)) +
       (SinTaccExcedentes * (price_sintacc_threshold - price_sintacc_effective))
 
-    const unitsValidity = units.map(u => {
-      const sumCat = (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
-      const sumOp = (Number(u.sold) || 0) + (Number(u.liberated) || 0)
-      return { id: u.id, isValid: sumCat === sumOp }
-    })
-    const allValid = unitsValidity.every(v => v.isValid) && selectedEventId !== "" && selectedCompany !== ""
     return {
       ...consolidated,
       CupoGratis,
@@ -186,33 +318,64 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
     }
   }, [units, activeRule, projectedPax, selectedEventId, selectedCompany])
 
-  // --- Save ---
+  // --- Save / Update ---
   const saveAll = async () => {
     if (!totals?.allValid) return
     setLoading(true)
     setMessage(null)
     try {
-      const { data: header, error: hErr } = await supabase
-        .from('event_sales_headers')
-        .insert([{
-          event_id: selectedEventId,
-          event_master_id: selectedEventId,
-          company: selectedCompany,
-          company_name: selectedCompany,
-          event_date: selectedEvent?.event_date,
-          venue: selectedEvent?.venues?.name,
-          coordinator_name: selectedEvent?.coordinators?.name,
-          delivery_time: deliveryTime,
-          delivery_point: deliveryPoint,
-          delivery_address: deliveryAddress,
-          pax_projected: projectedPax,
-          total_amount: totals.amount
-        }])
-        .select()
-        .single()
+      const payload = {
+        event_id: selectedEventId,
+        event_master_id: selectedEventId,
+        company: selectedCompany,
+        company_name: selectedCompany,
+        event_date: selectedEvent?.event_date,
+        venue: selectedEvent?.venues?.name,
+        coordinator_name: selectedEvent?.coordinators?.name,
+        delivery_time: deliveryTime,
+        delivery_point: deliveryPoint,
+        delivery_address: deliveryAddress,
+        pax_projected: projectedPax,
+        total_amount: totals.amount
+      }
 
-      if (hErr) throw hErr
+      let headerId = savedHeaderId
 
+      let header
+      if (savedHeaderId) {
+        const { data, error: hErr } = await supabase
+          .from('event_sales_headers')
+          .update(payload)
+          .eq('id', savedHeaderId)
+          .select()
+          .single()
+        if (hErr) throw hErr
+        header = data
+      } else {
+        const { data, error: hErr } = await supabase
+          .from('event_sales_headers')
+          .insert([payload])
+          .select()
+          .single()
+        if (hErr) throw hErr
+        header = data
+      }
+
+      headerId = header.id
+
+      // LIMPIAR DEPENDENCIAS ANTERIORES SI ESTAMOS ACTUALIZANDO
+      if (savedHeaderId) {
+         await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
+         
+         const validClientRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany?.toLowerCase())
+         if (validClientRecord?.id) {
+            await supabase.from('event_bus_assignments').delete()
+              .eq('event_id', selectedEventId)
+              .eq('client_id', validClientRecord.id)
+         }
+      }
+
+      // INSERTAR NUEVAS UNIDADES
       const unitsToInsert = units.map(u => {
         const breakdown = u.details.map(d => ({
           type: d.category,
@@ -220,7 +383,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
           note: d.obs
         }))
         return {
-          header_id: header.id,
+          header_id: headerId,
           unit_name: u.name,
           sold_qty: u.sold,
           liberated_qty: u.liberated,
@@ -233,14 +396,18 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
           traditional_special: breakdown.filter(b => b.type === 'traditional').reduce((a, b) => a + b.qty, 0),
           vegetarian_special: breakdown.filter(b => b.type === 'vegetarian').reduce((a, b) => a + b.qty, 0),
           vegana_special: breakdown.filter(b => b.type === 'vegana').reduce((a, b) => a + b.qty, 0),
-          observations: u.observations
+          observations: u.observations,
+          recipe_trad_id: activeRule?.recipe_trad_id,
+          recipe_veg_id: activeRule?.recipe_veg_id,
+          recipe_vegan_id: activeRule?.recipe_vegan_id,
+          recipe_sintacc_id: activeRule?.recipe_sintacc_id
         }
       })
 
       const { error: uErr } = await supabase.from('event_sales_units').insert(unitsToInsert)
       if (uErr) throw uErr
 
-      // Persistir asignaciones de flota
+      // INSERTAR NUEVA FLOTA
       const validClientRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany?.toLowerCase())
       const cId = validClientRecord?.id
       
@@ -252,16 +419,51 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
       }))
       
       if (busesToSave.length > 0) {
-         const { error: bErr } = await supabase.from('event_bus_assignments').upsert(busesToSave)
+         const { error: bErr } = await supabase.from('event_bus_assignments').insert(busesToSave)
          if (bErr) throw bErr
       }
 
-      // STICKY SELECTION: Reset only units, keep Event + Company selected
-      setUnits([newUnit("Micro 1")])
-      setDeliveryTime("")
-      setMessage({ type: 'success', text: `¡Venta guardada para ${selectedCompany}! Podés seguir cargando micros.` })
+      // Persistir estado de edición
+      setSavedHeaderId(headerId)
+      setMessage({ type: 'success', text: `¡Venta ${savedHeaderId ? 'actualizada' : 'guardada'} para ${selectedCompany}!` })
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message || "Error al guardar" })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // --- Delete ---
+  const handleDelete = async () => {
+    if (!savedHeaderId) return
+    const sure = window.confirm(`ATENCIÓN DOBLE SEGURO:\n¿Estás absolutamente seguro de eliminar toda la carga y asignaciones de flota de ${selectedCompany} para este evento? Esta acción no se puede deshacer.`)
+    if (!sure) return
+
+    setLoading(true)
+    setMessage(null)
+    try {
+      // 1. Borrar Flota
+      const validClientRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany?.toLowerCase())
+      if (validClientRecord?.id) {
+          await supabase.from('event_bus_assignments').delete()
+            .eq('event_id', selectedEventId)
+            .eq('client_id', validClientRecord.id)
+      }
+      
+      // 2. Borrar Units (Cascade puede que lo haga la db, pero lo forzamos)
+      await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
+
+      // 3. Borrar Header
+      const { error: dErr } = await supabase.from('event_sales_headers').delete().eq('id', savedHeaderId)
+      if (dErr) throw dErr
+
+      // Reset
+      setSavedHeaderId(null)
+      setUnits([newUnit("Micro 1")])
+      setDeliveryTime("")
+      setMessage({ type: 'success', text: `Carga eliminada por completo.` })
+    } catch (err: any) {
+      setMessage({ type: 'error', text: err.message || "Error al eliminar" })
     } finally {
       setLoading(false)
     }
@@ -270,16 +472,16 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
   // --- PDF Print ---
   const handlePrint = () => {
     if (!selectedEvent) return
-    const venueName = selectedEvent.venues?.name || ""
-    const dateStr = selectedEvent.event_date?.replace(/-/g, '') || ""
-    const docTitle = `${dateStr} - ${selectedCompany} - REMITO DE DESCARGA`
+    const venueName = selectedEvent.venues?.name || "Sin Venue"
+    const dateStr = selectedEvent.event_date?.replace(/-/g, '') || "SinFecha"
+    const docFileTitle = `${dateStr} - ${venueName} - ${selectedCompany}`
 
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
     printWindow.document.write(`
       <html>
         <head>
-          <title>${docTitle}</title>
+          <title>${docFileTitle} - REMITO</title>
           <style>
             body { font-family: 'Arial', sans-serif; padding: 20px; color: #1e293b; }
             .page-break { page-break-after: always; padding: 20px 0; }
@@ -384,12 +586,31 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                 </div>
 
                 <div class="footer">
-                  Página ${index + 1} de ${units.length} | Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')} | ${docTitle}.pdf
+                  Página ${index + 1} de ${units.length} | Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')} | ${docFileTitle}.pdf
                 </div>
               </div>
             `
           }).join('')}
-          <script>window.onload = () => { setTimeout(() => { window.print(); setTimeout(() => window.close(), 500) }, 100) }</script>
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+          <script>
+            window.onload = function() {
+              var element = document.body;
+              var opt = {
+                margin:       10,
+                filename:     '${docFileTitle}.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2 },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+              };
+              
+              html2pdf().set(opt).from(element).save().then(function() {
+                 setTimeout(() => {
+                    window.print();
+                    setTimeout(() => window.close(), 500);
+                 }, 500);
+              });
+            };
+          </script>
         </body>
       </html>
     `)
@@ -404,13 +625,22 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
       <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200">
         <div className="flex items-center gap-2 mb-6 border-b pb-4">
           <ClipboardList className="text-indigo-500" />
-          <h2 className="text-xl font-bold text-slate-800">Selección de Evento</h2>
+          <h2 className="text-xl font-bold text-slate-900">Selección de Evento</h2>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 relative">
+          {/* Overlay loading indicador */}
+          {isFetchingData && (
+            <div className="absolute inset-0 bg-white/60 backdrop-blur-[1px] z-10 flex items-center justify-center rounded-2xl">
+              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-lg border border-slate-200 text-indigo-600 font-bold text-sm">
+                <Loader2 className="animate-spin" size={16} /> Consultando base...
+              </div>
+            </div>
+          )}
+
           {/* Event Selector */}
           <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
               <Calendar size={10} /> Evento Maestro
             </label>
             {loadingEvents ? (
@@ -435,7 +665,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
 
           {/* Company Selector */}
           <div className="space-y-1">
-            <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1">
+            <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
               <Building2 size={10} /> Empresa
             </label>
             <select
@@ -450,23 +680,34 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
           </div>
         </div>
 
+        {/* Warning: No Rule */}
+        {activeRule?.noRuleFound && (
+          <div className="mt-6 p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-center gap-3 text-rose-700 animate-pulse">
+            <AlertCircle size={20} />
+            <div className="text-sm">
+              <p className="font-bold uppercase">Falta Configuración Comercial</p>
+              <p className="font-medium opacity-80">Esta empresa no tiene reglas de precios definidas. Contacte al administrador para evitar errores de liquidación.</p>
+            </div>
+          </div>
+        )}
+
         {/* Event Info Banner */}
         {selectedEvent && selectedCompany && (
           <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
             <div>
-              <p className="text-[9px] font-black text-slate-400 uppercase">PAX Proyectados</p>
-              <p className="text-2xl font-black text-slate-800">{projectedPax}</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase">PAX Proyectados</p>
+              <p className="text-2xl font-bold text-slate-900">{projectedPax}</p>
             </div>
             <div>
-              <p className="text-[9px] font-black text-slate-400 uppercase">Venue</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase">Venue</p>
               <p className="text-sm font-bold text-slate-700">{selectedEvent.venues?.name || "S/D"}</p>
             </div>
             <div>
-              <p className="text-[9px] font-black text-slate-400 uppercase">Precio Sin TACC</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase">Precio Sin TACC</p>
               <p className="text-sm font-bold text-slate-700 flex items-center gap-1">
                 {totals?.price_sintacc_effective ? `$${Number(totals.price_sintacc_effective).toLocaleString('es-AR')}` : '—'}
                 {totals?.hasSpecialSinTaccPrice && (
-                  <span className="text-[8px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-black uppercase">especial</span>
+                  <span className="text-[8px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold uppercase">especial</span>
                 )}
               </p>
             </div>
@@ -477,21 +718,21 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
         {selectedEvent && selectedCompany && (
           <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase">Horario Entrega (HH:MM)</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Horario Entrega (HH:MM)</label>
               <input type="time"
                 className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none font-bold text-indigo-600"
                 value={deliveryTime}
                 onChange={e => setDeliveryTime(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><MapPin size={10} /> Punto de Encuentro</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1"><MapPin size={10} /> Punto de Encuentro</label>
               <input className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none"
                 placeholder="Ej: Portón 4"
                 value={deliveryPoint}
                 onChange={e => setDeliveryPoint(e.target.value)} />
             </div>
             <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase">Dirección / Referencia</label>
+              <label className="text-[10px] font-bold text-slate-400 uppercase">Dirección / Referencia</label>
               <input className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none"
                 placeholder="Ej: Av. Figueroa Alcorta..."
                 value={deliveryAddress}
@@ -528,7 +769,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                       <div className="flex items-center gap-3">
                         <div className={`w-3 h-3 rounded-full ${validity?.isValid ? 'bg-emerald-500' : 'bg-rose-500 animate-pulse'}`} />
                         <input
-                          className="bg-transparent font-black text-slate-800 outline-none w-36"
+                          className="bg-transparent font-bold text-slate-900 outline-none w-36"
                           value={u.name}
                           onChange={e => updateUnit(u.id, 'name', e.target.value)} />
                       </div>
@@ -542,7 +783,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                       {/* Logística integrada */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-b pb-6 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                         <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase">Vehículo Físico</label>
+                          <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Vehículo Físico</label>
                           <select
                             className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none font-bold text-slate-700 text-xs focus:border-indigo-400 transition"
                             value={u.vehicle_id}
@@ -557,7 +798,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                           </select>
                         </div>
                         <div className="space-y-1">
-                          <label className="text-[9px] font-bold text-slate-500 uppercase">Coordinador M.</label>
+                          <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Coordinador M.</label>
                           <select
                             className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none font-bold text-slate-700 text-xs focus:border-indigo-400 transition"
                             value={u.coordinator_id}
@@ -579,7 +820,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                           <div key={field} className="space-y-1">
                             <label className="text-[9px] font-bold text-slate-400 uppercase">{field === 'sold' ? 'Vendidos' : 'Liberados'}</label>
                             <input type="text" inputMode="numeric"
-                              className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-center font-black text-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-center font-bold text-lg [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                               value={(u as any)[field]}
                               onChange={e => updateUnit(u.id, field as any, parseInt(e.target.value.replace(/\D/g, '')) || 0)}
                               onFocus={e => e.target.select()} />
@@ -590,18 +831,22 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                       {/* Categories */}
                       <div className="grid grid-cols-2 gap-y-4 gap-x-6">
                         {[
-                          { key: 'traditional', label: 'Tradicional' },
-                          { key: 'vegetarian', label: 'Vegetariana' },
-                          { key: 'vegana', label: 'Vegana' },
-                          { key: 'sin_tacc', label: 'Sin TACC' },
-                        ].map(({ key, label }) => (
+                          { key: 'traditional', label: 'Tradicional', price: activeRule?.price_base },
+                          { key: 'vegetarian', label: 'Vegetariana', price: activeRule?.price_base },
+                          { key: 'vegana', label: 'Vegana', price: activeRule?.price_base },
+                          { key: 'sin_tacc', label: 'Sin TACC', price: totals?.price_sintacc_effective },
+                        ].map(({ key, label, price }) => (
                           <div key={key} className="space-y-1">
-                            <label className="text-[9px] font-bold text-slate-500 uppercase">{label}</label>
+                            <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">{label}</label>
                             <input type="text" inputMode="numeric"
-                              className="w-full p-2 border border-slate-200 rounded-xl text-center font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              disabled={activeRule?.noRuleFound}
+                              className="w-full p-2 border border-slate-200 rounded-xl text-center font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:bg-slate-100"
                               value={(u as any)[key]}
                               onChange={e => updateUnit(u.id, key as any, parseInt(e.target.value.replace(/\D/g, '')) || 0)}
                               onFocus={e => e.target.select()} />
+                            <p className="text-[8px] font-bold text-slate-400 text-center uppercase tracking-tighter">
+                               ${Number(price || 0).toLocaleString('es-AR')} c/u
+                            </p>
                           </div>
                         ))}
                       </div>
@@ -609,9 +854,9 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                       {/* Water & Specials */}
                       <div className="space-y-4 pt-4 border-t">
                         <div className="flex justify-between items-center">
-                          <label className="text-[10px] font-bold text-slate-400 uppercase">Agua Sugerida{activeRule?.includes_water && " (V+L)"}</label>
+                          <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Agua Sugerida{activeRule?.includes_water && " (V+L)"}</label>
                           <input type="text" inputMode="numeric"
-                            className="w-20 p-2 bg-indigo-50 border border-indigo-100 rounded-xl text-center font-black text-indigo-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="w-20 p-2 bg-indigo-50 border border-indigo-100 rounded-xl text-center font-bold text-indigo-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                             value={u.water}
                             onChange={e => updateUnit(u.id, 'water', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
                             onFocus={e => e.target.select()} />
@@ -620,7 +865,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                         {/* Special Orders */}
                         <div className="space-y-3">
                           <div className="flex justify-between items-center text-indigo-600 border-b border-indigo-50 pb-2">
-                            <label className="text-[10px] font-black uppercase">Pedidos Especiales</label>
+                            <label className="text-[10px] font-bold uppercase">Pedidos Especiales</label>
                             <button onClick={() => updateUnit(u.id, 'details', [...u.details, { id: crypto.randomUUID(), category: 'traditional', qty: 0, obs: '' }])}
                               className="p-1 hover:bg-indigo-50 rounded-lg transition">
                               <Plus size={14} />
@@ -630,7 +875,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                           {u.details.map(det => (
                             <div key={det.id} className="grid grid-cols-12 items-center bg-slate-50/50 rounded-lg border border-slate-100 overflow-hidden divide-x divide-slate-100">
                               <select
-                                className="col-span-3 bg-transparent text-[9px] font-black px-2 h-8 outline-none uppercase text-slate-400 appearance-none"
+                                className="col-span-3 bg-transparent text-[9px] font-bold px-2 h-8 outline-none uppercase text-slate-400 appearance-none"
                                 value={det.category}
                                 onChange={e => updateUnit(u.id, 'details', u.details.map(d => d.id === det.id ? { ...d, category: e.target.value } : d))}>
                                 <option value="traditional">TRAD.</option>
@@ -639,7 +884,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                                 <option value="sin_tacc">ST</option>
                               </select>
                               <input type="text" inputMode="numeric"
-                                className="col-span-2 bg-white text-center font-black text-indigo-600 text-xs h-8 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                className="col-span-2 bg-white text-center font-bold text-indigo-600 text-xs h-8 outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 value={det.qty || 0}
                                 onChange={e => updateUnit(u.id, 'details', u.details.map(d => d.id === det.id ? { ...d, qty: parseInt(e.target.value.replace(/\D/g, '')) || 0 } : d))}
                                 onFocus={e => e.target.select()} />
@@ -683,23 +928,23 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                 <div className="p-4 bg-slate-100 rounded-full group-hover:bg-indigo-600 group-hover:text-white transition shadow-sm">
                   <Plus size={32} />
                 </div>
-                <span className="font-black text-sm uppercase tracking-widest">Añadir Micro / Traffic</span>
+                <span className="font-bold text-sm uppercase tracking-widest">Añadir Micro / Traffic</span>
               </button>
             </div>
 
             {/* Action Bar */}
             <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200">
               {message && (
-                <div className={`mb-4 p-3 rounded-xl text-sm font-bold text-center ${message.type === 'success' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-500'}`}>
-                  {message.type === 'success' ? <CheckCircle2 className="inline mr-2" size={14} /> : <AlertCircle className="inline mr-2" size={14} />}
-                  {message.text}
+                <div className={`mb-4 p-3 rounded-xl text-sm font-bold text-center ${message?.type === 'success' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-500'}`}>
+                  {message?.type === 'success' ? <CheckCircle2 className="inline mr-2" size={14} /> : <AlertCircle className="inline mr-2" size={14} />}
+                  {message?.text}
                 </div>
               )}
               <div className="flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex items-center gap-6">
                   <div>
-                    <p className="text-[10px] font-black text-slate-400 uppercase mb-1">Total a Liquidar</p>
-                    <p className="text-3xl font-black text-slate-800">${totals?.amount.toLocaleString("es-AR")}</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Total a Liquidar</p>
+                    <p className="text-3xl font-bold text-slate-900">${totals?.amount.toLocaleString("es-AR")}</p>
                   </div>
                   <div className="h-10 w-px bg-slate-200 hidden md:block" />
                   <div>
@@ -713,6 +958,12 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                   </div>
                 </div>
                 <div className="flex items-center gap-3 w-full md:w-auto">
+                  {savedHeaderId && (
+                     <button onClick={handleDelete} disabled={loading}
+                       className="px-5 py-2.5 rounded-xl border-2 border-rose-100 text-rose-500 font-bold hover:bg-rose-50 transition flex items-center gap-2 text-sm">
+                       <Trash2 size={16} /> ELIMINAR CARGA
+                     </button>
+                  )}
                   <button onClick={handlePrint}
                     className="px-5 py-2.5 border border-slate-200 bg-white rounded-xl text-slate-600 font-bold hover:bg-slate-50 transition flex items-center justify-center text-sm shadow-sm gap-2">
                     <Printer size={16} /> REMITO PDF
@@ -720,7 +971,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                   <button onClick={saveAll} disabled={!totals?.allValid || loading}
                     className={`px-6 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${totals?.allValid ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-sm' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
                     {loading ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
-                    {loading ? 'GUARDANDO...' : 'CONFIRMAR Y GUARDAR'}
+                    {loading ? 'DURMIENDO...' : (savedHeaderId ? 'ACTUALIZAR' : 'CONFIRMAR Y GUARDAR')}
                   </button>
                 </div>
               </div>
@@ -738,11 +989,11 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
               <div className="grid grid-cols-2 gap-4">
                 <div className="bg-white/5 p-4 rounded-2xl">
                   <p className="text-[10px] text-white/40 font-bold uppercase mb-1">Vendidos</p>
-                  <p className="text-3xl font-black">{totals?.sold}</p>
+                  <p className="text-3xl font-bold">{totals?.sold}</p>
                 </div>
                 <div className="bg-white/5 p-4 rounded-2xl">
                   <p className="text-[10px] text-white/40 font-bold uppercase mb-1">Liberados</p>
-                  <p className="text-3xl font-black">{totals?.liberated}</p>
+                  <p className="text-3xl font-bold">{totals?.liberated}</p>
                 </div>
               </div>
 
@@ -751,7 +1002,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                   <div className="flex justify-between items-center pb-2 border-b border-white/10">
                     <span className="text-white/60 font-bold uppercase text-[9px] tracking-widest">Detalle Sin TACC</span>
                     {totals?.hasSpecialSinTaccPrice && (
-                      <span className="bg-purple-500/30 text-purple-300 text-[8px] font-black px-2 py-0.5 rounded uppercase">Precio especial</span>
+                      <span className="bg-purple-500/30 text-purple-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Precio especial</span>
                     )}
                   </div>
                   <div className="flex justify-between">
@@ -771,7 +1022,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
 
               <div className="pt-4 border-t border-white/10 text-center">
                 <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Monto Total</p>
-                <p className="text-6xl font-black tracking-tighter text-white">
+                <p className="text-6xl font-bold tracking-tighter text-white">
                   ${totals?.amount.toLocaleString("es-AR")}
                 </p>
               </div>
@@ -779,7 +1030,7 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
 
             {/* Kitchen Summary */}
             <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 space-y-4">
-              <h4 className="text-xs font-black text-indigo-400 uppercase tracking-widest border-b border-indigo-200 pb-3">Resumen Cocina</h4>
+              <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest border-b border-indigo-200 pb-3">Resumen Cocina</h4>
               <div className="space-y-2">
                 {[
                   { key: 'trad', label: 'Tradicional' },
@@ -789,12 +1040,12 @@ export default function EventSalesForm({ commercialRules = [], coordinators = []
                 ].map(({ key, label }) => (
                   <div key={key} className="flex justify-between items-center">
                     <span className="text-sm font-bold text-indigo-800">{label}</span>
-                    <span className="text-2xl font-black text-indigo-950">{(totals as any)?.[key]}</span>
+                    <span className="text-2xl font-bold text-indigo-950">{(totals as any)?.[key]}</span>
                   </div>
                 ))}
                 <div className="pt-3 border-t border-indigo-200 flex justify-between items-center">
-                  <span className="text-xs font-black text-indigo-400">AGUA TOTAL</span>
-                  <span className="text-2xl font-black text-indigo-600">{totals?.water}</span>
+                  <span className="text-xs font-bold text-indigo-400">AGUA TOTAL</span>
+                  <span className="text-2xl font-bold text-indigo-600">{totals?.water}</span>
                 </div>
               </div>
             </div>

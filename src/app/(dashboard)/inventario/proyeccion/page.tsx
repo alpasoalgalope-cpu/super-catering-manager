@@ -1,0 +1,468 @@
+"use client"
+
+import React, { useEffect, useState, useMemo } from "react"
+import { supabase } from "@/lib/supabase"
+import { 
+  ShoppingCart, Package, TrendingUp, Calendar, 
+  MapPin, Loader2, Info, ArrowRight, Scale, 
+  ChevronRight, Calculator, PieChart, CheckCircle2,
+  Circle
+} from "lucide-react"
+
+// --- Types ---
+interface IngredientNeed {
+  productId: string
+  name: string
+  unit: string
+  totalQuantity: number
+  gramsPerUnit: number
+  familyName: string
+}
+
+interface EventSummary {
+  id: string
+  date: string
+  show: string
+  totalPax: number
+  adjustedPax: number
+  details: {
+    category: string
+    quantity: number
+    recipeName: string
+    recipeId: string
+  }[]
+  missingRules?: string[]
+}
+
+// --- Helper for consistent key matching ---
+function normalizeKey(str: string) {
+  return str?.trim().toLowerCase().replace(/\s+/g, ' ') || ""
+}
+
+export default function ProyeccionInsumosPage() {
+  const [loading, setLoading] = useState(true)
+  const [rawData, setRawData] = useState<{
+    masters: any[]
+    probabilities: any[]
+    rules: any[]
+    clientList: any[]
+    recipes: any[]
+    waterProduct: any
+  }>({ masters: [], probabilities: [], rules: [], clientList: [], recipes: [], waterProduct: null })
+  
+  const [selectedEventIds, setSelectedEventIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    async function fetchData() {
+      setLoading(true)
+      const today = new Date().toISOString().split('T')[0]
+      const fourteenDaysLater = new Date()
+      fourteenDaysLater.setDate(fourteenDaysLater.getDate() + 14)
+      const endDate = fourteenDaysLater.toISOString().split('T')[0]
+
+      const [
+        { data: masters },
+        { data: probabilities },
+        { data: rules },
+        { data: clientList },
+        { data: recipes },
+        { data: waterProduct }
+      ] = await Promise.all([
+        supabase.from("events_master")
+          .select("id, event_date, show_name, status, event_projections(company_name, projected_pax)")
+          .gte("event_date", today)
+          .lte("event_date", endDate)
+          .neq("status", "cancelado"), // Excluir eventos cancelados
+        supabase.from("product_mix_probabilities").select("*"),
+        supabase.from("commercial_rules").select("*"),
+        supabase.from("clients").select("name, conversion_factor"),
+        supabase.from("recetas").select(`
+          id, nombre,
+          receta_insumos (
+            producto_id, 
+            cantidad_necesaria, 
+            productos (
+              nombre, 
+              unidad_medida, 
+              gramos_por_unidad,
+              familias (nombre)
+            )
+          )
+        `),
+        supabase.from("productos").select("*, familias(nombre)").eq("id", "2e452d5b-9d90-47a7-ae2e-134cc55ef7bd").single()
+      ])
+
+      setRawData({
+        masters: masters || [],
+        probabilities: probabilities || [],
+        rules: rules || [],
+        clientList: clientList || [],
+        recipes: recipes || [],
+        waterProduct: waterProduct || null
+      })
+
+      if (masters) setSelectedEventIds(new Set(masters.map(m => m.id)))
+      setLoading(false)
+    }
+    fetchData()
+  }, [])
+
+  const maps = useMemo(() => {
+    const probMap: Record<string, number> = {}
+    rawData.probabilities.forEach(p => probMap[p.category] = Number(p.probability))
+
+    const ruleMap: Record<string, any> = {}
+    rawData.rules.forEach(r => {
+      const key = normalizeKey(r.company_name)
+      if (key) ruleMap[key] = r
+    })
+
+    const convMap: Record<string, number> = {}
+    rawData.clientList.forEach(c => {
+      const key = normalizeKey(c.name)
+      if (key) convMap[key] = Number(c.conversion_factor) || 1.0
+    })
+
+    const recipeMap: Record<string, any> = {}
+    rawData.recipes.forEach(r => recipeMap[r.id] = r)
+
+    return { probMap, ruleMap, convMap, recipeMap }
+  }, [rawData])
+
+  // --- Real-time Recalculation Engine ---
+  const { ingredients, events } = useMemo(() => {
+    const ingredientsNeed: Record<string, IngredientNeed> = {}
+    const eventSummaries: EventSummary[] = []
+
+    rawData.masters.forEach(m => {
+      let eventTotalPax = 0
+      const isSelected = selectedEventIds.has(m.id)
+      const missingRules: string[] = []
+      
+      // Consolidation Map for the event (category -> total qty)
+      const consolidatedDetails: Record<string, { quantity: number, recipeName: string, recipeId: string }> = {}
+
+      // Deduplicate projections
+      const seenCompanies = new Set()
+      const uniqueProjections = m.event_projections?.filter((p: any) => {
+        const key = normalizeKey(p.company_name)
+        if (!key || seenCompanies.has(key)) return false
+        seenCompanies.add(key)
+        return true
+      }) || []
+
+      uniqueProjections.forEach((proj: any) => {
+        const compKey = normalizeKey(proj.company_name)
+        const factor = maps.convMap[compKey] || 1.0
+        const rule = maps.ruleMap[compKey]
+        const basePax = Number(proj.projected_pax) || 0
+        const adjustedSales = basePax * factor
+        
+        eventTotalPax += basePax
+
+        if (!rule) {
+          missingRules.push(proj.company_name)
+          console.warn(`[EXPLOSION] Missing rule for: "${proj.company_name}" (Normalized: "${compKey}")`)
+          return
+        }
+
+        console.log(`[EXPLOSION] Processing ${proj.company_name}: Pax ${basePax} -> Sales ${adjustedSales.toFixed(1)} (Water: ${rule.includes_water})`)
+
+        const cats = [
+          { id: 'traditional', recipeId: rule?.recipe_trad_id },
+          { id: 'vegetarian', recipeId: rule?.recipe_veg_id },
+          { id: 'vegan', recipeId: rule?.recipe_vegan_id },
+          { id: 'sin_tacc', recipeId: rule?.recipe_sintacc_id }
+        ]
+
+        cats.forEach(cat => {
+          const prob = maps.probMap[cat.id] || 0
+          const catPax = adjustedSales * prob
+          if (catPax <= 0 || !cat.recipeId) return
+
+          const recipe = maps.recipeMap[cat.recipeId]
+          if (!recipe) return
+
+          if (!consolidatedDetails[cat.id]) {
+            consolidatedDetails[cat.id] = { quantity: 0, recipeName: recipe.nombre, recipeId: recipe.id }
+          }
+          consolidatedDetails[cat.id].quantity += catPax
+        })
+
+        // Water Logic
+        if (rule?.includes_water) {
+          const waterProduct = rawData.waterProduct
+          if (waterProduct) {
+            if (!consolidatedDetails['bebida']) {
+              consolidatedDetails['bebida'] = { quantity: 0, recipeName: 'Agua Incluida', recipeId: waterProduct.id }
+            }
+            consolidatedDetails['bebida'].quantity += adjustedSales
+          }
+        }
+      })
+
+      // Final processing for the event: round everything and sum for the total
+      let finalEventAdjPax = 0
+      const finalDetails = Object.entries(consolidatedDetails).map(([catId, data]) => {
+        const roundedQty = Math.ceil(data.quantity)
+        if (catId !== 'bebida') finalEventAdjPax += roundedQty
+
+        // Explode ingredients for selected events
+        if (isSelected && catId !== 'bebida') {
+          const recipe = maps.recipeMap[data.recipeId]
+          recipe?.receta_insumos?.forEach((insumo: any) => {
+            const pid = insumo.producto_id
+            const totalInsumoQty = insumo.cantidad_necesaria * roundedQty
+            
+            if (!ingredientsNeed[pid]) {
+              ingredientsNeed[pid] = {
+                productId: pid,
+                name: insumo.productos?.nombre || "Insumo Desconocido",
+                unit: insumo.productos?.unidad_medida || "un",
+                totalQuantity: 0,
+                gramsPerUnit: insumo.productos?.gramos_por_unidad || 0,
+                familyName: insumo.productos?.familias?.nombre || "SIN FAMILIA"
+              } as any
+            }
+            ingredientsNeed[pid].totalQuantity += totalInsumoQty
+          })
+        } else if (isSelected && catId === 'bebida') {
+          const waterProduct = (rawData as any).waterProduct
+          const pid = waterProduct.id
+          if (!ingredientsNeed[pid]) {
+            ingredientsNeed[pid] = {
+              productId: pid,
+              name: waterProduct.nombre,
+              unit: waterProduct.unidad_medida,
+              totalQuantity: 0,
+              gramsPerUnit: waterProduct.gramos_por_unidad || 0,
+              familyName: waterProduct.familias?.nombre || "Bebidas"
+            } as any
+          }
+          ingredientsNeed[pid].totalQuantity += roundedQty
+        }
+
+        return {
+          category: catId,
+          quantity: roundedQty,
+          recipeName: data.recipeName,
+          recipeId: data.recipeId
+        }
+      })
+
+      eventSummaries.push({
+        id: m.id,
+        date: m.event_date,
+        show: m.show_name,
+        totalPax: eventTotalPax,
+        adjustedPax: finalEventAdjPax,
+        details: finalDetails,
+        missingRules: missingRules
+      })
+    })
+
+    // Sort: Family First, then Name
+    const finalIngredients = Object.values(ingredientsNeed).map(ing => ({
+      ...ing,
+      totalQuantity: Math.ceil(ing.totalQuantity)
+    })).sort((a,b) => {
+      if (a.familyName !== b.familyName) return a.familyName.localeCompare(b.familyName)
+      return a.name.localeCompare(b.name)
+    })
+
+    return { 
+      ingredients: finalIngredients, 
+      events: eventSummaries.sort((a,b) => a.date.localeCompare(b.date)) 
+    }
+  }, [rawData, maps, selectedEventIds])
+
+  const toggleEvent = (id: string) => {
+    setSelectedEventIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-100">
+      <div className="text-center space-y-4">
+        <Loader2 className="animate-spin text-indigo-600 mx-auto" size={48} />
+        <p className="text-xs font-black text-slate-400 uppercase tracking-widest">Iniciando simulador de compras...</p>
+      </div>
+    </div>
+  )
+
+  return (
+    <div className="min-h-screen bg-slate-100 -m-8 p-8 space-y-10 pb-32">
+      <div className="max-w-6xl mx-auto space-y-10">
+        
+        {/* HEADER */}
+        <div className="bg-white rounded-[2rem] p-8 border border-slate-200 shadow-md flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div>
+            <div className="flex items-center gap-2 text-indigo-600 mb-1">
+              <Calculator size={20} />
+              <span className="text-[10px] font-black uppercase tracking-widest bg-indigo-50 px-2 py-1 rounded text-indigo-700 border border-indigo-100">Simulador de Compras Interactivo</span>
+            </div>
+            <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Proyección de Insumos</h1>
+            <p className="text-slate-500 font-medium mt-1 uppercase text-[10px] tracking-widest">Cálculos ajustados con redondeo técnico (Math.ceil)</p>
+          </div>
+          <div className="bg-slate-900 px-8 py-5 rounded-3xl text-white shadow-2xl flex items-center gap-6">
+             <div className="text-center">
+                <p className="text-[9px] font-black uppercase opacity-40 tracking-widest mb-1 text-indigo-300">Seleccionados</p>
+                <p className="text-2xl font-black tabular-nums">{selectedEventIds.size} <span className="text-[10px] opacity-40 uppercase">Shows</span></p>
+             </div>
+             <div className="h-10 w-px bg-white/10" />
+             <div className="text-center">
+                <p className="text-[9px] font-black uppercase opacity-40 tracking-widest mb-1 text-emerald-300">Total Insumos</p>
+                <p className="text-2xl font-black tabular-nums">{ingredients.length}</p>
+             </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+          
+          {/* LEFT: PURCHASE LIST (Consolidated) */}
+          <div className="lg:col-span-7 space-y-6">
+            <div className="flex items-center justify-between px-2">
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">Materia Prima Requerida</h2>
+              <span className="text-[10px] font-black bg-emerald-500 text-white px-4 py-1.5 rounded-full uppercase tracking-widest shadow-lg shadow-emerald-200">Ceil Optimization Active</span>
+            </div>
+            
+            <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-md divide-y divide-slate-100 overflow-hidden">
+              {ingredients.length === 0 ? (
+                <div className="p-20 text-center space-y-4">
+                   <Package size={48} className="mx-auto text-slate-200" />
+                   <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Selecciona al menos un show para ver los insumos</p>
+                </div>
+              ) : (
+                ingredients.map((ing, idx) => {
+                  const showHeader = idx === 0 || ingredients[idx-1].familyName !== ing.familyName
+                  
+                  return (
+                    <React.Fragment key={ing.productId}>
+                      {showHeader && (
+                        <div className="bg-slate-50 px-8 py-3 border-y border-slate-100">
+                           <span className="text-[10px] font-black text-indigo-500 uppercase tracking-[0.3em]">{ing.familyName}</span>
+                        </div>
+                      )}
+                      <div className="p-6 flex items-center justify-between hover:bg-slate-50 transition-colors group">
+                        <div className="flex items-center gap-5">
+                          <div className="p-4 bg-slate-100 text-slate-500 rounded-2xl group-hover:bg-indigo-600 group-hover:text-white transition-all shadow-sm">
+                            <Package size={24} />
+                          </div>
+                          <div>
+                            <h4 className="text-lg font-black text-slate-950 uppercase tracking-tight leading-none mb-1">{ing.name}</h4>
+                            {ing.gramsPerUnit > 0 && (
+                              <p className="text-[10px] font-black text-indigo-500 uppercase tracking-widest bg-indigo-50 px-2 py-0.5 rounded-md inline-block">
+                                {Math.ceil(ing.totalQuantity / ing.gramsPerUnit)} BULTOS de {ing.gramsPerUnit.toLocaleString('es-AR')} {ing.unit}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-3xl font-black text-slate-900 tabular-nums">
+                            {ing.totalQuantity.toLocaleString('es-AR')}
+                            <span className="text-sm text-slate-400 ml-2 uppercase font-bold">{ing.unit}</span>
+                          </p>
+                        </div>
+                      </div>
+                    </React.Fragment>
+                  )
+                })
+              )}
+            </div>
+          </div>
+
+          {/* RIGHT: SHOW PICKER */}
+          <div className="lg:col-span-5 space-y-6">
+             <div className="flex items-center justify-between px-2">
+                <h2 className="text-2xl font-black text-slate-800 tracking-tight">Panel de Shows</h2>
+                <div className="flex gap-2">
+                   <button 
+                    onClick={() => setSelectedEventIds(new Set(rawData.masters.map(m => m.id)))}
+                    className="text-[9px] font-black uppercase text-indigo-600 hover:bg-indigo-50 px-2 py-1 rounded"
+                   >Todos</button>
+                   <button 
+                    onClick={() => setSelectedEventIds(new Set())}
+                    className="text-[9px] font-black uppercase text-rose-600 hover:bg-rose-50 px-2 py-1 rounded"
+                   >Ninguno</button>
+                </div>
+             </div>
+
+             <div className="space-y-4">
+               {events.map(ev => {
+                 const isSelected = selectedEventIds.has(ev.id)
+                 const evDate = new Date(ev.date + 'T12:00:00')
+                 const day = evDate.getDate()
+                 const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
+
+                 return (
+                   <button 
+                    key={ev.id} 
+                    onClick={() => toggleEvent(ev.id)}
+                    className={`w-full text-left bg-white p-6 rounded-[2.5rem] border transition-all duration-300 relative group
+                      ${isSelected ? 'border-indigo-500 shadow-xl ring-4 ring-indigo-500/5 translate-x-1' : 'border-slate-200 opacity-40 grayscale scale-[0.98] shadow-sm'}
+                    `}
+                   >
+                     {/* Check Indicator */}
+                     <div className={`absolute -top-2 -right-2 p-1.5 rounded-full shadow-lg transition-all
+                        ${isSelected ? 'bg-indigo-600 text-white scale-110' : 'bg-slate-200 text-slate-400 scale-90'}
+                     `}>
+                        {isSelected ? <CheckCircle2 size={20} /> : <Circle size={20} />}
+                     </div>
+
+                     <div className="flex items-center gap-5">
+                        <div className={`flex flex-col items-center justify-center px-4 py-2 rounded-2xl border shrink-0 transition-colors
+                           ${isSelected ? 'bg-indigo-50 border-indigo-100' : 'bg-slate-100 border-slate-200'}
+                        `}>
+                           <span className="text-2xl font-black text-slate-900 leading-none">{day}</span>
+                           <span className={`text-[10px] font-black uppercase mt-1 ${isSelected ? 'text-indigo-600' : 'text-slate-400'}`}>{month}</span>
+                        </div>
+                        <div className="min-w-0">
+                           <h4 className="text-lg font-black text-slate-900 uppercase italic tracking-tighter truncate leading-tight group-hover:text-indigo-600 transition-colors">
+                              {ev.show}
+                           </h4>
+                           <div className="flex flex-wrap gap-2 mt-1">
+                              <p className={`text-[11px] font-black uppercase tracking-widest 
+                                ${isSelected ? 'text-emerald-600' : 'text-slate-400'}
+                              `}>
+                                 {ev.adjustedPax} Viandas Estimadas
+                              </p>
+                              {ev.missingRules && ev.missingRules.length > 0 && isSelected && (
+                                <span className="text-[9px] font-black bg-rose-100 text-rose-700 px-2 py-0.5 rounded uppercase animate-pulse">
+                                  Regla Faltante: {ev.missingRules.join(', ')}
+                                </span>
+                              )}
+                           </div>
+                        </div>
+                     </div>
+
+                     <div className="mt-6 grid grid-cols-2 gap-3">
+                        {ev.details.map((det, idx) => (
+                          <div key={idx} className={`p-3 rounded-2xl border flex flex-col justify-center transition-colors
+                             ${isSelected ? 'bg-slate-50 border-slate-100' : 'bg-slate-100/50 border-slate-200/50'}
+                          `}>
+                             <p className={`text-[8px] font-black uppercase tracking-[0.2em] mb-1 
+                                ${isSelected ? 'text-indigo-400' : 'text-slate-400'}
+                             `}>{det.category}</p>
+                             <div className="flex items-center justify-between">
+                                <span className="text-sm font-black text-slate-900">{det.quantity}</span>
+                                <span className="text-[9px] font-bold text-slate-400 truncate ml-2 italic">{det.recipeName}</span>
+                             </div>
+                          </div>
+                        ))}
+                     </div>
+                   </button>
+                 )
+               })}
+             </div>
+          </div>
+
+        </div>
+
+      </div>
+    </div>
+  )
+}

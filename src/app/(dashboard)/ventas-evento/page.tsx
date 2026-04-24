@@ -3,11 +3,15 @@ import EventSalesForm from "@/components/forms/EventSalesForm"
 
 export const dynamic = "force-dynamic"
 
-export default async function VentasEventoPage() {
+export default async function VentasEventoPage({
+  searchParams,
+}: {
+  searchParams: { eventId?: string; company?: string }
+}) {
   try {
     // Fetch de datos optimizado (Header/Detail & Rules)
+    // Extraemos la data base para el formulario de Ventas (EventSalesForm consultará eventos maestros detallados por sí mismo para no sobrecargar los params)
     const [
-      { data: events },
       { data: clients },
       { data: commercialRules },
       { data: freeMealRules },
@@ -15,9 +19,6 @@ export default async function VentasEventoPage() {
       { data: coordinators },
       { data: vehicles }
     ] = await Promise.all([
-      supabase.from("recitales_staging")
-        .select("*") // Get everything for pre-populating editable fields
-        .or('status.eq.pendiente,status.eq.proyectado,status.eq.confirmado,status.eq.Pendiente,status.eq.Proyectado,status.eq.Confirmado'),
       supabase.from("clients").select("*"),
       supabase.from("commercial_rules").select("*"),
       supabase.from("free_meal_rules").select("*"),
@@ -36,7 +37,8 @@ export default async function VentasEventoPage() {
         </div>
 
         <EventSalesForm
-          events={events || []}
+          initialEventId={searchParams.eventId}
+          initialCompany={searchParams.company}
           clients={clients || []}
           commercialRules={commercialRules || []}
           freeMealRules={freeMealRules || []}

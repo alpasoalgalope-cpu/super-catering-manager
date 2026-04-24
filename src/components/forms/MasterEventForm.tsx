@@ -33,11 +33,17 @@ export default function MasterEventForm() {
   const [venues, setVenues] = useState<Venue[]>([])
   const [coordinators, setCoordinators] = useState<Coordinator[]>([])
   const [companies, setCompanies] = useState<string[]>([])
+  const [conversionMap, setConversionMap] = useState<Record<string, number>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState("")
+  const [view, setView] = useState<"upcoming" | "past" | "all">("upcoming")
+  const [companyFilter, setCompanyFilter] = useState("")
+  const [venueFilter, setVenueFilter] = useState("")
+  const [statusFilter, setStatusFilter] = useState("")
+  const today = new Date().toISOString().split('T')[0]
 
   // --- New Event Draft ---
   const emptyDraft = { event_date: "", show_name: "", venue_id: "", coordinator_id: "", status: "pendiente", projections: [{ company_name: "", projected_pax: 0 }] }
@@ -62,12 +68,20 @@ export default function MasterEventForm() {
         .order("event_date", { ascending: true }),
       supabase.from("venues").select("*").order("name"),
       supabase.from("coordinators").select("id, name, company, phone").order("name"),
-      supabase.from("commercial_rules").select("company_name").order("company_name"),
+      supabase.from("clients").select("name, conversion_factor").order("name"),
     ])
     setEvents(evRes.data || [])
     setVenues(venRes.data || [])
     setCoordinators(coordRes.data || [])
-    setCompanies((compRes.data || []).map((r: any) => r.company_name))
+    
+    const cMap: Record<string, number> = {}
+    const cNames: string[] = []
+    compRes.data?.forEach((r: any) => {
+      cNames.push(r.name)
+      cMap[r.name] = Number(r.conversion_factor) || 1.0
+    })
+    setCompanies(cNames)
+    setConversionMap(cMap)
     setLocalEdits({})
     setLoading(false)
   }, [])
@@ -270,10 +284,27 @@ export default function MasterEventForm() {
   }
 
   // --- Filter ---
-  const filteredEvents = events.filter(e =>
-    e.show_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    e.venues?.name?.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+  const filteredEvents = events.filter(e => {
+    // Search
+    const searchMatch = !searchTerm || 
+      e.show_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      e.venues?.name?.toLowerCase().includes(searchTerm.toLowerCase())
+    if (!searchMatch) return false
+
+    // Tabs
+    if (view === "upcoming" && e.event_date < today) return false
+    if (view === "past" && e.event_date >= today) return false
+
+    // Dropdowns
+    if (venueFilter && e.venue_id !== venueFilter) return false
+    if (statusFilter && e.status !== statusFilter) return false
+    if (companyFilter) {
+      const hasCompany = e.event_projections?.some(p => p.company_name === companyFilter)
+      if (!hasCompany) return false
+    }
+
+    return true
+  })
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
@@ -282,7 +313,8 @@ export default function MasterEventForm() {
   )
 
   return (
-    <div className="max-w-6xl mx-auto p-4 md:p-8 space-y-6 pb-24">
+    <div className="min-h-screen bg-slate-50/50 -m-8 p-8 space-y-8 pb-32">
+      <div className="max-w-6xl mx-auto space-y-6">
 
       {/* HEADER */}
       <div className="bg-white rounded-[2rem] p-6 border border-slate-100 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -310,6 +342,54 @@ export default function MasterEventForm() {
           {message.text}
         </div>
       )}
+
+      {/* TABS & SEARCH */}
+      <div className="flex flex-col lg:flex-row justify-between gap-6">
+        <div className="flex bg-white p-1 rounded-2xl border border-slate-200 shadow-sm w-max">
+           <button onClick={() => setView("upcoming")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${view === "upcoming" ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>Próximos</button>
+           <button onClick={() => setView("past")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${view === "past" ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>Pasados</button>
+           <button onClick={() => setView("all")} className={`px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition ${view === "all" ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400 hover:text-slate-600'}`}>Todos</button>
+        </div>
+
+        <div className="relative flex-1 max-w-md">
+           <input 
+            type="text" 
+            placeholder="Buscar por Artista o Venue..."
+            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-300 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 transition-all font-bold text-slate-900 placeholder:text-slate-400"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+           />
+           <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+        </div>
+      </div>
+
+      {/* DROPDOWN FILTERS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm">
+         <div className="space-y-2">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1"><Building2 size={12}/> Empresa</label>
+            <select value={companyFilter} onChange={e=>setCompanyFilter(e.target.value)} className="w-full bg-white p-3.5 rounded-xl border border-slate-300 outline-none font-bold text-slate-900 text-xs uppercase appearance-none cursor-pointer hover:border-slate-400 transition">
+               <option value="">Todas las Empresas</option>
+               {companies.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+         </div>
+         <div className="space-y-2">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1"><MapPin size={12}/> Venue</label>
+            <select value={venueFilter} onChange={e=>setVenueFilter(e.target.value)} className="w-full bg-white p-3.5 rounded-xl border border-slate-300 outline-none font-bold text-slate-900 text-xs uppercase appearance-none cursor-pointer hover:border-slate-400 transition">
+               <option value="">Todos los Venues</option>
+               {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+            </select>
+         </div>
+         <div className="space-y-2">
+            <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-1"><Settings2 size={12}/> Estado</label>
+            <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="w-full bg-white p-3.5 rounded-xl border border-slate-300 outline-none font-bold text-slate-900 text-xs uppercase appearance-none cursor-pointer hover:border-slate-400 transition">
+               <option value="">Cualquier Estado</option>
+               <option value="pendiente">Pendiente</option>
+               <option value="confirmado">Confirmado</option>
+               <option value="ejecutado">Ejecutado</option>
+               <option value="cancelado">Cancelado</option>
+            </select>
+         </div>
+      </div>
 
       {/* NEW EVENT FORM */}
       {showAddForm && (
@@ -429,13 +509,7 @@ export default function MasterEventForm() {
         </div>
       )}
 
-      {/* SEARCH */}
-      <div className="relative">
-        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-        <input className="w-full pl-11 pr-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition"
-          placeholder="Buscar por artista o venue..."
-          value={searchTerm} onChange={e => setSearchTerm(e.target.value)} />
-      </div>
+      {/* SEARCH (OLD - REMOVED IN FAVOR OF NEW FILTERS) */}
 
       {/* EVENT LIST */}
       <div className="space-y-3">
@@ -450,83 +524,107 @@ export default function MasterEventForm() {
           const isDirty = !!localEdits[ev.id]
           const isExpanded = expandedId === ev.id
           const totalPax = (state.projections || []).reduce((a: number, p: ProjectionRow) => a + (p.projected_pax || 0), 0)
+          
+          const evDate = new Date(state.event_date + 'T12:00:00')
+          const day = evDate.getDate()
+          const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
 
           return (
-            <div key={ev.id} className={`bg-white rounded-2xl border transition-all ${isDirty ? 'border-indigo-300 ring-2 ring-indigo-50' : 'border-slate-100'} shadow-sm`}>
-              {/* Event Row */}
-              <div className="p-5 flex flex-col lg:flex-row items-start lg:items-center gap-4">
+            <div key={ev.id} className={`bg-white rounded-3xl border shadow-sm transition-all hover:shadow-md ${isDirty ? 'border-indigo-400 ring-2 ring-indigo-50' : 'border-slate-200'} overflow-hidden`}>
+              {/* Event Card Layout: [Date] -> [Artist/Venue] -> [PAX] -> [Status/Action] */}
+              <div className="p-4 sm:p-6 flex flex-col md:flex-row items-start md:items-center gap-6">
 
-                {/* Date */}
-                <div className="w-32 shrink-0">
-                  <label className="text-[8px] font-black text-slate-300 uppercase block mb-0.5">Fecha</label>
-                  <input type="date" className="w-full text-sm font-black bg-transparent outline-none text-slate-900"
-                    value={state.event_date?.split('T')[0] || ''}
-                    onChange={e => updateEdit(ev.id, 'event_date', e.target.value)} />
+                {/* 1. Date Block */}
+                <div className="flex flex-row md:flex-col items-center justify-center bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100 shrink-0 min-w-[80px]">
+                  <span className="text-2xl font-black text-slate-900 tabular-nums leading-none">{day}</span>
+                  <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest md:mt-1">{month}</span>
                 </div>
 
-                {/* Artist */}
-                <div className="flex-1 min-w-0">
-                  <label className="text-[8px] font-black text-slate-300 uppercase block mb-0.5">Artista / Show</label>
-                  <input className="w-full text-base font-black text-slate-800 bg-transparent outline-none focus:text-indigo-600 border-b border-transparent focus:border-indigo-200 transition truncate"
+                {/* 2. Artist & Venue */}
+                <div className="flex-1 min-w-0 space-y-1">
+                  <input className="w-full text-xl font-black text-slate-900 bg-transparent outline-none focus:text-indigo-600 transition truncate italic uppercase"
                     value={state.show_name || ''}
                     onChange={e => updateEdit(ev.id, 'show_name', e.target.value)} />
-                </div>
-
-                {/* Venue */}
-                <div className="w-44">
-                  <label className="text-[8px] font-black text-slate-300 uppercase block mb-0.5">Venue</label>
-                  <select className="w-full text-xs font-bold bg-transparent outline-none appearance-none text-slate-600"
-                    value={state.venue_id || ''}
-                    onChange={e => updateEdit(ev.id, 'venue_id', e.target.value)}>
-                    <option value="">Sin Venue</option>
-                    {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-                  </select>
-                </div>
-
-                {/* PAX Badge */}
-                <div className="flex items-center gap-1 bg-indigo-50 px-3 py-1.5 rounded-full">
-                  <Users size={12} className="text-indigo-500" />
-                  <span className="text-xs font-black text-indigo-700">{totalPax} PAX</span>
-                </div>
-
-                {/* Status Badge — Restricción: Sin azul/amarillo */}
-                {(() => {
-                  const s = (state.status || 'pendiente').toLowerCase()
-                  const cls = s.includes('ejecut')
-                    ? 'bg-emerald-100 text-emerald-700 border-emerald-200'
-                    : s === 'cancelado'
-                    ? 'bg-rose-100 text-rose-700 border-rose-200'
-                    : s === 'confirmado'
-                    ? 'bg-purple-100 text-purple-700 border-purple-200'
-                    : 'bg-slate-100 text-slate-700 border-slate-200'
-                  return (
-                    <select
-                      className={`text-xs font-black px-3 py-1.5 rounded-full outline-none appearance-none border transition-colors ${cls}`}
-                      value={state.status || 'pendiente'}
-                      onChange={e => updateEdit(ev.id, 'status', e.target.value)}>
-                      <option value="pendiente">Pendiente</option>
-                      <option value="confirmado">Confirmado</option>
-                      <option value="ejecutado">Ejecutado</option>
-                      <option value="cancelado">Cancelado</option>
+                  <div className="flex items-center gap-2">
+                    <MapPin size={12} className="text-slate-400" />
+                    <select className="flex-1 text-sm font-semibold text-slate-600 bg-transparent outline-none appearance-none cursor-pointer"
+                      value={state.venue_id || ''}
+                      onChange={e => updateEdit(ev.id, 'venue_id', e.target.value)}>
+                      <option value="">Sin Venue</option>
+                      {venues.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
                     </select>
-                  )
-                })()}
+                  </div>
+                </div>
 
-                {/* Actions */}
-                <div className="flex items-center gap-2 shrink-0">
-                  {isDirty && (
-                    <button onClick={() => saveEventEdits(ev)} disabled={saving === ev.id}
-                      className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-black text-sm hover:bg-indigo-500 transition flex items-center gap-1 disabled:opacity-50">
-                      {saving === ev.id ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                      Guardar
+                {/* 3. PAX & Performance */}
+                <div className="flex flex-col items-end gap-1 shrink-0 md:min-w-[120px]">
+                  <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100">
+                    <Users size={14} className="text-indigo-600" />
+                    <span className="text-sm font-black text-indigo-900 tabular-nums">{totalPax} PAX</span>
+                  </div>
+                  {(() => {
+                    let adjusted = 0
+                    state.projections?.forEach((p: any) => {
+                       const factor = conversionMap[p.company_name] || 1.0
+                       adjusted += (p.projected_pax || 0) * factor
+                    })
+                    if (adjusted === totalPax || !totalPax) return null
+                    return (
+                      <span className="text-[10px] font-bold text-indigo-500 italic bg-indigo-50/50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
+                        Venta Real: {Math.round(adjusted)} viandas
+                      </span>
+                    )
+                  })()}
+                </div>
+
+                {/* 4. Status & Action */}
+                <div className="flex flex-row md:flex-col items-center gap-3 shrink-0 md:min-w-[150px]">
+                  {(() => {
+                    const s = (state.status || 'pendiente').toLowerCase()
+                    const cls = s === 'ejecutado'
+                      ? 'bg-indigo-600 text-white font-bold border-indigo-700'
+                      : s === 'cancelado'
+                      ? 'bg-red-50 text-red-700 border-red-100'
+                      : s === 'confirmado'
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                      : 'bg-amber-50 text-amber-900 border-amber-200'
+                    
+                    return (
+                      <div className="relative w-full">
+                        <select
+                          className={`w-full text-[10px] font-black px-4 py-2.5 rounded-xl outline-none appearance-none border transition-all text-center uppercase tracking-widest cursor-pointer ${cls}`}
+                          value={state.status || 'pendiente'}
+                          onChange={e => updateEdit(ev.id, 'status', e.target.value)}>
+                          <option value="pendiente">Pendiente</option>
+                          <option value="confirmado">Confirmado</option>
+                          <option value="ejecutado">Ejecutado</option>
+                          <option value="cancelado">Cancelado</option>
+                        </select>
+                      </div>
+                    )
+                  })()}
+                  
+                  <div className="flex items-center gap-2">
+                    {isDirty && (
+                      <button onClick={() => saveEventEdits(ev)} disabled={saving === ev.id}
+                        className="p-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition disabled:opacity-50 shadow-lg">
+                        {saving === ev.id ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                      </button>
+                    )}
+                    <button onClick={() => setExpandedId(isExpanded ? null : ev.id)}
+                      className={`p-2 rounded-xl transition ${isExpanded ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-100'}`}>
+                      {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                     </button>
-                  )}
-                  <button onClick={() => setExpandedId(isExpanded ? null : ev.id)}
-                    className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition">
-                    {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
-                  </button>
+                  </div>
                 </div>
               </div>
+
+              {/* Today Badge */}
+              {state.event_date?.split('T')[0] === today && (
+                <div className="absolute top-2 right-2 bg-emerald-500 text-white text-[8px] font-black px-3 py-1 rounded-full uppercase tracking-widest shadow-sm z-10">
+                  ¡HOY!
+                </div>
+              )}
 
               {/* Expanded: Companies */}
               {isExpanded && (
@@ -579,6 +677,7 @@ export default function MasterEventForm() {
       <VenueModal isOpen={venueModal} onClose={() => setVenueModal(false)} onSuccess={onVenueCreated} />
       <CompanyModal isOpen={companyModal} onClose={() => setCompanyModal(false)} onSuccess={onCompanyCreated} />
       <CoordinatorModal isOpen={coordModal} onClose={() => setCoordModal(false)} onSuccess={onCoordCreated} />
+      </div>
     </div>
   )
 }

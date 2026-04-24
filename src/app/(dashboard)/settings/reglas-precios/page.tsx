@@ -12,11 +12,19 @@ import {
   Percent, 
   Droplets,
   AlertCircle,
-  Loader2
+  Loader2,
+  ChefHat
 } from "lucide-react"
+
+// --- Helper for consistent key matching ---
+function normalizeKey(str: string) {
+  return str?.trim().toLowerCase().replace(/\s+/g, ' ') || ""
+}
 
 export default function ReglasPreciosPage() {
   const [rules, setRules] = useState<any[]>([])
+  const [recetas, setRecetas] = useState<any[]>([])
+  const [clients, setClients] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
@@ -27,15 +35,34 @@ export default function ReglasPreciosPage() {
 
   const fetchRules = async () => {
     setLoading(true)
-    const { data, error } = await supabase
-      .from("commercial_rules")
-      .select("*")
-      .order("company_name", { ascending: true })
+    const [
+      { data: rulesData, error: rErr },
+      { data: recetasData, error: recErr },
+      { data: clientsData, error: cErr }
+    ] = await Promise.all([
+      supabase.from("commercial_rules").select("*").order("company_name", { ascending: true }),
+      supabase.from("recetas").select("id, nombre").order("nombre"),
+      supabase.from("clients").select("id, name").order("name")
+    ])
     
-    if (error) {
-      setMessage({ type: 'error', text: "Error al cargar reglas: " + error.message })
+    if (rErr || recErr || cErr) {
+      setMessage({ type: 'error', text: "Error al cargar datos: " + (rErr?.message || recErr?.message || cErr?.message) })
     } else {
-      setRules(data || [])
+      const clientsDataSafe = clientsData || []
+      const rulesDataSafe = rulesData || []
+      
+      // AUTO-LINK: Match existing rules by name if client_id is missing
+      const linkedRules = rulesDataSafe.map(r => {
+        if (!r.client_id && r.company_name) {
+          const client = clientsDataSafe.find(c => normalizeKey(c.name) === normalizeKey(r.company_name))
+          if (client) return { ...r, client_id: client.id }
+        }
+        return r
+      })
+
+      setRules(linkedRules)
+      setRecetas(recetasData || [])
+      setClients(clientsDataSafe)
     }
     setLoading(false)
   }
@@ -107,9 +134,9 @@ export default function ReglasPreciosPage() {
         <div>
           <div className="flex items-center gap-3 text-indigo-600 mb-2">
             <Settings2 size={32} strokeWidth={2.5} />
-            <span className="text-xs font-black uppercase tracking-[0.2em]">Configuración Avanzada</span>
+            <span className="text-xs font-bold uppercase tracking-[0.2em]">Configuración Avanzada</span>
           </div>
-          <h1 className="text-4xl font-black text-slate-900 tracking-tighter">Reglas de Precios</h1>
+          <h1 className="text-4xl font-bold text-slate-900 tracking-tighter">Reglas de Precios</h1>
           <p className="text-slate-500 mt-2 font-medium">Define los umbrales de Sin TACC y precios base por empresa.</p>
         </div>
         
@@ -140,94 +167,71 @@ export default function ReglasPreciosPage() {
              <p className="text-slate-400 font-bold uppercase tracking-widest">No hay reglas definidas</p>
           </div>
         ) : rules.map((rule) => (
-          <div key={rule.id} className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100 hover:shadow-md transition-shadow group">
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+          <div key={rule.id} className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100 hover:shadow-md transition-shadow group flex flex-col gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
               
               {/* Cliente */}
-              <div className="lg:col-span-3 space-y-2">
-                <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Building2 size={10} /> Empresa Cliente</label>
-                <input 
-                  className="w-full text-xl font-black text-slate-800 bg-transparent outline-none focus:text-indigo-600 transition"
-                  value={rule.company_name}
-                  onChange={e => updateLocalRule(rule.id, 'company_name', e.target.value)}
-                />
-              </div>
+              <div className="lg:col-span-4 space-y-2">
+                <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1"><Building2 size={10} /> Empresa Cliente</label>
+                
+                <select 
+                  className="w-full p-3 bg-indigo-50 border border-indigo-100 rounded-xl text-sm font-bold text-indigo-700 outline-none focus:ring-2 focus:ring-indigo-500/20 transition cursor-pointer"
+                  value={rule.client_id || ""}
+                  onChange={e => {
+                    const val = e.target.value
+                    const client = clients.find(c => c.id === val)
+                    
+                    setRules(prev => prev.map(r => 
+                      r.id === rule.id 
+                        ? { ...r, client_id: client?.id || "", company_name: client?.name || "" }
+                        : r
+                    ))
+                  }}
+                >
+                  <option value="">-- Seleccionar Empresa --</option>
+                  {clients.map(c => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
 
-              {/* Precio Base */}
-              <div className="lg:col-span-2 space-y-2 lg:border-l lg:pl-8 border-slate-100">
-                <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><DollarSign size={10} /> Precio Base</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-300 font-black text-lg">$</span>
-                  <input 
-                    type="number"
-                    className="w-full text-xl font-black text-slate-800 bg-transparent outline-none"
-                    value={rule.price_base}
-                    onChange={e => {
-                      const val = Number(e.target.value)
-                      updateLocalRule(rule.id, 'price_base', val)
-                      // Auto-update ST base if it matches
-                      if (!rule.price_sintacc_base || rule.price_sintacc_base === rule.price_base) {
-                        updateLocalRule(rule.id, 'price_sintacc_base', val)
-                      }
-                    }}
-                  />
+                <div className="flex items-center gap-3 mt-2">
+                   <div className="flex items-center gap-1.5 px-3 py-1 bg-slate-50 text-slate-500 rounded-full text-[9px] font-bold uppercase">
+                      <Droplets size={10} className={rule.includes_water ? 'text-blue-500' : 'text-slate-300'} />
+                      Incluye Agua
+                      <input 
+                        type="checkbox"
+                        className="ml-1 w-4 h-4 accent-blue-600"
+                        checked={rule.includes_water}
+                        onChange={e => updateLocalRule(rule.id, 'includes_water', e.target.checked)}
+                      />
+                   </div>
                 </div>
               </div>
 
-              {/* Precio Base ST */}
-              <div className="lg:col-span-2 space-y-2 lg:border-l lg:pl-8 border-slate-100">
-                <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><DollarSign size={10} /> Base Sin TACC</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-300 font-black text-lg">$</span>
-                  <input 
-                    type="number"
-                    className="w-full text-xl font-black text-indigo-600 bg-transparent outline-none"
-                    value={rule.price_sintacc_base ?? rule.price_base}
-                    onChange={e => {
-                      const val = Number(e.target.value)
-                      updateLocalRule(rule.id, 'price_sintacc_base', val)
-                    }}
-                  />
+              {/* Precios (Compactos) */}
+              <div className="lg:col-span-6 grid grid-cols-3 gap-6 lg:border-l lg:pl-8 border-slate-100">
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">Precio Base</label>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-300 font-bold text-sm">$</span>
+                    <input type="number" className="w-full text-lg font-bold text-slate-900 bg-transparent outline-none" value={rule.price_base} onChange={e => updateLocalRule(rule.id, 'price_base', Number(e.target.value))} />
+                  </div>
                 </div>
-              </div>
-
-              {/* Precio Excedente ST */}
-              <div className="lg:col-span-2 space-y-2 lg:border-l lg:pl-8 border-slate-100">
-                <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><DollarSign size={10} /> Exc. Sin TACC</label>
-                <div className="flex items-center gap-2">
-                  <span className="text-slate-300 font-black text-lg">$</span>
-                  <input 
-                    type="number"
-                    className="w-full text-xl font-black text-rose-600 bg-transparent outline-none"
-                    value={rule.price_sintacc_threshold}
-                    onChange={e => updateLocalRule(rule.id, 'price_sintacc_threshold', Number(e.target.value))}
-                  />
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-indigo-400 uppercase tracking-tighter">Base Sin TACC</label>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-300 font-bold text-sm">$</span>
+                    <input type="number" className="w-full text-lg font-bold text-indigo-600 bg-transparent outline-none" value={rule.price_sintacc_base ?? rule.price_base} onChange={e => updateLocalRule(rule.id, 'price_sintacc_base', Number(e.target.value))} />
+                  </div>
                 </div>
-              </div>
-
-              {/* Cupo ST % */}
-              <div className="lg:col-span-1 space-y-2 lg:border-l lg:pl-8 border-slate-100">
-                <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Percent size={10} /> Cupo</label>
-                <div className="flex items-center gap-2">
-                  <input 
-                    type="number"
-                    className="w-10 text-xl font-black text-slate-400 bg-transparent outline-none"
-                    value={rule.sintacc_limit_pct}
-                    onChange={e => updateLocalRule(rule.id, 'sintacc_limit_pct', Number(e.target.value))}
-                  />
-                </div>
-              </div>
-
-              {/* Agua */}
-              <div className="lg:col-span-1 space-y-2 lg:border-l lg:pl-8 border-slate-100">
-                <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Droplets size={10} /> Agua</label>
-                <div className="flex items-center h-8">
-                  <input 
-                    type="checkbox"
-                    className="w-6 h-6 rounded-lg text-indigo-600 accent-indigo-600"
-                    checked={rule.includes_water}
-                    onChange={e => updateLocalRule(rule.id, 'includes_water', e.target.checked)}
-                  />
+                <div className="space-y-1">
+                  <label className="text-[9px] font-bold text-rose-400 uppercase tracking-tighter">Exc. Sin TACC</label>
+                  <div className="flex items-center gap-1">
+                    <span className="text-slate-300 font-bold text-sm">$</span>
+                    <input type="number" className="w-full text-lg font-bold text-rose-600 bg-transparent outline-none" value={rule.price_sintacc_threshold} onChange={e => updateLocalRule(rule.id, 'price_sintacc_threshold', Number(e.target.value))} />
+                  </div>
                 </div>
               </div>
 
@@ -242,12 +246,42 @@ export default function ReglasPreciosPage() {
                 <button 
                   onClick={() => saveRule(rule)}
                   disabled={saving}
-                  className="p-3 bg-slate-50 text-indigo-600 hover:bg-indigo-600 hover:text-white rounded-2xl transition shadow-sm"
+                  className="p-3 bg-emerald-600 text-white hover:bg-emerald-700 rounded-2xl transition shadow-lg shadow-emerald-100"
                 >
                   {saving ? <Loader2 className="animate-spin" size={24} /> : <Save size={24} />}
                 </button>
               </div>
+            </div>
 
+            {/* VINCULACIÓN TÉCNICA (Escandallos) */}
+            <div className="pt-8 border-t border-slate-50">
+               <div className="flex items-center gap-2 mb-6">
+                  <div className="p-1.5 bg-indigo-50 text-indigo-600 rounded-lg">
+                    <ChefHat size={14} />
+                  </div>
+                  <h3 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Mapeo Técnico de Recetas (Para Escandallo y Logística)</h3>
+               </div>
+               
+               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {[
+                    { id: 'recipe_trad_id', label: 'TRADICIONAL', color: 'slate' },
+                    { id: 'recipe_veg_id', label: 'VEGETARIANA', color: 'emerald' },
+                    { id: 'recipe_vegan_id', label: 'VEGANA', color: 'teal' },
+                    { id: 'recipe_sintacc_id', label: 'SIN TACC', color: 'indigo' }
+                  ].map((cat) => (
+                    <div key={cat.id} className="space-y-2">
+                       <label className={`text-[9px] font-bold text-${cat.color}-500 uppercase tracking-wider ml-1`}>{cat.label}</label>
+                       <select 
+                        className="w-full p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-bold text-slate-700 outline-none focus:bg-white focus:border-indigo-400 transition"
+                        value={rule[cat.id] || ""}
+                        onChange={e => updateLocalRule(rule.id, cat.id, e.target.value)}
+                       >
+                          <option value="">-- No vinculada --</option>
+                          {recetas.map(r => <option key={r.id} value={r.id}>{r.nombre}</option>)}
+                       </select>
+                    </div>
+                  ))}
+               </div>
             </div>
           </div>
         ))}

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import {
   Building2, X, Save, Loader2, User, Phone, Mail,
-  MapPin, CreditCard, Hash, Percent, Coins
+  MapPin, CreditCard, Hash, Percent, Coins, TrendingUp
 } from "lucide-react"
 
 // ─── Types ───────────────────────────────────────────────
@@ -24,13 +24,14 @@ type Client = {
   localidad?: string | null
   provincia?: string | null
   free_unit_step?: number | null
+  conversion_factor?: number | null
 }
 
 const EMPTY: Client = {
   name: "", company: "", phone: "", email: "", contact_name: "",
-  sale_type: "vianda", vianda_price: null, sintacc_price: null,
+  sale_type: "mayorista", vianda_price: null, sintacc_price: null,
   sintacc_included_pct: null, cuit: "", localidad: "", provincia: "",
-  free_unit_step: null,
+  free_unit_step: null, conversion_factor: 1.0,
 }
 
 // ─── Helper Sub-component ─────────────────────────────────
@@ -118,6 +119,7 @@ export default function ClientModal({
       localidad: form.localidad?.trim() || null,
       provincia: form.provincia?.trim() || null,
       free_unit_step: form.free_unit_step ?? null,
+      conversion_factor: form.conversion_factor ?? 1.0,
     }
     if (client?.id) payload.id = client.id
 
@@ -319,11 +321,25 @@ export default function ClientModal({
                   onFocus={e => e.target.select()}
                 />
               </Field>
+              <Field label="Factor Conversión (0-1)" icon={TrendingUp}>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="1"
+                  className={numCls}
+                  placeholder="1.0"
+                  value={form.conversion_factor ?? ""}
+                  onChange={e => set("conversion_factor", parseNum(e.target.value))}
+                  onFocus={e => e.target.select()}
+                />
+              </Field>
             </div>
             <p className="text-[10px] text-slate-400">
               <strong className="text-purple-500">% Sin TACC Incl.:</strong> porcentaje del total de PAX que se cobra a precio vianda estándar.
               El resto se cobra al precio Sin TACC. <br />
-              <strong className="text-purple-500">Libre cada X:</strong> 1 unidad liberada por cada X vendidas (Ej: 10 → 1 libre cada 10).
+              <strong className="text-purple-500">Libre cada X:</strong> 1 unidad liberada por cada X vendidas (Ej: 10 → 1 libre cada 10). <br />
+              <strong className="text-purple-500">Factor Conversión:</strong> Multiplicador de PAX para planificación de compras (Ej: 0.5 = 50%).
             </p>
           </section>
 
@@ -333,11 +349,15 @@ export default function ClientModal({
               Tipo de Venta
             </p>
             <div className="flex gap-3">
-              {["vianda", "mikios", "combo"].map(type => (
+              {[
+                { id: "mayorista", label: "Mayorista" },
+                { id: "minorista", label: "Minorista" },
+                { id: "combo", label: "Combo" }
+              ].map(type => (
                 <label
-                  key={type}
+                  key={type.id}
                   className={`flex-1 text-center py-2.5 rounded-xl border cursor-pointer text-xs font-black uppercase transition ${
-                    form.sale_type === type
+                    form.sale_type === type.id
                       ? "border-purple-400 bg-purple-50 text-purple-700"
                       : "border-slate-200 text-slate-400 hover:border-slate-300"
                   }`}
@@ -346,11 +366,11 @@ export default function ClientModal({
                     type="radio"
                     className="sr-only"
                     name="sale_type"
-                    value={type}
-                    checked={form.sale_type === type}
-                    onChange={() => set("sale_type", type)}
+                    value={type.id}
+                    checked={form.sale_type === type.id}
+                    onChange={() => set("sale_type", type.id)}
                   />
-                  {type}
+                  {type.label}
                 </label>
               ))}
             </div>

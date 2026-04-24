@@ -23,9 +23,11 @@ function normalizeStatus(s: string) {
 }
 
 export default function EventsPage() {
-  const [view, setView] = useState<"pending" | "closed">("pending")
+  const [view, setView] = useState<"upcoming" | "past" | "all">("upcoming")
   const [rows, setRows] = useState<FormatRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+  const today = new Date().toISOString().split('T')[0]
 
   // Filters
   const [companyFilter, setCompanyFilter] = useState("")
@@ -40,6 +42,7 @@ export default function EventsPage() {
   // Creation State
   const [isCreating, setIsCreating] = useState(false)
   const [venues, setVenues] = useState<any[]>([])
+  const [clientOptions, setClientOptions] = useState<string[]>([])
   const [newEq, setNewEq] = useState({ date: "", show: "", venueId: "", company: "", pax: 0, status: "pendiente" })
 
   const fetchEvents = async () => {
@@ -119,14 +122,17 @@ export default function EventsPage() {
     setLoading(false)
   }
 
-  const fetchVenues = async () => {
-    const { data } = await supabase.from("venues").select("id, name").order("name")
-    if (data) setVenues(data)
+  const fetchVenuesAndClients = async () => {
+    const { data: vData } = await supabase.from("venues").select("id, name").order("name")
+    if (vData) setVenues(vData)
+    
+    const { data: cData } = await supabase.from("clients").select("name").order("name")
+    if (cData) setClientOptions(cData.map((c: any) => c.name))
   }
 
   useEffect(() => {
     fetchEvents()
-    fetchVenues()
+    fetchVenuesAndClients()
   }, [])
 
   const handleSaveBatch = async () => {
@@ -199,14 +205,15 @@ export default function EventsPage() {
   const venuesList = Array.from(new Set(rows.map(r => r.venue_name))).sort()
   const statuses = Array.from(new Set(rows.map(r => r.status))).sort()
 
-  const pendingStatuses = ["pendiente", "proyectado", "proyectada", "confirmado"]
-  const closedStatuses = ["ejecutado", "ejecutada", "cancelado", "cancelada"]
-
   let filtered = rows.filter(r => {
-     const st = normalizeStatus(r.status)
-     if (view === "pending" && !pendingStatuses.includes(st)) return false
-     if (view === "closed" && !closedStatuses.includes(st)) return false
+     // Search filter
+     if (searchQuery && !r.show_name.toLowerCase().includes(searchQuery.toLowerCase())) return false
+
+     // Tab filter
+     if (view === "upcoming" && r.event_date < today) return false
+     if (view === "past" && r.event_date >= today) return false
      
+     // Dropdown filters
      if (companyFilter && r.company_name !== companyFilter) return false
      if (venueFilter && r.venue_name !== venueFilter) return false
      if (statusFilter && r.status !== statusFilter) return false
@@ -222,18 +229,18 @@ export default function EventsPage() {
   }
 
   const hasEdits = Object.keys(editedPax).length > 0 || Object.keys(editedStatus).length > 0
-  const isEditingEnabled = view === "pending"
+  const isEditingEnabled = view !== "past"
 
   return (
     <div className="space-y-6 pb-24 relative min-h-screen">
       <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-black text-slate-800 tracking-tight">Gestión Maestra de Eventos</h1>
-          <p className="text-slate-500 font-medium">Paradigma consolidado: Eventos y Mapeo de Proyecciones operativas</p>
+          <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Gestión Maestra de Eventos</h1>
+          <p className="text-slate-500 font-medium">Control unificado de proyecciones, empresas y estados operativos.</p>
         </div>
         <button 
            onClick={() => setIsCreating(!isCreating)}
-           className="bg-indigo-600 text-white px-5 py-3 rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-md transition">
+           className="bg-indigo-600 text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2 hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95">
            <Plus size={20}/> Nuevo Evento / Proyección
         </button>
       </div>
@@ -259,7 +266,10 @@ export default function EventsPage() {
                </div>
                <div className="col-span-1 lg:col-span-1">
                   <label className="block text-xs font-bold text-indigo-900/60 uppercase mb-1">Empresa</label>
-                  <input type="text" placeholder="Ej: Viajes Rock" value={newEq.company} onChange={e=>setNewEq({...newEq, company: e.target.value})} className="w-full rounded-xl border-slate-200 bg-white p-3 font-semibold"/>
+                  <select required value={newEq.company} onChange={e=>setNewEq({...newEq, company: e.target.value})} className="w-full rounded-xl border-slate-200 bg-white p-3 font-semibold appearance-none">
+                     <option value="">Seleccionar Empresa</option>
+                     {clientOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                </div>
                <div className="col-span-1 lg:col-span-1 flex gap-2">
                   <div className="flex-1">
@@ -274,31 +284,45 @@ export default function EventsPage() {
          </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex bg-slate-100 p-2 rounded-2xl w-max">
-         <button onClick={() => setView("pending")} className={`px-6 py-2.5 rounded-xl font-bold transition ${view === "pending" ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>Activos / Pendientes</button>
-         <button onClick={() => setView("closed")} className={`px-6 py-2.5 rounded-xl font-bold transition ${view === "closed" ? 'bg-white shadow text-slate-800' : 'text-slate-500 hover:text-slate-700'}`}>Conclusivos</button>
+      {/* Tabs & Search */}
+      <div className="flex flex-col lg:flex-row justify-between gap-4">
+        <div className="flex bg-slate-100 p-1.5 rounded-2xl w-max">
+           <button onClick={() => setView("upcoming")} className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition ${view === "upcoming" ? 'bg-white shadow text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}>Próximos</button>
+           <button onClick={() => setView("past")} className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition ${view === "past" ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Pasados</button>
+           <button onClick={() => setView("all")} className={`px-6 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider transition ${view === "all" ? 'bg-white shadow text-slate-900' : 'text-slate-500 hover:text-slate-700'}`}>Todos</button>
+        </div>
+
+        <div className="relative flex-1 max-w-md">
+           <input 
+            type="text" 
+            placeholder="Buscar por Artista o Show..."
+            className="w-full pl-12 pr-4 py-3 bg-white border border-slate-200 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 transition-all font-medium"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+           />
+           <Ticket size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+        </div>
       </div>
 
-      {/* Filters */}
+      {/* Dropdown Filters */}
       <div className="flex flex-wrap gap-4 items-end bg-white p-4 lg:p-6 rounded-[2rem] border border-slate-200 shadow-sm">
          <div className="flex-1 min-w-[200px]">
-            <label className="text-[10px] font-black uppercase text-slate-400 mb-2 flex items-center gap-1"><Building2 size={12}/> Empresa</label>
-            <select value={companyFilter} onChange={e=>setCompanyFilter(e.target.value)} className="w-full bg-slate-50 p-3 rounded-xl border border-slate-200 outline-none font-bold">
+            <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1"><Building2 size={12}/> Empresa</label>
+            <select value={companyFilter} onChange={e=>setCompanyFilter(e.target.value)} className="w-full bg-slate-50 p-3 rounded-xl border border-slate-100 outline-none font-bold text-sm">
                <option value="">Todas las Empresas</option>
                {companies.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
          </div>
          <div className="flex-1 min-w-[200px]">
-            <label className="text-[10px] font-black uppercase text-slate-400 mb-2 flex items-center gap-1"><MapPin size={12}/> Venue</label>
-            <select value={venueFilter} onChange={e=>setVenueFilter(e.target.value)} className="w-full bg-slate-50 p-3 rounded-xl border border-slate-200 outline-none font-bold">
+            <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1"><MapPin size={12}/> Venue</label>
+            <select value={venueFilter} onChange={e=>setVenueFilter(e.target.value)} className="w-full bg-slate-50 p-3 rounded-xl border border-slate-100 outline-none font-bold text-sm">
                <option value="">Todos los Venues</option>
                {venuesList.map(v => <option key={v} value={v}>{v}</option>)}
             </select>
          </div>
          <div className="flex-1 min-w-[200px]">
-            <label className="text-[10px] font-black uppercase text-slate-400 mb-2 flex items-center gap-1"><Ticket size={12}/> Estado Maestro</label>
-            <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="w-full bg-slate-50 p-3 rounded-xl border border-slate-200 outline-none font-bold">
+            <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1"><Ticket size={12}/> Estado Maestro</label>
+            <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className="w-full bg-slate-50 p-3 rounded-xl border border-slate-100 outline-none font-bold text-sm">
                <option value="">Cualquier Estado</option>
                {statuses.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
@@ -317,7 +341,7 @@ export default function EventsPage() {
                       <th className="p-4 font-black">Show & Venue</th>
                       <th className="p-4 font-black">Empresa</th>
                       <th className="p-4 font-black">Estado T. Maestro</th>
-                      {view === "pending" ? (
+                      {view !== "past" ? (
                          <>
                          <th className="p-4 font-black text-right w-32">PAX Proyectado</th>
                          <th className="p-4 font-black text-right">Rendimiento (Conv)</th>
@@ -339,14 +363,19 @@ export default function EventsPage() {
 
                       return (
                          <tr key={`${row.master_id}_${row.projection_id}`} className="hover:bg-slate-50/50 transition">
-                            <td className="p-4 tabular-nums text-slate-500 font-bold">{new Date(row.event_date + 'T12:00:00').toLocaleDateString('es-AR')}</td>
-                            <td className="p-4">
-                               <div className="text-slate-900 font-extrabold">{row.show_name}</div>
-                               <div className="text-xs text-slate-400 font-medium">{row.venue_name}</div>
-                            </td>
-                            <td className="p-4">
-                               <span className="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-lg text-xs font-black">{row.company_name || 'Sin Empresa'}</span>
-                            </td>
+                             <td className="p-4 tabular-nums text-slate-500 font-bold">
+                                {new Date(row.event_date + 'T12:00:00').toLocaleDateString('es-AR')}
+                                {row.event_date === today && (
+                                   <div className="mt-1 text-[8px] font-bold bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full inline-block uppercase tracking-widest border border-emerald-100">¡HOY!</div>
+                                )}
+                             </td>
+                             <td className="p-4">
+                                <div className="text-slate-900 font-bold text-base leading-tight tracking-tight">{row.show_name}</div>
+                                <div className="text-xs text-slate-400 font-medium">{row.venue_name}</div>
+                             </td>
+                             <td className="p-4">
+                                <span className="bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-xl text-[10px] font-bold uppercase tracking-wider border border-indigo-100">{row.company_name || 'Sin Empresa'}</span>
+                             </td>
                             <td className="p-4">
                                {isEditingEnabled ? (
                                   <select 
@@ -366,7 +395,7 @@ export default function EventsPage() {
                                )}
                             </td>
                             
-                            {view === "pending" ? (
+                            {view !== "past" ? (
                                <>
                                 <td className="p-4 text-right">
                                    <input 

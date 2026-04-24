@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
-import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2 } from "lucide-react"
+import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight } from "lucide-react"
 import { supabase } from "@/lib/supabase"
 import Link from "next/link"
 
@@ -110,27 +110,55 @@ export default function DashboardPage() {
            })
         }
 
-        // 3. Mathematical Aggregation
-        const todayStr = new Date().toISOString().split('T')[0]
+        // 2.5 Fetch Clients for Conversion Factors
+        const { data: clientsData } = await supabase
+           .from("clients")
+           .select("name, conversion_factor")
 
-        let topPendingEventsCount = 0
-        const activeUniqueCompanies = new Set<string>()
-        let estimatedRev = 0
-        let pendingViandas = 0
+        const conversionMap: Record<string, number> = {}
+        clientsData?.forEach(c => {
+           conversionMap[c.name] = Number(c.conversion_factor) || 1.0
+        })
+
+        // 3. Mathematical Aggregation
+        const today = new Date()
+        const currentDay = today.getDay() // 0 (Sun) - 6 (Sat)
+        const dayOffset = currentDay === 0 ? 6 : currentDay - 1
+
+        const todayDate = new Date(today)
+        todayDate.setHours(0,0,0,0)
         
         const venueAggr: Record<string, number> = {}
 
+        // End of this week (Sunday)
+        const endOfThisWeek = new Date(today)
+        const daysToSunday = currentDay === 0 ? 0 : 7 - currentDay
+        endOfThisWeek.setDate(today.getDate() + daysToSunday)
+        endOfThisWeek.setHours(23,59,59,999)
+
+        // Start of next week (Monday)
+        const startOfNextWeek = new Date(endOfThisWeek)
+        startOfNextWeek.setDate(endOfThisWeek.getDate() + 1)
+        startOfNextWeek.setHours(0,0,0,0)
+
+        // End of next week (Sunday after next)
+        const endOfNextWeek = new Date(startOfNextWeek)
+        endOfNextWeek.setDate(startOfNextWeek.getDate() + 6)
+        endOfNextWeek.setHours(23,59,59,999)
+
         const allMapped: EventData[] = masters.map(m => {
-           let eProj = 0
+           const eRev = revenueByMaster[m.id] || 0
+           const eSold = soldByMaster[m.id] || 0
+           
+           // Calculate Adjusted Projection based on conversion factors of included companies
+           let totalAdjustedProj = 0
            m.event_projections?.forEach((p: any) => {
-              eProj += (p.projected_pax || 0)
+              const factor = conversionMap[p.company_name] || 1.0
+              totalAdjustedProj += (Number(p.projected_pax) || 0) * factor
            })
 
-           const eSold = soldByMaster[m.id] || 0
-           const eRev = revenueByMaster[m.id] || 0
            const vName = (m.venues as any)?.name || (m.venues as any)?.[0]?.name || "-"
 
-           // Venue aggregations (All time)
            if (!venueAggr[vName]) venueAggr[vName] = 0
            venueAggr[vName] += eSold
 
@@ -140,13 +168,12 @@ export default function DashboardPage() {
               show: m.show_name,
               status: (m.status || "").toLowerCase(),
               venue: vName,
-              projected: eProj,
+              projected: Math.round(totalAdjustedProj), // Adjusted!
               sold: eSold,
               revenue: eRev
            }
         })
 
-        // SORTING Helpers
         const safeLocal = (a: string, b: string) => {
            if (!a) return 1; if (!b) return -1;
            return a.localeCompare(b);
@@ -157,26 +184,38 @@ export default function DashboardPage() {
         const pendingStatuses = ["pendiente", "proyectado", "proyectada", "confirmado"]
         const closedStatuses = ["ejecutado", "ejecutada", "cancelado", "cancelada"]
 
-        // The user visually sees ANY pending status as active in events page, so we mirror that
-        const futureEvs = allMapped.filter(m => pendingStatuses.includes(m.status) || (m.date >= todayStr && !closedStatuses.includes(m.status)))
-        
-        const next10DaysList = futureEvs.slice(0, 10)
-        
-        const pastEvs = allMapped.filter(m => closedStatuses.includes(m.status) || (!pendingStatuses.includes(m.status) && m.date < todayStr)).sort((a,b) => safeLocal(b.date, a.date))
+        const futureEvs = allMapped.filter(m => {
+           const evDate = new Date(m.date + 'T12:00:00')
+           return evDate >= todayDate && !closedStatuses.includes(m.status)
+        })
 
-        // Analytics iteration
-        masters.forEach(m => {
-           const st = (m.status || "").toLowerCase()
-           const isActive = st === 'pendiente' || st === 'proyectado' || st === 'confirmado' || m.event_date >= todayStr
-           
-           if (isActive) {
-              topPendingEventsCount++
-              estimatedRev += (revenueByMaster[m.id] || 0)
-              pendingViandas += (soldByMaster[m.id] || 0)
-              m.event_projections?.forEach((p: any) => {
-                 if (p.company_name) activeUniqueCompanies.add(p.company_name)
-              })
-           }
+        const thisWeekList = futureEvs.filter(m => {
+           const evDate = new Date(m.date + 'T12:00:00')
+           return evDate <= endOfThisWeek
+        })
+
+        const nextWeekList = futureEvs.filter(m => {
+           const evDate = new Date(m.date + 'T12:00:00')
+           return evDate >= startOfNextWeek && evDate <= endOfNextWeek
+        })
+
+        setUpcoming10Days(thisWeekList)
+        setUpcomingCharts(nextWeekList) // Using this state to store next week for the columns
+        setExecutedEvents(allMapped.filter(m => closedStatuses.includes(m.status)).sort((a,b) => safeLocal(b.date, a.date)).slice(0, 15))
+
+        let topPendingEventsCount = 0
+        const activeUniqueCompanies = new Set<string>()
+        let estimatedRev = 0
+        let pendingViandas = 0
+
+        futureEvs.forEach(ev => {
+           topPendingEventsCount++
+           estimatedRev += ev.revenue
+           pendingViandas += ev.sold
+           const m = masters.find(mast => mast.id === ev.id)
+           m?.event_projections?.forEach((p: any) => {
+              if (p.company_name) activeUniqueCompanies.add(p.company_name)
+           })
         })
 
         setMetrics({
@@ -185,10 +224,6 @@ export default function DashboardPage() {
            estimatedRevenue: estimatedRev,
            pendingViandas: pendingViandas
         })
-
-        setUpcoming10Days(next10DaysList)
-        setUpcomingCharts(futureEvs.slice(0, 10))
-        setExecutedEvents(pastEvs.slice(0, 15))
 
         // Venues Rank
         const vRank = Object.keys(venueAggr).map(name => ({name, sold: venueAggr[name]})).filter(c => c.sold > 0).sort((a,b) => b.sold - a.sold).slice(0, 5)
@@ -230,12 +265,12 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
+      <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4 mb-10">
         <div>
-          <h2 className="text-3xl font-black tracking-tight text-slate-800">
-            Panel Operativo Central
+          <h2 className="text-5xl font-bold tracking-tighter text-slate-900 uppercase italic">
+            Monitor de Control <span className="text-indigo-600">360°</span>
           </h2>
-          <p className="text-slate-500 font-medium">Radiografía directa con trazabilidad de caja histórica.</p>
+          <p className="text-2xl text-slate-500 font-medium mt-2">Visión estratégica de ventas y planificación logística semanal.</p>
         </div>
       </div>
 
@@ -274,82 +309,79 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-8 lg:grid-cols-3">
-         {/* CHART 1: FUTURO */}
-         <div className="lg:col-span-2 bg-white rounded-[2rem] border border-slate-200 p-6 md:p-8 shadow-sm">
-            <h3 className="text-xl font-black text-slate-800 mb-2 flex items-center gap-2"><TrendingUp className="text-indigo-500"/> Efectividad de Próximos Shows</h3>
-            <p className="text-sm text-slate-500 font-medium mb-8">Progreso de Ventas (Verde) frente al PAX Proyectado oficial Declarado (Gris).</p>
-            
-            <div className="space-y-6 max-h-[350px] overflow-y-auto pr-2">
-               {upcomingCharts.length === 0 && (
-                  <p className="text-center italic text-slate-400 py-10">No hay eventos pendientes programados.</p>
-               )}
+      <div className="grid gap-8">
+         {/* CHART 1: FUTURO (AHORA OCUPA TODO EL ANCHO SI ES NECESARIO O SE AJUSTA) */}
+      <div className="bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
+        <div className="mb-12">
+          <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
+            <TrendingUp className="text-indigo-600" size={40} /> 
+            Efectividad de Próximos Shows
+          </h3>
+          <p className="text-xl text-slate-500 font-medium mt-2">Seguimiento de ventas real vs. proyección para planificación de compras.</p>
+        </div>
+        
+        <div className="space-y-16">
+          <SectionView 
+            title="Esta Semana" 
+            shows={upcoming10Days} 
+            subtitle="Hoy — Domingo" 
+            total_projected={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)}
+            total_adjusted={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)} // Note: in dashboard projected is already adjusted
+            accentColor="emerald"
+            footerTitle="Planificación de Compras"
+            footerLabel="PAX AJUSTADOS"
+          />
+          
+          <SectionView 
+            title="Próxima Semana" 
+            shows={upcomingCharts} 
+            subtitle="Lunes — Domingo"
+            total_projected={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
+            total_adjusted={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
+            accentColor="indigo"
+            footerTitle="Previsión Logística"
+            footerLabel="PAX ESTIMADOS"
+          />
+        </div>
+      </div>
 
-               {upcomingCharts.map((ev, i) => {
-                  const pct = ev.projected > 0 ? Math.min((ev.sold / ev.projected) * 100, 100) : 0
-                  const overSale = ev.sold > ev.projected
-
-                  return (
-                     <div key={i} className="group cursor-pointer">
-                        <div className="flex justify-between items-baseline mb-2">
-                           <p className="font-bold text-slate-800 text-sm">{new Date(ev.date + 'T12:00:00').toLocaleDateString('es-AR').slice(0, 5)} - {ev.show}</p>
-                           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                              <span className="text-indigo-600">{ev.sold} v</span> / {ev.projected} p
-                           </p>
-                        </div>
-                        
-                        <div className="h-5 w-full bg-slate-100/80 rounded-full overflow-hidden relative border border-slate-200">
-                           <div 
-                              className={`h-full rounded-full transition-all duration-1000 ease-out ${overSale ? 'bg-amber-400' : 'bg-emerald-500'}`}
-                              style={{ width: `${pct > 0 ? pct : 0}%` }}
-                           />
-                           
-                           {pct > 15 && (
-                              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-black tracking-wider text-white drop-shadow-sm">
-                                 {pct.toFixed(0)}%
-                              </span>
-                           )}
-                           
-                           {overSale && (
-                              <div className="absolute right-2 top-1/2 -translate-y-1/2 text-[9px] font-black text-amber-900 tracking-wider">
-                                 ¡SOBREVENTA! 
-                              </div>
-                           )}
-                        </div>
-                     </div>
-                  )
-               })}
+         {/* RADAR: PRÓXIMAS FECHAS (GRID DE TARJETAS SOLICITADO) */}
+         <div>
+            <div className="flex items-center justify-between mb-6 px-2">
+               <div>
+                  <h3 className="text-xl font-black tracking-tight text-slate-800">Radar: Próximas Fechas</h3>
+                  <p className="text-xs text-slate-500 font-medium">Logística de despachos por venir (Tarjetas dinámicas)</p>
+               </div>
+               <Link href="/settings/eventos" className="text-indigo-600 text-xs font-black uppercase tracking-widest hover:text-indigo-500 transition">
+                  Ver Gestión Maestra →
+               </Link>
             </div>
-         </div>
-
-         {/* LIST: 10 SHOWS */}
-         <div className="bg-slate-900 rounded-[2rem] p-6 shadow-xl text-white flex flex-col">
-            <h3 className="text-lg font-black tracking-tight text-white mb-2">Radar: Próximas Fechas</h3>
-            <p className="text-xs text-slate-400 font-medium mb-6">Radar logístico de despachos por venir en base al estado de gestión y fecha natural.</p>
             
-            <div className="flex-1 space-y-3 overflow-y-auto pr-2 max-h-[350px]">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                {upcoming10Days.length === 0 && (
-                  <p className="text-slate-500 text-center text-sm py-8 italic font-bold">Sin elementos activos.</p>
+                  <p className="col-span-full text-slate-400 text-center text-sm py-12 italic font-medium bg-white rounded-[2rem] border border-dashed border-slate-300">Sin elementos activos.</p>
                )}
                {upcoming10Days.map((ev, i) => (
-                  <div key={i} className="flex gap-4 items-center bg-slate-800/50 p-4 rounded-[1.25rem] border border-slate-700 hover:bg-slate-700 transition cursor-pointer">
-                     <div className="bg-slate-950 px-3 py-2 rounded-xl text-center border border-slate-800 min-w-[3.5rem]">
-                        <p className="text-[10px] font-black uppercase text-indigo-400">{new Date(ev.date + 'T12:00:00').toLocaleDateString('es-AR', { month: 'short' })}</p>
-                        <p className="text-lg font-black tabular-nums">{new Date(ev.date + 'T12:00:00').getDate()}</p>
+                  <Link key={i} href={`/events/${ev.id}`} className="group relative flex gap-4 items-center bg-white p-5 rounded-[2rem] border border-slate-200 hover:border-indigo-400 transition-all shadow-sm hover:shadow-xl hover:-translate-y-1">
+                     <div className="bg-slate-900 px-4 py-3 rounded-2xl text-center border border-slate-800 group-hover:bg-indigo-600 transition-colors shrink-0">
+                        <p className="text-[10px] font-black uppercase text-indigo-400 group-hover:text-indigo-100 transition-colors">{new Date(ev.date + 'T12:00:00').toLocaleDateString('es-AR', { month: 'short' })}</p>
+                        <p className="text-xl font-black tabular-nums text-white">{new Date(ev.date + 'T12:00:00').getDate()}</p>
                      </div>
                      <div className="flex-1 min-w-0">
-                        <Link href={`/events/${ev.id}`} className="font-bold text-sm tracking-tight hover:text-indigo-300 transition line-clamp-1 truncate block">{ev.show}</Link>
-                        <p className="text-[10px] uppercase text-slate-400 font-bold truncate block mt-1">{ev.venue}</p>
+                        <h4 className="font-black text-slate-800 text-sm tracking-tight line-clamp-1 group-hover:text-indigo-600 transition-colors uppercase italic">{ev.show}</h4>
+                        <p className="text-[10px] uppercase text-slate-400 font-bold truncate flex items-center gap-1 mt-1">
+                           <MapPin size={10} className="text-indigo-400"/> {ev.venue}
+                        </p>
                      </div>
-                  </div>
+                     <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 group-hover:bg-indigo-50 group-hover:text-indigo-500 transition-colors">
+                        <ChevronRight size={16} />
+                     </div>
+                  </Link>
                ))}
             </div>
-
-            <Link href="/events" className="mt-6 w-full text-center bg-slate-800 text-white font-bold py-3 rounded-xl hover:bg-slate-700 transition tracking-wide text-sm">
-               Administrar Calendario Maestro
-            </Link>
          </div>
       </div>
+
 
       {/* HISTORICAL CHARTS SECTION */}
       <h3 className="text-xl font-black mt-10 mb-4 px-2 text-slate-800 flex items-center gap-2"><History size={20}/> Análisis Histórico Contable (Completos/Ejecutados)</h3>
@@ -425,6 +457,136 @@ export default function DashboardPage() {
             </div>
          </div>
 
+      </div>
+    </div>
+  )
+}
+
+// --- Helper Components for the Dashboard Overhaul ---
+
+function SectionView({ title, shows, subtitle, total_projected, total_adjusted, accentColor, footerTitle, footerLabel }: any) {
+  if (shows.length === 0) return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between border-b-4 border-slate-100 pb-4">
+         <h4 className="text-2xl font-bold text-slate-400 uppercase tracking-widest italic">{title}</h4>
+         <span className="text-xs font-bold text-slate-300 bg-slate-50 px-4 py-1.5 rounded-full uppercase tracking-[0.2em]">{subtitle}</span>
+      </div>
+      <div className="py-20 text-center bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
+         <p className="text-slate-400 font-bold uppercase tracking-widest italic">Sin eventos programados</p>
+      </div>
+    </div>
+  )
+
+  const colorMap: any = {
+    emerald: { border: 'border-emerald-100', text: 'text-emerald-700', bg: 'bg-emerald-50' },
+    indigo: { border: 'border-indigo-100', text: 'text-indigo-700', bg: 'bg-indigo-50' }
+  }
+  const colors = colorMap[accentColor] || colorMap.indigo
+
+  return (
+    <div className="space-y-8">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b-4 border-slate-100 pb-4 gap-4">
+         <div className="flex items-center gap-4">
+            <h4 className={`text-2xl font-black ${colors.text} uppercase tracking-tight italic`}>{title}</h4>
+            <span className={`text-[10px] font-black ${colors.bg} ${colors.text} px-3 py-1 rounded-full uppercase tracking-widest`}>{subtitle}</span>
+         </div>
+         <div className="flex items-center gap-6">
+            <div className="text-right">
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Previsión de Compra</p>
+              <p className={`text-xl font-black ${colors.text} tabular-nums`}>{total_adjusted} PAX</p>
+            </div>
+         </div>
+      </div>
+      
+      <div className="space-y-6">
+        {shows.map((show: any, i: number) => (
+          <EffectivenessCard key={i} show={show} />
+        ))}
+      </div>
+
+      <div className="pt-4">
+         <div className={`${accentColor === 'emerald' ? 'bg-slate-900' : 'bg-indigo-600'} p-8 rounded-[2.5rem] text-center shadow-xl relative overflow-hidden group`}>
+            <div className="absolute top-4 right-6 opacity-20 group-hover:opacity-40 transition-opacity">
+              <TrendingUp className="text-white" size={32} />
+            </div>
+            <p className="text-white/60 text-[10px] font-black uppercase tracking-[0.3em] mb-2">{footerTitle}</p>
+            <p className="text-white text-4xl font-black tabular-nums">
+              {total_adjusted} <span className="text-white/40 text-lg uppercase tracking-widest ml-2">{footerLabel}</span>
+            </p>
+            <p className="text-[10px] text-white/40 font-medium italic mt-2 uppercase tracking-widest">
+              * Ajustado por factor de conversión por cliente
+            </p>
+         </div>
+      </div>
+    </div>
+  )
+}
+
+function EffectivenessCard({ show }: { show: any }) {
+  const evDate = new Date(show.date + 'T12:00:00')
+  const day = evDate.getDate()
+  const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
+  const today = new Date().toISOString().split('T')[0]
+  
+  const statusColors: any = {
+    ejecutado: 'bg-indigo-600 text-white border-indigo-700',
+    cancelado: 'bg-red-50 text-red-700 border-red-100',
+    confirmado: 'bg-emerald-50 text-emerald-700 border-emerald-100',
+    pendiente: 'bg-amber-50 text-amber-900 border-amber-200'
+  }
+  const cls = statusColors[show.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'
+
+  return (
+    <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden group hover:shadow-md transition-all relative">
+      <div className="p-5 flex flex-col md:flex-row items-start md:items-center gap-6">
+        
+        {/* 1. Date Block */}
+        <div className="flex flex-row md:flex-col items-center justify-center bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100 shrink-0 min-w-[80px]">
+          <span className="text-2xl font-black text-slate-900 tabular-nums leading-none">{day}</span>
+          <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest md:mt-1">{month}</span>
+        </div>
+
+        {/* 2. Show & Venue */}
+        <div className="flex-1 min-w-0 space-y-1">
+          <h3 className="text-xl font-black text-slate-900 uppercase italic tracking-tighter truncate leading-tight group-hover:text-indigo-600 transition-colors">
+            {show.show}
+          </h3>
+          <div className="flex items-center gap-2">
+            <MapPin size={12} className="text-slate-400" />
+            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{show.venue}</span>
+          </div>
+        </div>
+
+        {/* 3. Metrics */}
+        <div className="flex items-center gap-8 px-6 py-3 bg-slate-50/50 rounded-2xl border border-slate-100/50 shrink-0">
+          {show.sold > 0 && (
+             <>
+             <div className="text-center">
+               <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Ventas</p>
+               <p className="text-lg font-black text-emerald-600 tabular-nums">{show.sold}</p>
+             </div>
+             <div className="h-6 w-px bg-slate-200" />
+             </>
+          )}
+          <div className="text-center">
+            <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
+            <p className="text-lg font-black text-indigo-600 tabular-nums">{show.projected}</p>
+          </div>
+        </div>
+
+        {/* 4. Status */}
+        <div className="shrink-0 md:min-w-[120px] text-center">
+          <span className={`inline-block w-full text-[9px] font-black px-4 py-2.5 rounded-xl border uppercase tracking-[0.2em] ${cls}`}>
+            {show.status}
+          </span>
+        </div>
+
+        {/* 5. Today Badge */}
+        {show.date === today && (
+           <div className="absolute top-2 right-2 bg-emerald-500 text-white text-[7px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
+             ¡HOY!
+           </div>
+        )}
       </div>
     </div>
   )
