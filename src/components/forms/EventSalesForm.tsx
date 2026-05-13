@@ -496,7 +496,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       
       // ACTUALIZAR COMISION RV TRASLADOS EN EL MAESTRO (Unidades Vendidas * 1000)
       if (selectedCompany?.toUpperCase().includes('RV TRASLADOS')) {
-        const totalSold = units.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0)
+        const totalSold = units.reduce((acc, u) => acc + (Number(u.sold) || 0), 0)
         const commission = totalSold * 1000
         await supabase
           .from('events_master')

@@ -199,7 +199,7 @@ export default function ProyectadoVsVentasPage() {
                     tickFormatter={(val) => `$${val/1000}k`}
                   />
                   <Tooltip 
-                    formatter={(val: number) => formatCurrency(val)}
+                    formatter={(val: any) => formatCurrency(Number(val))}
                     contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)', padding: '12px' }}
                     itemStyle={{ fontWeight: 800, fontSize: '13px' }}
                   />
