@@ -74,9 +74,9 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
   const divisor = (wUnidad === 'un') ? 1 : 1000
 
   // CALCULO 1: Costo Operativo Neto Real (Para Recetas)
-  // v_costo_base := p_precio_neto / (v_divisor * (p_factor_merma / 100))
-  const realTimeCostBase = (nPrecioNeto > 0 && nMerma > 0) 
-    ? (nPrecioNeto / (divisor * (nMerma / 100))) 
+  // Formula: Precio Total / (Cantidad Comprada * Rinde)
+  const realTimeCostBase = (nPrecioNeto > 0 && nGramaje > 0 && nMerma > 0) 
+    ? (nPrecioNeto / (nGramaje * (nMerma / 100))) 
     : 0
 
   // CALCULO 2: Total Bulto con IVA (Punto de Control vs Factura)

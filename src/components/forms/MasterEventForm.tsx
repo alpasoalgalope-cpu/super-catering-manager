@@ -1,20 +1,75 @@
 "use client"
 
 import React, { useState, useEffect, useCallback } from "react"
+import Link from "next/link"
 import { supabase } from "@/lib/supabase"
 import {
   Plus, Save, Music, Calendar, MapPin, Building2, Users,
   Loader2, CheckCircle2, AlertCircle, Trash2, ChevronDown,
-  ChevronUp, Settings2, Search, X
+  ChevronUp, Settings2, Search, X, Truck, DollarSign
 } from "lucide-react"
 import VenueModal from "@/components/forms/VenueModal"
 import CompanyModal from "@/components/forms/CompanyModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
+import FleetModal from "@/components/forms/FleetModal"
+import { updateEventMasterAction } from "@/app/actions/events"
+import { getEventProfitability } from "@/app/actions/events"
+
+// --- Helper Component ---
+function EventProfitabilityBadge({ eventId, status, refreshKey }: { eventId: string, status?: string, refreshKey?: number }) {
+  const [data, setData] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    if (status?.toLowerCase() !== 'ejecutado') {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    getEventProfitability(eventId).then(res => {
+      if (res.success) setData(res.data)
+      setLoading(false)
+    })
+  }, [eventId, status, refreshKey])
+
+  if (status?.toLowerCase() !== 'ejecutado') return null
+  if (loading) return <div className="text-[10px] text-slate-400 font-bold flex items-center gap-1 mt-1"><Loader2 size={12} className="animate-spin" /> Calculando...</div>
+  if (!data) return null
+
+  const format = (num: number) => "$" + num.toLocaleString('es-AR')
+  const rentabilidad = data.rentabilidad || 0
+  const pct = data.facturacion > 0 ? (rentabilidad / data.facturacion) * 100 : 0
+  const isPos = rentabilidad > 0
+  const isNeg = rentabilidad < 0
+
+  return (
+    <div className="flex flex-col gap-1 mt-2 p-2 bg-slate-50 border border-slate-100 rounded-xl">
+      <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase tracking-widest gap-2">
+        <span>Venta Real: {data.totalUnidades || 0} U.</span>
+        <span title="Incluye IVA y Bebidas">Esc. (C/IVA): {format(data.escandallo)}</span>
+      </div>
+      <div className="flex justify-between text-[9px] font-black text-slate-400 uppercase tracking-widest gap-2">
+         <span>Fact: {format(data.facturacion)}</span>
+         <div className="flex gap-2 text-[8px]">
+            {data.logistics_cost > 0 && <span>Log: {format(data.logistics_cost)}</span>}
+            {data.extras_cost > 0 && <span className="text-amber-600">Ext: {format(data.extras_cost)}</span>}
+            {data.commissions_cost > 0 && <span className="text-rose-600">Com: {format(data.commissions_cost)}</span>}
+         </div>
+      </div>
+      <div className={`text-xs font-black px-2 py-1 rounded-lg border flex items-center justify-between ${isPos ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : isNeg ? 'bg-rose-50 text-rose-700 border-rose-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+        <span className="uppercase tracking-widest text-[9px] opacity-80">Rentabilidad Final</span>
+        <span>{format(rentabilidad)} ({pct.toFixed(1)}%)</span>
+      </div>
+    </div>
+  )
+}
 
 // --- Types ---
 interface Venue { id: string; name: string; address?: string; meeting_point?: string }
 interface Coordinator { id: string; name: string; company: string; phone?: string }
-interface ProjectionRow { id?: string; company_name: string; projected_pax: number }
+interface Vehicle { id: string; internal_name: string; plate?: string; client_id: string; vehicle_type?: string }
+interface BusAssignment { id?: string; vehicle_id: string; coordinator_id: string; client_id?: string; crew_count?: number }
+interface ProjectionRow { id?: string; company_name: string; projected_pax: number; bus_assignments?: BusAssignment[] }
 interface EventMaster {
   id: string
   event_date: string
@@ -22,6 +77,9 @@ interface EventMaster {
   venue_id: string | null
   coordinator_id: string | null
   status: string
+  logistics_cost?: number
+  extras_cost?: number
+  commissions_cost?: number
   venues?: { name: string }
   coordinators?: { name: string }
   event_projections?: ProjectionRow[]
@@ -32,12 +90,15 @@ export default function MasterEventForm() {
   const [events, setEvents] = useState<EventMaster[]>([])
   const [venues, setVenues] = useState<Venue[]>([])
   const [coordinators, setCoordinators] = useState<Coordinator[]>([])
+  const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [companies, setCompanies] = useState<string[]>([])
   const [conversionMap, setConversionMap] = useState<Record<string, number>>({})
+  const [clientIdMap, setClientIdMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
-  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [refreshCounter, setRefreshCounter] = useState(0)
   const [searchTerm, setSearchTerm] = useState("")
   const [view, setView] = useState<"upcoming" | "past" | "all">("upcoming")
   const [companyFilter, setCompanyFilter] = useState("")
@@ -46,14 +107,36 @@ export default function MasterEventForm() {
   const today = new Date().toISOString().split('T')[0]
 
   // --- New Event Draft ---
-  const emptyDraft = { event_date: "", show_name: "", venue_id: "", coordinator_id: "", status: "pendiente", projections: [{ company_name: "", projected_pax: 0 }] }
-  const [draft, setDraft] = useState(emptyDraft)
+  interface DraftEvent {
+    event_dates: string[];
+    show_name: string;
+    venue_id: string;
+    coordinator_id: string;
+    status: string;
+    logistics_cost: number;
+    extras_cost: number;
+    commissions_cost: number;
+    projections: ProjectionRow[];
+  }
+  const emptyDraft: DraftEvent = { 
+    event_dates: [""], 
+    show_name: "", 
+    venue_id: "", 
+    coordinator_id: "", 
+    status: "pendiente", 
+    logistics_cost: 0,
+    extras_cost: 0,
+    commissions_cost: 0,
+    projections: [{ company_name: "", projected_pax: 0, bus_assignments: [] }] 
+  }
+  const [draft, setDraft] = useState<DraftEvent>(emptyDraft)
   const [showAddForm, setShowAddForm] = useState(false)
 
   // --- Modals ---
   const [venueModal, setVenueModal] = useState(false)
   const [companyModal, setCompanyModal] = useState(false)
   const [coordModal, setCoordModal] = useState(false)
+  const [fleetModal, setFleetModal] = useState(false)
   // Context: which projection row triggered the modal
   const [modalContext, setModalContext] = useState<number | null>(null)
 
@@ -62,26 +145,60 @@ export default function MasterEventForm() {
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
-    const [evRes, venRes, coordRes, compRes] = await Promise.all([
+    const [evRes, venRes, coordRes, compRes, vehRes, busRes] = await Promise.all([
       supabase.from("events_master")
         .select("*, venues(name), coordinators(name), event_projections(id, company_name, projected_pax)")
-        .order("event_date", { ascending: true }),
+        .order("event_date", { ascending: false }),
       supabase.from("venues").select("*").order("name"),
       supabase.from("coordinators").select("id, name, company, phone").order("name"),
-      supabase.from("clients").select("name, conversion_factor").order("name"),
+      supabase.from("clients").select("id, name, conversion_factor").order("name"),
+      supabase.from("vehicles").select("id, internal_name, plate, client_id, vehicle_type").order("internal_name"),
+      supabase.from("event_bus_assignments").select("*")
     ])
-    setEvents(evRes.data || [])
+    
     setVenues(venRes.data || [])
     setCoordinators(coordRes.data || [])
+    setVehicles(vehRes.data || [])
     
     const cMap: Record<string, number> = {}
+    const idMap: Record<string, string> = {}
     const cNames: string[] = []
     compRes.data?.forEach((r: any) => {
       cNames.push(r.name)
       cMap[r.name] = Number(r.conversion_factor) || 1.0
+      idMap[r.name] = r.id
     })
     setCompanies(cNames)
     setConversionMap(cMap)
+    setClientIdMap(idMap)
+
+    const allBuses = busRes.data || []
+    const processedEvents = (evRes.data || []).map((ev: any) => {
+      const evBuses = allBuses.filter((b: any) => b.event_id === ev.id)
+      const mappedProjections = (ev.event_projections || []).map((proj: any) => {
+        const client_id = idMap[proj.company_name]
+        const projBuses = evBuses.filter((b: any) => b.client_id === client_id).map((b: any) => ({
+          id: b.id,
+          vehicle_id: b.vehicle_id,
+          coordinator_id: b.coordinator_id,
+          client_id: b.client_id,
+          crew_count: b.crew_count
+        }))
+        return { ...proj, bus_assignments: projBuses }
+      })
+      return { ...ev, event_projections: mappedProjections }
+    })
+    
+    setEvents(processedEvents)
+    if (processedEvents.length > 0) {
+      // Auto-expand only the first 5 UPCOMING events (to match default view)
+      const now = new Date().toISOString().split('T')[0]
+      const upcomingIds = processedEvents
+        .filter(e => e.event_date >= now)
+        .slice(0, 5)
+        .map(e => e.id)
+      setExpandedIds(new Set(upcomingIds))
+    }
     setLocalEdits({})
     setLoading(false)
   }, [])
@@ -93,47 +210,133 @@ export default function MasterEventForm() {
     setDraft(prev => {
       const updated = [...prev.projections]
       updated[idx] = { ...updated[idx], [field]: value }
+      
       return { ...prev, projections: updated }
     })
   }
 
   const addDraftProjection = () =>
-    setDraft(prev => ({ ...prev, projections: [...prev.projections, { company_name: "", projected_pax: 0 }] }))
+    setDraft(prev => ({ ...prev, projections: [...prev.projections, { company_name: "", projected_pax: 0, bus_assignments: [] }] }))
 
   const removeDraftProjection = (idx: number) =>
     setDraft(prev => ({ ...prev, projections: prev.projections.filter((_, i) => i !== idx) }))
 
+  const addDraftBus = (projIdx: number) => {
+    setDraft(prev => {
+      const updated = [...prev.projections]
+      const currentBuses = updated[projIdx].bus_assignments || []
+      updated[projIdx] = { ...updated[projIdx], bus_assignments: [...currentBuses, { vehicle_id: "", coordinator_id: "" }] }
+      return { ...prev, projections: updated }
+    })
+  }
+
+  const updateDraftBus = (projIdx: number, busIdx: number, field: string, value: any) => {
+    setDraft(prev => {
+      const updated = [...prev.projections]
+      const currentBuses = [...(updated[projIdx].bus_assignments || [])]
+      let finalValue = value
+      
+      // Auto-fill crew count when vehicle changes
+      if (field === 'vehicle_id') {
+        const v = vehicles.find(veh => veh.id === value)
+        let crewCount = 0
+        if (v) {
+          const type = (v.vehicle_type || '').toLowerCase()
+          const name = (v.internal_name || '').toLowerCase()
+          
+          if (type === 'micro' || name.includes('bus') || name.includes('micro') || name.includes('coche')) {
+            crewCount = 3
+          } else if (type === 'trafic') {
+            crewCount = 2
+          } else if (name.includes('trafic') || name.includes('mini') || name.includes('combi')) {
+            crewCount = 2
+          }
+        }
+        currentBuses[busIdx] = { ...currentBuses[busIdx], vehicle_id: value, crew_count: crewCount }
+      } else {
+        currentBuses[busIdx] = { ...currentBuses[busIdx], [field]: value }
+      }
+
+      updated[projIdx] = { ...updated[projIdx], bus_assignments: currentBuses }
+      return { ...prev, projections: updated }
+    })
+  }
+
+  const removeDraftBus = (projIdx: number, busIdx: number) => {
+    setDraft(prev => {
+      const updated = [...prev.projections]
+      const currentBuses = (updated[projIdx].bus_assignments || []).filter((_, i) => i !== busIdx)
+      updated[projIdx] = { ...updated[projIdx], bus_assignments: currentBuses }
+      return { ...prev, projections: updated }
+    })
+  }
+
   const saveNewEvent = async () => {
-    if (!draft.event_date || !draft.show_name) {
-      setMessage({ type: 'error', text: "Fecha y Artista/Show son obligatorios." })
+    const validDates = Array.from(new Set(draft.event_dates.filter(d => d.trim() !== "")))
+    if (validDates.length === 0 || !draft.show_name) {
+      setMessage({ type: 'error', text: "Debes ingresar al menos una fecha y el nombre del Artista/Show." })
       return
     }
     setSaving("new")
     setMessage(null)
     try {
-      const { data: evData, error: evErr } = await supabase
-        .from("events_master")
-        .insert([{
-          event_date: draft.event_date,
-          show_name: draft.show_name,
-          venue_id: draft.venue_id || null,
-          coordinator_id: draft.coordinator_id || null,
-          status: draft.status,
-        }])
-        .select()
-        .single()
+      for (const date of validDates) {
+        const { data: evData, error: evErr } = await supabase
+          .from("events_master")
+          .insert([{
+            event_date: date,
+            show_name: draft.show_name,
+            venue_id: draft.venue_id || null,
+            coordinator_id: draft.coordinator_id || null,
+            status: draft.status,
+            logistics_cost: draft.logistics_cost || 0,
+            extras_cost: draft.extras_cost || 0,
+            commissions_cost: draft.commissions_cost || 0,
+          }])
+          .select()
+          .single()
 
-      if (evErr) throw evErr
+        if (evErr) {
+          if (evErr.code === '23505') {
+            throw new Error(`Ya existe un evento registrado para "${draft.show_name}" en la fecha ${new Date(date).toLocaleDateString('es-AR')}. No se pueden duplicar eventos en la misma fecha y venue.`)
+          }
+          throw evErr
+        }
 
-      const validProj = draft.projections.filter(p => p.company_name.trim() !== "")
-      if (validProj.length > 0) {
-        const { error: projErr } = await supabase.from("event_projections").insert(
-          validProj.map(p => ({ event_id: evData.id, company_name: p.company_name, projected_pax: p.projected_pax }))
-        )
-        if (projErr) throw projErr
+        const validProj = draft.projections.filter(p => p.company_name.trim() !== "")
+        if (validProj.length > 0) {
+          const { error: projErr } = await supabase.from("event_projections").insert(
+            validProj.map(p => ({ event_id: evData.id, company_name: p.company_name, projected_pax: p.projected_pax }))
+          )
+          if (projErr) throw projErr
+
+          const busInserts: any[] = []
+          validProj.forEach(p => {
+            if (p.bus_assignments && p.bus_assignments.length > 0) {
+              const cid = clientIdMap[p.company_name]
+              if (cid) {
+                p.bus_assignments.forEach(b => {
+                  if (b.vehicle_id || b.coordinator_id) {
+                     busInserts.push({
+                        event_id: evData.id,
+                        client_id: cid,
+                        vehicle_id: b.vehicle_id || null,
+                        coordinator_id: b.coordinator_id || null,
+                        crew_count: b.crew_count || 0
+                     })
+                  }
+                })
+              }
+            }
+          })
+          if (busInserts.length > 0) {
+            const { error: busErr } = await supabase.from("event_bus_assignments").insert(busInserts)
+            if (busErr) throw busErr
+          }
+        }
       }
 
-      setMessage({ type: 'success', text: `¡Evento "${draft.show_name}" creado con éxito!` })
+      setMessage({ type: 'success', text: `¡${validDates.length} eventos para "${draft.show_name}" creados con éxito!` })
       setDraft(emptyDraft)
       setShowAddForm(false)
       fetchAll()
@@ -175,7 +378,7 @@ export default function MasterEventForm() {
     setLocalEdits(prev => {
       const current = prev[eventId] || {}
       const currentProjs = current.projections ?? ((events.find(e => e.id === eventId)?.event_projections) || [])
-      return { ...prev, [eventId]: { ...current, projections: [...currentProjs, { company_name: "", projected_pax: 0 }] } }
+      return { ...prev, [eventId]: { ...current, projections: [...currentProjs, { company_name: "", projected_pax: 0, bus_assignments: [] }] } }
     })
   }
 
@@ -187,6 +390,62 @@ export default function MasterEventForm() {
     })
   }
 
+  const addEditBus = (eventId: string, projIdx: number) => {
+    setLocalEdits(prev => {
+      const current = prev[eventId] || {}
+      const currentProjs = current.projections ?? ((events.find(e => e.id === eventId)?.event_projections) || [])
+      const updated = [...currentProjs]
+      const currentBuses = updated[projIdx].bus_assignments || []
+      updated[projIdx] = { ...updated[projIdx], bus_assignments: [...currentBuses, { vehicle_id: "", coordinator_id: "" }] }
+      return { ...prev, [eventId]: { ...current, projections: updated } }
+    })
+  }
+
+  const updateEditBus = (eventId: string, projIdx: number, busIdx: number, field: string, value: any) => {
+    setLocalEdits(prev => {
+      const current = prev[eventId] || {}
+      const currentProjs = current.projections ?? ((events.find(e => e.id === eventId)?.event_projections) || [])
+      const updated = [...currentProjs]
+      const currentBuses = [...(updated[projIdx].bus_assignments || [])]
+      
+      let finalBus = { ...currentBuses[busIdx], [field]: value }
+
+      // Auto-fill crew count when vehicle changes
+      if (field === 'vehicle_id') {
+        const v = vehicles.find(veh => veh.id === value)
+        if (v) {
+          const type = (v.vehicle_type || '').toLowerCase()
+          const name = (v.internal_name || '').toLowerCase()
+          
+          if (type === 'micro' || name.includes('bus') || name.includes('micro') || name.includes('coche')) {
+            finalBus.crew_count = 3
+          } else if (type === 'trafic') {
+            finalBus.crew_count = 2
+          } else if (name.includes('trafic') || name.includes('mini') || name.includes('combi')) {
+            finalBus.crew_count = 2
+          } else {
+            finalBus.crew_count = 0
+          }
+        }
+      }
+
+      currentBuses[busIdx] = finalBus
+      updated[projIdx] = { ...updated[projIdx], bus_assignments: currentBuses }
+      return { ...prev, [eventId]: { ...current, projections: updated } }
+    })
+  }
+
+  const removeEditBus = (eventId: string, projIdx: number, busIdx: number) => {
+    setLocalEdits(prev => {
+      const current = prev[eventId] || {}
+      const currentProjs = current.projections ?? ((events.find(e => e.id === eventId)?.event_projections) || [])
+      const updated = [...currentProjs]
+      const currentBuses = (updated[projIdx].bus_assignments || []).filter((_, i) => i !== busIdx)
+      updated[projIdx] = { ...updated[projIdx], bus_assignments: currentBuses }
+      return { ...prev, [eventId]: { ...current, projections: updated } }
+    })
+  }
+
   const saveEventEdits = async (ev: EventMaster) => {
     const edits = localEdits[ev.id]
     if (!edits) return
@@ -195,28 +454,51 @@ export default function MasterEventForm() {
     try {
       const { event_master_id, projections, event_projections, venues: _v, coordinators: _c, ...restEdits } = edits as any
       if (Object.keys(restEdits).length > 0) {
-        const { error } = await supabase.from("events_master").update(restEdits).eq("id", ev.id)
-        if (error) throw error
+        const res = await updateEventMasterAction(ev.id, restEdits)
+        if (!res.success) throw new Error(res.error)
       }
 
       let savedProjections: ProjectionRow[] = ev.event_projections || []
       if (projections) {
         const results: ProjectionRow[] = []
+        const busInserts: any[] = []
+
         for (const proj of projections) {
           if (!proj.company_name.trim()) continue
+          let finalProj = { ...proj }
           if (proj.id) {
             await supabase.from("event_projections").update({ projected_pax: proj.projected_pax }).eq("id", proj.id)
-            results.push(proj)
+            results.push(finalProj)
           } else {
             const { data: newProj } = await supabase
               .from("event_projections")
               .upsert({ event_id: ev.id, company_name: proj.company_name, projected_pax: proj.projected_pax }, { onConflict: 'event_id,company_name' })
               .select()
               .single()
-            if (newProj) results.push(newProj as ProjectionRow)
-            else results.push(proj)
+            if (newProj) {
+              finalProj.id = newProj.id
+              results.push(finalProj)
+            } else {
+              results.push(finalProj)
+            }
+          }
+
+          const cid = clientIdMap[proj.company_name]
+          if (cid && proj.bus_assignments && proj.bus_assignments.length > 0) {
+            proj.bus_assignments.forEach((b: any) => {
+              if (b.vehicle_id || b.coordinator_id) {
+                busInserts.push({
+                  event_id: ev.id,
+                  client_id: cid,
+                  vehicle_id: b.vehicle_id || null,
+                  coordinator_id: b.coordinator_id || null,
+                  crew_count: b.crew_count || 0
+                })
+              }
+            })
           }
         }
+
         // Delete projections not in the list anymore
         const keepIds = projections.filter((p: any) => p.id).map((p: any) => p.id)
         const originalIds = (ev.event_projections || []).map((p: any) => p.id)
@@ -224,6 +506,13 @@ export default function MasterEventForm() {
         for (const id of toDelete) {
           await supabase.from("event_projections").delete().eq("id", id)
         }
+
+        // Overwrite all bus assignments for this event
+        await supabase.from("event_bus_assignments").delete().eq("event_id", ev.id)
+        if (busInserts.length > 0) {
+          await supabase.from("event_bus_assignments").insert(busInserts)
+        }
+
         savedProjections = results
       }
 
@@ -242,9 +531,73 @@ export default function MasterEventForm() {
       }))
       // Clear only the edits for this event
       setLocalEdits(prev => { const next = { ...prev }; delete next[ev.id]; return next })
+      setRefreshCounter(prev => prev + 1)
       setMessage({ type: 'success', text: "¡Cambios guardados!" })
     } catch (err: any) {
       setMessage({ type: 'error', text: err.message })
+      throw err // Re-throw for handleSaveAll to catch
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const handleSaveAll = async () => {
+    const eventIds = Object.keys(localEdits)
+    if (eventIds.length === 0) return
+    
+    setSaving("all")
+    setMessage(null)
+    
+    let successCount = 0
+    let failCount = 0
+    
+    try {
+      for (const id of eventIds) {
+        const ev = events.find(e => e.id === id)
+        if (ev) {
+          try {
+            await saveEventEdits(ev)
+            successCount++
+          } catch (e) {
+            failCount++
+          }
+        }
+      }
+      
+      if (failCount === 0) {
+        setMessage({ type: 'success', text: `¡Se guardaron todos los cambios con éxito (${successCount} eventos)!` })
+      } else {
+        setMessage({ type: 'error', text: `Se guardaron ${successCount} eventos, pero ${failCount} fallaron. Revisá los errores individuales.` })
+      }
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const handleDeleteEvent = async (eventId: string) => {
+    if (!window.confirm("¿Estás seguro de que deseas eliminar este evento maestro? Esta acción eliminará también todas sus proyecciones y asignaciones de micros asociadas. No se puede deshacer.")) {
+      return
+    }
+
+    setSaving(eventId)
+    setMessage(null)
+    try {
+      // 1. Eliminar asignaciones de micros (por si no hay cascade)
+      await supabase.from("event_bus_assignments").delete().eq("event_id", eventId)
+      
+      // 2. Eliminar proyecciones (tienen cascade, pero por seguridad)
+      await supabase.from("event_projections").delete().eq("event_id", eventId)
+
+      // 3. Eliminar el evento maestro
+      const { error } = await supabase.from("events_master").delete().eq("id", eventId)
+      
+      if (error) throw error
+
+      setEvents(prev => prev.filter(e => e.id !== eventId))
+      setMessage({ type: 'success', text: "Evento eliminado correctamente." })
+    } catch (err: any) {
+      console.error("Error deleting event:", err)
+      setMessage({ type: 'error', text: "Error al eliminar: " + err.message })
     } finally {
       setSaving(null)
     }
@@ -304,6 +657,14 @@ export default function MasterEventForm() {
     }
 
     return true
+  })
+
+  const sortedFilteredEvents = [...filteredEvents].sort((a, b) => {
+    if (view === "upcoming") {
+       return a.event_date.localeCompare(b.event_date) // Hoy -> Fin de año (Asc)
+    }
+    // Pasados o Todos: Hoy -> Principios de año (Desc)
+    return b.event_date.localeCompare(a.event_date)
   })
 
   if (loading) return (
@@ -397,11 +758,31 @@ export default function MasterEventForm() {
           <h2 className="text-xl font-black text-indigo-900 flex items-center gap-2"><Plus size={20} /> Registrar Nuevo Evento</h2>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* Date */}
-            <div className="space-y-1">
-              <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Calendar size={10} /> Fecha *</label>
-              <input type="date" className="w-full p-3 border border-slate-200 rounded-2xl outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition font-bold"
-                value={draft.event_date} onChange={e => setDraft({ ...draft, event_date: e.target.value })} />
+            {/* Date(s) */}
+            <div className="space-y-3">
+              <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Calendar size={10} /> Fecha(s) del Evento *</label>
+              <div className="space-y-2">
+                {draft.event_dates.map((date, idx) => (
+                  <div key={idx} className="flex gap-2">
+                    <input type="date" className="flex-1 p-3 border border-slate-200 rounded-2xl outline-none focus:border-indigo-400 focus:ring-1 focus:ring-indigo-200 transition font-bold"
+                      value={date} onChange={e => {
+                        const newDates = [...draft.event_dates]
+                        newDates[idx] = e.target.value
+                        setDraft({ ...draft, event_dates: newDates })
+                      }} />
+                    {idx > 0 && (
+                      <button type="button" onClick={() => setDraft({ ...draft, event_dates: draft.event_dates.filter((_, i) => i !== idx) })}
+                        className="p-3 text-rose-500 hover:bg-rose-50 rounded-2xl transition">
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <button type="button" onClick={() => setDraft({ ...draft, event_dates: [...draft.event_dates, ""] })}
+                  className="w-full py-2 border-2 border-dashed border-slate-200 rounded-2xl text-[10px] font-bold text-slate-400 hover:border-indigo-300 hover:text-indigo-500 transition uppercase tracking-widest">
+                  + Agregar otra fecha
+                </button>
+              </div>
             </div>
 
             {/* Artist */}
@@ -457,6 +838,32 @@ export default function MasterEventForm() {
             </div>
           </div>
 
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Logistics Cost Field */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Truck size={10} /> Gastos Logística ($)</label>
+              <input type="number" className="w-full p-3 border border-slate-200 rounded-2xl outline-none focus:border-indigo-400 transition font-bold"
+                placeholder="0" value={draft.logistics_cost || ''}
+                onChange={e => setDraft({ ...draft, logistics_cost: Number(e.target.value) || 0 })} />
+            </div>
+
+            {/* Extras Cost Field */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><Plus size={10} /> Gastos Extras / Mano de Obra ($)</label>
+              <input type="number" className="w-full p-3 border border-slate-200 rounded-2xl outline-none focus:border-amber-400 transition font-bold text-amber-700"
+                placeholder="0" value={draft.extras_cost || ''}
+                onChange={e => setDraft({ ...draft, extras_cost: Number(e.target.value) || 0 })} />
+            </div>
+
+            {/* Commissions Cost Field */}
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1"><DollarSign size={10} /> Comisiones (RV Traslados) ($)</label>
+              <input type="number" className="w-full p-3 border border-slate-200 rounded-2xl outline-none focus:border-rose-400 transition font-bold text-rose-700"
+                placeholder="Auto-calculado" value={draft.commissions_cost || ''}
+                onChange={e => setDraft({ ...draft, commissions_cost: Number(e.target.value) || 0 })} />
+            </div>
+          </div>
+
           {/* Companies */}
           <div className="space-y-3">
             <div className="flex items-center justify-between">
@@ -467,32 +874,92 @@ export default function MasterEventForm() {
               </button>
             </div>
 
-            {draft.projections.map((proj, idx) => (
-              <div key={idx} className="flex gap-3 items-center bg-white rounded-2xl p-3 border border-slate-200">
-                <div className="flex gap-2 flex-1">
-                  <select className="flex-1 p-2 border border-slate-200 rounded-xl text-sm outline-none appearance-none"
-                    value={proj.company_name} onChange={e => updateDraftProjection(idx, 'company_name', e.target.value)}>
-                    <option value="">-- Empresa --</option>
-                    {companies.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  <button type="button" onClick={() => { setModalContext(-1); setCompanyModal(true) }}
-                    className="p-2 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition">
-                    <Plus size={14} />
-                  </button>
+            {draft.projections.map((proj, idx) => {
+              const cid = clientIdMap[proj.company_name]
+              const filteredVehicles = vehicles.filter(v => v.client_id === cid)
+              const filteredCoordinators = coordinators.filter(c => c.company === proj.company_name)
+
+              return (
+                <div key={idx} className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+                  <div className="flex gap-3 items-center p-3">
+                    <div className="flex gap-2 flex-1">
+                      <select className="flex-1 p-2 border border-slate-200 rounded-xl text-sm outline-none appearance-none font-bold"
+                        value={proj.company_name} onChange={e => updateDraftProjection(idx, 'company_name', e.target.value)}>
+                        <option value="">-- Empresa --</option>
+                        {companies.map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <button type="button" onClick={() => { setModalContext(-1); setCompanyModal(true) }}
+                        className="p-2 bg-slate-100 text-slate-500 rounded-xl hover:bg-slate-200 transition">
+                        <Plus size={14} />
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-2 w-32">
+                      <Users size={14} className="text-slate-400 shrink-0" />
+                      <input type="text" inputMode="numeric"
+                        className="w-full p-2 border border-slate-200 rounded-xl text-center font-black text-sm outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                        value={proj.projected_pax}
+                        onChange={e => updateDraftProjection(idx, 'projected_pax', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
+                        onFocus={e => e.target.select()} />
+                    </div>
+                    <button onClick={() => removeDraftProjection(idx)} className="text-slate-300 hover:text-rose-500 transition">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+
+                  {/* Logistics Sub-form */}
+                  {proj.company_name && (
+                    <div className="bg-slate-50 border-t border-slate-100 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                          <Truck size={12} /> Logística Planificada (Micros)
+                        </label>
+                        <button type="button" onClick={() => addDraftBus(idx)} className="text-indigo-600 text-[10px] font-black flex items-center gap-1 hover:underline">
+                          <Plus size={10} /> Agregar Micro
+                        </button>
+                      </div>
+                      
+                      {(proj.bus_assignments || []).map((bus: any, bIdx: number) => (
+                        <div key={bIdx} className="flex items-center gap-2">
+                          <div className="flex-1 flex gap-1">
+                            <select className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none"
+                              value={bus.vehicle_id} onChange={e => updateDraftBus(idx, bIdx, 'vehicle_id', e.target.value)}>
+                              <option value="">-- Vehículo --</option>
+                              {filteredVehicles.map(v => <option key={v.id} value={v.id}>{v.internal_name} {v.plate ? `(${v.plate})` : ''}</option>)}
+                            </select>
+                            <button type="button" onClick={() => setFleetModal(true)} className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition">
+                              <Plus size={12} />
+                            </button>
+                          </div>
+                          <div className="flex-1 flex gap-1">
+                            <select className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none"
+                              value={bus.coordinator_id} onChange={e => updateDraftBus(idx, bIdx, 'coordinator_id', e.target.value)}>
+                              <option value="">-- Coordinador --</option>
+                              {filteredCoordinators.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            </select>
+                            <button type="button" onClick={() => setCoordModal(true)} className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition">
+                              <Plus size={12} />
+                            </button>
+                          </div>
+                          <div className="flex flex-col w-12">
+                            <label className="text-[8px] font-black uppercase text-slate-400 text-center">Trip.</label>
+                            <input type="text" inputMode="numeric"
+                              className="w-full p-2 border border-slate-200 rounded-lg text-center font-black text-xs outline-none"
+                              value={bus.crew_count || 0}
+                              onChange={e => updateDraftBus(idx, bIdx, 'crew_count', parseInt(e.target.value.replace(/\D/g, '')) || 0)} />
+                          </div>
+                          <button onClick={() => removeDraftBus(idx, bIdx)} className="p-1 text-slate-300 hover:text-rose-500 transition">
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      ))}
+                      {(!proj.bus_assignments || proj.bus_assignments.length === 0) && (
+                        <p className="text-[10px] text-slate-400 italic">No hay logística planificada.</p>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="flex items-center gap-2 w-32">
-                  <Users size={14} className="text-slate-400 shrink-0" />
-                  <input type="text" inputMode="numeric"
-                    className="w-full p-2 border border-slate-200 rounded-xl text-center font-black text-sm outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    value={proj.projected_pax}
-                    onChange={e => updateDraftProjection(idx, 'projected_pax', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
-                    onFocus={e => e.target.select()} />
-                </div>
-                <button onClick={() => removeDraftProjection(idx)} className="text-slate-300 hover:text-rose-500 transition">
-                  <Trash2 size={16} />
-                </button>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <div className="flex justify-end gap-3 pt-4 border-t border-indigo-100">
@@ -513,16 +980,16 @@ export default function MasterEventForm() {
 
       {/* EVENT LIST */}
       <div className="space-y-3">
-        {filteredEvents.length === 0 && !loading && (
+        {sortedFilteredEvents.length === 0 && !loading && (
           <div className="text-center py-20 bg-slate-50 rounded-[3rem] border-2 border-dashed border-slate-200">
             <p className="text-slate-400 font-bold uppercase tracking-widest">No hay eventos registrados aún</p>
           </div>
         )}
 
-        {filteredEvents.map(ev => {
+        {sortedFilteredEvents.map((ev, index) => {
           const state = getEditState(ev)
           const isDirty = !!localEdits[ev.id]
-          const isExpanded = expandedId === ev.id
+          const isExpanded = expandedIds.has(ev.id)
           const totalPax = (state.projections || []).reduce((a: number, p: ProjectionRow) => a + (p.projected_pax || 0), 0)
           
           const evDate = new Date(state.event_date + 'T12:00:00')
@@ -534,10 +1001,15 @@ export default function MasterEventForm() {
               {/* Event Card Layout: [Date] -> [Artist/Venue] -> [PAX] -> [Status/Action] */}
               <div className="p-4 sm:p-6 flex flex-col md:flex-row items-start md:items-center gap-6">
 
-                {/* 1. Date Block */}
-                <div className="flex flex-row md:flex-col items-center justify-center bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100 shrink-0 min-w-[80px]">
-                  <span className="text-2xl font-black text-slate-900 tabular-nums leading-none">{day}</span>
-                  <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest md:mt-1">{month}</span>
+                {/* 1. Date Block (Now Editable) */}
+                <div className="flex flex-col items-center justify-center bg-slate-50 p-2 rounded-2xl border border-slate-100 shrink-0 min-w-[100px] hover:bg-white hover:border-indigo-200 transition-all group/date">
+                  <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover/date:text-indigo-500">Fecha Evento</label>
+                  <input 
+                    type="date"
+                    className="bg-transparent text-sm font-black text-slate-900 outline-none cursor-pointer text-center w-full"
+                    value={state.event_date || ''}
+                    onChange={e => updateEdit(ev.id, 'event_date', e.target.value)}
+                  />
                 </div>
 
                 {/* 2. Artist & Venue */}
@@ -568,13 +1040,13 @@ export default function MasterEventForm() {
                        const factor = conversionMap[p.company_name] || 1.0
                        adjusted += (p.projected_pax || 0) * factor
                     })
-                    if (adjusted === totalPax || !totalPax) return null
-                    return (
-                      <span className="text-[10px] font-bold text-indigo-500 italic bg-indigo-50/50 px-2 py-0.5 rounded-lg border border-indigo-100/50">
-                        Venta Real: {Math.round(adjusted)} viandas
-                      </span>
-                    )
+                    return null
                   })()}
+                  {(index < 10 || isExpanded) ? (
+                    <EventProfitabilityBadge eventId={ev.id} status={state.status} refreshKey={refreshCounter} />
+                  ) : (
+                    <div className="text-[9px] text-slate-400 italic mt-2 text-center opacity-60">Expandir para ver rentabilidad</div>
+                  )}
                 </div>
 
                 {/* 4. Status & Action */}
@@ -607,11 +1079,27 @@ export default function MasterEventForm() {
                   <div className="flex items-center gap-2">
                     {isDirty && (
                       <button onClick={() => saveEventEdits(ev)} disabled={saving === ev.id}
-                        className="p-2 bg-slate-900 text-white rounded-xl hover:bg-slate-800 transition disabled:opacity-50 shadow-lg">
+                        className="px-4 py-2 bg-emerald-600 text-white font-black rounded-xl hover:bg-emerald-500 transition disabled:opacity-50 shadow-lg flex items-center gap-2">
                         {saving === ev.id ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
+                        <span className="text-xs">Guardar</span>
                       </button>
                     )}
-                    <button onClick={() => setExpandedId(isExpanded ? null : ev.id)}
+                    <button onClick={() => handleDeleteEvent(ev.id)} disabled={saving === ev.id}
+                      className="p-2 text-rose-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition" title="Eliminar Evento">
+                      {saving === ev.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={20} />}
+                    </button>
+                    <Link href={`/ventas-evento?eventId=${ev.id}`} className="px-4 py-2 bg-indigo-50 text-indigo-600 font-black rounded-xl hover:bg-indigo-100 transition shadow-sm flex items-center gap-2">
+                       <DollarSign size={16} />
+                       <span className="text-xs">Ventas</span>
+                    </Link>
+                    <button onClick={() => {
+                      setExpandedIds(prev => {
+                        const next = new Set(prev)
+                        if (next.has(ev.id)) next.delete(ev.id)
+                        else next.add(ev.id)
+                        return next
+                      })
+                    }}
                       className={`p-2 rounded-xl transition ${isExpanded ? 'bg-indigo-50 text-indigo-600' : 'text-slate-400 hover:bg-slate-100'}`}>
                       {isExpanded ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
                     </button>
@@ -638,34 +1126,150 @@ export default function MasterEventForm() {
                       <Plus size={12} /> Agregar empresa
                     </button>
                   </div>
-
-                  {(state.projections || []).map((proj: ProjectionRow, idx: number) => (
-                    <div key={idx} className="flex gap-3 items-center bg-white rounded-xl p-3 border border-slate-200">
-                      <div className="flex gap-2 flex-1">
-                        <select className="flex-1 p-2 border border-slate-200 rounded-lg text-sm outline-none appearance-none"
-                          value={proj.company_name}
-                          onChange={e => updateEditProjection(ev.id, idx, 'company_name', e.target.value)}>
-                          <option value="">-- Empresa --</option>
-                          {companies.map(c => <option key={c} value={c}>{c}</option>)}
-                        </select>
-                        <button type="button" onClick={() => { setModalContext(null); setCompanyModal(true) }}
-                          className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition">
-                          <Plus size={14} />
-                        </button>
+                  
+                  <div className="flex items-center gap-4 mb-4">
+                    {/* Logistics Cost Field */}
+                    <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-slate-200 shadow-sm w-max">
+                      <Truck size={14} className="text-indigo-500" />
+                      <div className="flex flex-col">
+                          <label className="text-[9px] font-black uppercase text-slate-400 tracking-widest">Logística</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-400 text-xs font-bold">$</span>
+                            <input 
+                                type="number" 
+                                className="w-24 bg-transparent outline-none font-black text-slate-700 text-sm"
+                                value={state.logistics_cost || ''}
+                                placeholder="0"
+                                onChange={e => updateEdit(ev.id, 'logistics_cost', Number(e.target.value) || 0)}
+                            />
+                          </div>
                       </div>
-                      <div className="flex items-center gap-2 w-28">
-                        <Users size={12} className="text-slate-400 shrink-0" />
-                        <input type="text" inputMode="numeric"
-                          className="w-full p-2 border border-slate-200 rounded-lg text-center font-black text-sm outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          value={proj.projected_pax}
-                          onChange={e => updateEditProjection(ev.id, idx, 'projected_pax', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
-                          onFocus={e => e.target.select()} />
-                      </div>
-                      <button onClick={() => removeEditProjection(ev.id, idx)} className="text-slate-300 hover:text-rose-500 transition">
-                        <Trash2 size={16} />
-                      </button>
                     </div>
-                  ))}
+
+                    {/* Extras Cost Field */}
+                    <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-amber-200 shadow-sm w-max">
+                      <Plus size={14} className="text-amber-500" />
+                      <div className="flex flex-col">
+                          <label className="text-[9px] font-black uppercase text-amber-500 tracking-widest">Extras (Mano de Obra)</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-amber-300 text-xs font-bold">$</span>
+                            <input 
+                                type="number" 
+                                className="w-24 bg-transparent outline-none font-black text-slate-700 text-sm"
+                                value={state.extras_cost || ''}
+                                placeholder="0"
+                                onChange={e => updateEdit(ev.id, 'extras_cost', Number(e.target.value) || 0)}
+                            />
+                          </div>
+                      </div>
+                    </div>
+
+                    {/* Commissions Cost Field */}
+                    <div className="flex items-center gap-3 bg-white p-3 rounded-xl border border-rose-200 shadow-sm w-max">
+                      <DollarSign size={14} className="text-rose-500" />
+                      <div className="flex flex-col">
+                          <label className="text-[9px] font-black uppercase text-rose-500 tracking-widest">Comisiones (RV Traslados)</label>
+                          <div className="flex items-center gap-1">
+                            <span className="text-rose-300 text-xs font-bold">$</span>
+                            <input 
+                                type="number" 
+                                className="w-24 bg-transparent outline-none font-black text-slate-700 text-sm"
+                                value={state.commissions_cost || ''}
+                                placeholder="0"
+                                onChange={e => updateEdit(ev.id, 'commissions_cost', Number(e.target.value) || 0)}
+                            />
+                          </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {(state.projections || []).map((proj: ProjectionRow, idx: number) => {
+                    const cid = clientIdMap[proj.company_name]
+                    const filteredVehicles = vehicles.filter(v => v.client_id === cid)
+                    const filteredCoordinators = coordinators.filter(c => c.company === proj.company_name)
+
+                    return (
+                      <div key={idx} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <div className="flex gap-3 items-center p-3">
+                          <div className="flex gap-2 flex-1">
+                            <select className="flex-1 p-2 border border-slate-200 rounded-lg text-sm outline-none appearance-none font-bold"
+                              value={proj.company_name}
+                              onChange={e => updateEditProjection(ev.id, idx, 'company_name', e.target.value)}>
+                              <option value="">-- Empresa --</option>
+                              {companies.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                            <button type="button" onClick={() => { setModalContext(null); setCompanyModal(true) }}
+                              className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition">
+                              <Plus size={14} />
+                            </button>
+                          </div>
+                          <div className="flex items-center gap-2 w-28">
+                            <Users size={12} className="text-slate-400 shrink-0" />
+                            <input type="text" inputMode="numeric"
+                              className="w-full p-2 border border-slate-200 rounded-lg text-center font-black text-sm outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                              value={proj.projected_pax}
+                              onChange={e => updateEditProjection(ev.id, idx, 'projected_pax', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
+                              onFocus={e => e.target.select()} />
+                          </div>
+                          <button onClick={() => removeEditProjection(ev.id, idx)} className="text-slate-300 hover:text-rose-500 transition">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+
+                        {/* Logistics Sub-form */}
+                        {proj.company_name && (
+                          <div className="bg-slate-50 border-t border-slate-100 p-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <label className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex items-center gap-1">
+                                <Truck size={12} /> Logística Planificada (Micros)
+                              </label>
+                              <button type="button" onClick={() => addEditBus(ev.id, idx)} className="text-indigo-600 text-[10px] font-black flex items-center gap-1 hover:underline">
+                                <Plus size={10} /> Agregar Micro
+                              </button>
+                            </div>
+                            
+                            {(proj.bus_assignments || []).map((bus: any, bIdx: number) => (
+                              <div key={bIdx} className="flex items-center gap-2">
+                                <div className="flex-1 flex gap-1">
+                                  <select className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none"
+                                    value={bus.vehicle_id} onChange={e => updateEditBus(ev.id, idx, bIdx, 'vehicle_id', e.target.value)}>
+                                    <option value="">-- Vehículo --</option>
+                                    {filteredVehicles.map(v => <option key={v.id} value={v.id}>{v.internal_name} {v.plate ? `(${v.plate})` : ''}</option>)}
+                                  </select>
+                                  <button type="button" onClick={() => setFleetModal(true)} className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition">
+                                    <Plus size={12} />
+                                  </button>
+                                </div>
+                                <div className="flex-1 flex gap-1">
+                                  <select className="w-full p-2 bg-white border border-slate-200 rounded-lg text-xs outline-none"
+                                    value={bus.coordinator_id} onChange={e => updateEditBus(ev.id, idx, bIdx, 'coordinator_id', e.target.value)}>
+                                    <option value="">-- Coordinador --</option>
+                                    {filteredCoordinators.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                  </select>
+                                  <button type="button" onClick={() => setCoordModal(true)} className="p-2 bg-slate-100 text-slate-500 rounded-lg hover:bg-slate-200 transition">
+                                    <Plus size={12} />
+                                  </button>
+                                </div>
+                                <div className="flex flex-col w-12">
+                                  <label className="text-[8px] font-black uppercase text-slate-400 text-center">Trip.</label>
+                                  <input type="text" inputMode="numeric"
+                                    className="w-full p-2 border border-slate-200 rounded-lg text-center font-black text-xs outline-none"
+                                    value={bus.crew_count || 0}
+                                    onChange={e => updateEditBus(ev.id, idx, bIdx, 'crew_count', parseInt(e.target.value.replace(/\D/g, '')) || 0)} />
+                                </div>
+                                <button onClick={() => removeEditBus(ev.id, idx, bIdx)} className="p-1 text-slate-300 hover:text-rose-500 transition">
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
+                            ))}
+                            {(!proj.bus_assignments || proj.bus_assignments.length === 0) && (
+                              <p className="text-[10px] text-slate-400 italic">No hay logística planificada.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -677,7 +1281,31 @@ export default function MasterEventForm() {
       <VenueModal isOpen={venueModal} onClose={() => setVenueModal(false)} onSuccess={onVenueCreated} />
       <CompanyModal isOpen={companyModal} onClose={() => setCompanyModal(false)} onSuccess={onCompanyCreated} />
       <CoordinatorModal isOpen={coordModal} onClose={() => setCoordModal(false)} onSuccess={onCoordCreated} />
+      <FleetModal 
+        isOpen={fleetModal} 
+        onClose={() => setFleetModal(false)} 
+        onSuccess={() => {
+          supabase.from("vehicles").select("id, internal_name, plate, client_id, vehicle_type").order("internal_name").then(({ data }) => setVehicles(data || []))
+        }} 
+        clients={Object.entries(clientIdMap).map(([name, id]) => ({ id, name }))} 
+      />
       </div>
+
+      {/* FLOATING SAVE ALL BUTTON */}
+      {Object.keys(localEdits).length > 0 && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white p-4 rounded-[2.5rem] shadow-2xl flex items-center gap-6 animate-in slide-in-from-bottom-10 z-[100] border border-slate-700">
+           <div className="pl-4 text-left">
+              <p className="font-black text-sm tracking-tight text-white">Cambios masivos detectados</p>
+              <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest">{Object.keys(localEdits).length} eventos con modificaciones</p>
+           </div>
+           <button 
+              onClick={handleSaveAll} disabled={saving === "all"}
+              className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-4 rounded-[1.5rem] font-black flex items-center gap-2 transition-all shadow-lg active:scale-95 disabled:opacity-50">
+              {saving === "all" ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>}
+              Guardar Todo Ahora
+           </button>
+        </div>
+      )}
     </div>
   )
 }

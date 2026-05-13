@@ -23,6 +23,16 @@ export async function createProductAction(data: ProductFormData) {
       throw new Error(error.message)
     }
 
+    const factorMermaNormalized = data.factor_merma / 100
+    // Formula: Precio Total / (Cantidad Comprada * Rinde)
+    const costoUnidadBase = data.precio_neto / (data.gramos_por_unidad * factorMermaNormalized)
+
+    await supabase
+      .from('precios_historicos')
+      .update({ costo_unidad_base: costoUnidadBase })
+      .eq('producto_id', productId)
+      .eq('activo', true)
+
     // Revalidar caché de servidor de las vistas que listen productos
     revalidatePath("/inventario/productos")
     
@@ -58,8 +68,8 @@ export async function updateProductAction(id: string, data: ProductFormData) {
     // Por ahora, para simplificar y cumplir con el requisito de "edición operativa",
     // insertamos un nuevo precio si hay cambio, o actualizamos el último si es el mismo día.
     
-    const divisor = (data.unidad_medida === 'un') ? 1 : 1000
-    const costoUnidadBase = data.precio_neto / (divisor * factorMermaNormalized)
+    // Formula: Precio Total / (Cantidad Comprada * Rinde)
+    const costoUnidadBase = data.precio_neto / (data.gramos_por_unidad * factorMermaNormalized)
 
     // Insertar nuevo histórico (esto mantiene la trazabilidad solicitada)
     const { error: priceError } = await supabase
@@ -92,6 +102,31 @@ export async function deleteProductAction(id: string) {
   } catch (err: any) {
     console.error("Delete Action error:", err)
     return { success: false, error: err.message || "Error al eliminar producto" }
+  }
+}
+
+export async function updateProductStockAction(id: string, stock_actual: number, stock_minimo: number) {
+  try {
+    // 1. Obtener stock actual para guardar como anterior
+    const { data: current } = await supabase.from('productos').select('stock_actual').eq('id', id).single()
+
+    const { error } = await supabase
+      .from('productos')
+      .update({ 
+        stock_actual, 
+        stock_minimo,
+        stock_anterior: current?.stock_actual || 0 
+      })
+      .eq('id', id)
+
+    if (error) throw error
+    revalidatePath("/inventario/stock")
+    revalidatePath("/inventario/productos")
+    revalidatePath("/inventario/catalogo")
+    return { success: true }
+  } catch (err: any) {
+    console.error("Update Stock Action error:", err)
+    return { success: false, error: err.message || "Error al actualizar stock" }
   }
 }
 

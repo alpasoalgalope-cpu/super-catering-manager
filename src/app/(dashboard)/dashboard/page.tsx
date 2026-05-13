@@ -15,6 +15,11 @@ interface EventData {
    projected: number
    sold: number
    revenue: number
+   coordinators?: {
+      name: string
+      phone: string
+      company: string
+   }[]
 }
 
 export default function DashboardPage() {
@@ -36,6 +41,11 @@ export default function DashboardPage() {
   const [topVenues, setTopVenues] = useState<{name: string, sold: number}[]>([])
   const [topCompanies, setTopCompanies] = useState<{name: string, sold: number}[]>([])
 
+  // Future Analysis (Projections)
+  const [futureByMonth, setFutureByMonth] = useState<{name: string, projected: number}[]>([])
+  const [futureByVenue, setFutureByVenue] = useState<{name: string, projected: number}[]>([])
+  const [futureByCompany, setFutureByCompany] = useState<{name: string, projected: number}[]>([])
+
   useEffect(() => {
      const bootstrapDashboard = async () => {
         setLoading(true)
@@ -43,11 +53,19 @@ export default function DashboardPage() {
         // 1. Fetch ALL Events Master (To capture History and Future)
         const { data: masters, error } = await supabase
            .from("events_master")
-           .select(`
-              id, event_date, show_name, status,
-              venues (name),
-              event_projections (id, company_name, projected_pax)
-           `)
+            .select(`
+               id, event_date, show_name, status,
+               venues (name),
+               event_projections (
+                  id, 
+                  company_name, 
+                  projected_pax
+               ),
+               event_bus_assignments (
+                 id,
+                 coordinators (id, name, phone, company)
+               )
+            `)
 
         if (error) {
            console.error("Dashboard master fetch error:", error)
@@ -110,14 +128,22 @@ export default function DashboardPage() {
            })
         }
 
-        // 2.5 Fetch Clients for Conversion Factors
-        const { data: clientsData } = await supabase
-           .from("clients")
-           .select("name, conversion_factor")
+        // 2.5 Fetch Clients for Conversion Factors & Rules
+        const [ { data: clientsData }, { data: rulesData } ] = await Promise.all([
+           supabase.from("clients").select("name, conversion_factor"),
+           supabase.from("commercial_rules").select("*")
+        ])
 
         const conversionMap: Record<string, number> = {}
         clientsData?.forEach(c => {
-           conversionMap[c.name] = Number(c.conversion_factor) || 1.0
+           const key = c.name?.trim().toLowerCase()
+           if (key) conversionMap[key] = Number(c.conversion_factor) || 1.0
+        })
+
+        const rulesMap: Record<string, any> = {}
+        rulesData?.forEach(r => {
+           const key = r.company_name?.trim().toLowerCase()
+           if (key) rulesMap[key] = r
         })
 
         // 3. Mathematical Aggregation
@@ -150,11 +176,23 @@ export default function DashboardPage() {
            const eRev = revenueByMaster[m.id] || 0
            const eSold = soldByMaster[m.id] || 0
            
-           // Calculate Adjusted Projection based on conversion factors of included companies
+           // Calculate Adjusted Projection and Projected Revenue
            let totalAdjustedProj = 0
+           let totalProjectedRev = 0
+
            m.event_projections?.forEach((p: any) => {
-              const factor = conversionMap[p.company_name] || 1.0
-              totalAdjustedProj += (Number(p.projected_pax) || 0) * factor
+              const compKey = p.company_name?.trim().toLowerCase()
+              const factor = conversionMap[compKey] || 1.0
+              const rule = rulesMap[compKey]
+              
+              const basePax = Number(p.projected_pax) || 0
+              const adjustedSales = basePax * factor
+              totalAdjustedProj += adjustedSales
+              
+              if (rule) {
+                 // Formula solicitada: PAX Ajustado * Precio Base (Sin restar liberados, costeando el 100%)
+                 totalProjectedRev += adjustedSales * (Number(rule.price_base) || 0)
+              }
            })
 
            const vName = (m.venues as any)?.name || (m.venues as any)?.[0]?.name || "-"
@@ -162,16 +200,28 @@ export default function DashboardPage() {
            if (!venueAggr[vName]) venueAggr[vName] = 0
            venueAggr[vName] += eSold
 
-           return {
-              id: m.id,
-              date: m.event_date,
-              show: m.show_name,
-              status: (m.status || "").toLowerCase(),
-              venue: vName,
-              projected: Math.round(totalAdjustedProj), // Adjusted!
-              sold: eSold,
-              revenue: eRev
-           }
+            const coordinators: {name: string, phone: string, company: string}[] = []
+            m.event_bus_assignments?.forEach((ba: any) => {
+               if (ba.coordinators) {
+                  coordinators.push({
+                     name: ba.coordinators.name,
+                     phone: ba.coordinators.phone,
+                     company: ba.coordinators.company
+                  })
+               }
+            })
+
+            return {
+               id: m.id,
+               date: m.event_date,
+               show: m.show_name,
+               status: (m.status || "").toLowerCase(),
+               venue: vName,
+               projected: Math.round(totalAdjustedProj),
+               sold: eSold,
+               revenue: eRev > 0 ? eRev : totalProjectedRev,
+               coordinators
+            }
         })
 
         const safeLocal = (a: string, b: string) => {
@@ -233,6 +283,31 @@ export default function DashboardPage() {
         setTopVenues(vRank)
         setTopCompanies(cRank)
 
+        // FUTURE ANALYSIS CALCULATIONS
+        const monthAggr: Record<string, number> = {}
+        const futVenueAggr: Record<string, number> = {}
+        const futCompanyAggr: Record<string, number> = {}
+
+        futureEvs.forEach(ev => {
+           const d = new Date(ev.date + 'T12:00:00')
+           const mName = d.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).toUpperCase()
+           monthAggr[mName] = (monthAggr[mName] || 0) + ev.projected
+           
+           futVenueAggr[ev.venue] = (futVenueAggr[ev.venue] || 0) + ev.projected
+
+           const m = masters.find(mast => mast.id === ev.id)
+           m?.event_projections?.forEach((p: any) => {
+              const compKey = p.company_name?.trim().toLowerCase()
+              const factor = conversionMap[compKey] || 1.0
+              const adjusted = (Number(p.projected_pax) || 0) * factor
+              futCompanyAggr[p.company_name] = (futCompanyAggr[p.company_name] || 0) + Math.round(adjusted)
+           })
+        })
+
+        setFutureByMonth(Object.keys(monthAggr).map(name => ({name, projected: monthAggr[name]})))
+        setFutureByVenue(Object.keys(futVenueAggr).map(name => ({name, projected: futVenueAggr[name]})).sort((a,b) => b.projected - a.projected))
+        setFutureByCompany(Object.keys(futCompanyAggr).map(name => ({name, projected: futCompanyAggr[name]})).sort((a,b) => b.projected - a.projected))
+
         setLoading(false)
      }
 
@@ -274,48 +349,13 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
-        <DashboardCard
-          title="Próximos Shows"
-          value={metrics.eventCount}
-          subtitle="En calendario activo"
-          icon={<Calendar size={24} />}
-          color="purple"
-          href="/events"
-        />
-        <DashboardCard
-          title="Empresas de Turismo"
-          value={metrics.activeCompanies}
-          subtitle="Proyectando en activos"
-          icon={<Users size={24} />}
-          color="emerald"
-          href="/events"
-        />
-        <DashboardCard
-          title="Ingresos a Facturar"
-          value={formatCurrency(metrics.estimatedRevenue)}
-          subtitle="Proyección financiera bruta"
-          icon={<DollarSign size={24} />}
-          color="emerald"
-          href="/ventas-evento"
-        />
-        <DashboardCard
-          title="Viandas en Preparación"
-          value={metrics.pendingViandas}
-          subtitle="Ventas y liberados confirmados"
-          icon={<Activity size={24} />}
-          color="purple"
-          href="/produccion"
-        />
-      </div>
-
       <div className="grid gap-8">
          {/* CHART 1: FUTURO (AHORA OCUPA TODO EL ANCHO SI ES NECESARIO O SE AJUSTA) */}
       <div className="bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
         <div className="mb-12">
           <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
             <TrendingUp className="text-indigo-600" size={40} /> 
-            Efectividad de Próximos Shows
+            Shows Próximas Semanas
           </h3>
           <p className="text-xl text-slate-500 font-medium mt-2">Seguimiento de ventas real vs. proyección para planificación de compras.</p>
         </div>
@@ -327,6 +367,7 @@ export default function DashboardPage() {
             subtitle="Hoy — Domingo" 
             total_projected={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)}
             total_adjusted={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)} // Note: in dashboard projected is already adjusted
+            total_revenue={upcoming10Days.reduce((acc, curr) => acc + curr.revenue, 0)}
             accentColor="emerald"
             footerTitle="Planificación de Compras"
             footerLabel="PAX AJUSTADOS"
@@ -338,50 +379,14 @@ export default function DashboardPage() {
             subtitle="Lunes — Domingo"
             total_projected={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
             total_adjusted={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
+            total_revenue={upcomingCharts.reduce((acc, curr) => acc + curr.revenue, 0)}
             accentColor="indigo"
             footerTitle="Previsión Logística"
             footerLabel="PAX ESTIMADOS"
           />
         </div>
       </div>
-
-         {/* RADAR: PRÓXIMAS FECHAS (GRID DE TARJETAS SOLICITADO) */}
-         <div>
-            <div className="flex items-center justify-between mb-6 px-2">
-               <div>
-                  <h3 className="text-xl font-black tracking-tight text-slate-800">Radar: Próximas Fechas</h3>
-                  <p className="text-xs text-slate-500 font-medium">Logística de despachos por venir (Tarjetas dinámicas)</p>
-               </div>
-               <Link href="/settings/eventos" className="text-indigo-600 text-xs font-black uppercase tracking-widest hover:text-indigo-500 transition">
-                  Ver Gestión Maestra →
-               </Link>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-               {upcoming10Days.length === 0 && (
-                  <p className="col-span-full text-slate-400 text-center text-sm py-12 italic font-medium bg-white rounded-[2rem] border border-dashed border-slate-300">Sin elementos activos.</p>
-               )}
-               {upcoming10Days.map((ev, i) => (
-                  <Link key={i} href={`/events/${ev.id}`} className="group relative flex gap-4 items-center bg-white p-5 rounded-[2rem] border border-slate-200 hover:border-indigo-400 transition-all shadow-sm hover:shadow-xl hover:-translate-y-1">
-                     <div className="bg-slate-900 px-4 py-3 rounded-2xl text-center border border-slate-800 group-hover:bg-indigo-600 transition-colors shrink-0">
-                        <p className="text-[10px] font-black uppercase text-indigo-400 group-hover:text-indigo-100 transition-colors">{new Date(ev.date + 'T12:00:00').toLocaleDateString('es-AR', { month: 'short' })}</p>
-                        <p className="text-xl font-black tabular-nums text-white">{new Date(ev.date + 'T12:00:00').getDate()}</p>
-                     </div>
-                     <div className="flex-1 min-w-0">
-                        <h4 className="font-black text-slate-800 text-sm tracking-tight line-clamp-1 group-hover:text-indigo-600 transition-colors uppercase italic">{ev.show}</h4>
-                        <p className="text-[10px] uppercase text-slate-400 font-bold truncate flex items-center gap-1 mt-1">
-                           <MapPin size={10} className="text-indigo-400"/> {ev.venue}
-                        </p>
-                     </div>
-                     <div className="w-8 h-8 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 group-hover:bg-indigo-50 group-hover:text-indigo-500 transition-colors">
-                        <ChevronRight size={16} />
-                     </div>
-                  </Link>
-               ))}
-            </div>
-         </div>
-      </div>
-
+    </div>
 
       {/* HISTORICAL CHARTS SECTION */}
       <h3 className="text-xl font-black mt-10 mb-4 px-2 text-slate-800 flex items-center gap-2"><History size={20}/> Análisis Histórico Contable (Completos/Ejecutados)</h3>
@@ -458,13 +463,79 @@ export default function DashboardPage() {
          </div>
 
       </div>
+
+      {/* FUTURE ANALYSIS SECTION */}
+      <h3 className="text-xl font-black mt-16 mb-4 px-2 text-indigo-800 flex items-center gap-2"><TrendingUp size={20}/> Análisis de Proyecciones Futuras (Estadío / Empresa / Mes)</h3>
+      <div className="grid gap-8 lg:grid-cols-3 items-start pb-10">
+         
+         {/* FUTURE BY MONTH */}
+         <div className="bg-indigo-50/30 border border-indigo-100 p-6 rounded-[2rem]">
+            <h4 className="font-black text-[10px] text-indigo-400 uppercase tracking-widest mb-6">Proyección por Mes</h4>
+            <div className="space-y-4">
+               {futureByMonth.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-10">Sin proyecciones futuras.</p>}
+               {futureByMonth.map((m, i) => (
+                  <div key={i} className="bg-white p-4 rounded-2xl border border-indigo-50 shadow-sm">
+                     <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">{m.name}</p>
+                     <p className="text-2xl font-black text-indigo-900 tabular-nums">{m.projected} <span className="text-[10px] text-indigo-400 uppercase tracking-widest ml-1">PAX Total</span></p>
+                  </div>
+               ))}
+            </div>
+         </div>
+
+         {/* FUTURE BY VENUE */}
+         <div className="bg-white border border-slate-200 p-6 rounded-[2rem]">
+            <h4 className="font-black text-[10px] text-slate-400 uppercase tracking-widest mb-6">Top Sedes (Proyectado)</h4>
+            <div className="space-y-4">
+               {futureByVenue.slice(0, 8).map((v, i) => {
+                  const maxVal = futureByVenue[0]?.projected || 1
+                  const pct = (v.projected / maxVal) * 100
+                  return (
+                     <div key={i} className="space-y-1">
+                        <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
+                           <span className="text-slate-600 truncate max-w-[150px]">{v.name}</span>
+                           <span className="text-indigo-600">{v.projected} PAX</span>
+                        </div>
+                        <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                           <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                     </div>
+                  )
+               })}
+            </div>
+         </div>
+
+         {/* FUTURE BY COMPANY */}
+         <div className="bg-white border border-slate-200 p-6 rounded-[2rem]">
+            <h4 className="font-black text-[10px] text-slate-400 uppercase tracking-widest mb-6">Top Empresas (Proyectado)</h4>
+            <div className="space-y-4">
+               {futureByCompany.slice(0, 8).map((c, i) => {
+                  const maxVal = futureByCompany[0]?.projected || 1
+                  const pct = (c.projected / maxVal) * 100
+                  return (
+                     <div key={i} className="space-y-1">
+                        <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
+                           <span className="text-slate-600 truncate max-w-[150px]">{c.name}</span>
+                           <span className="text-indigo-600">{c.projected} PAX</span>
+                        </div>
+                        <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                           <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pct}%` }} />
+                        </div>
+                     </div>
+                  )
+               })}
+            </div>
+         </div>
+
+      </div>
     </div>
   )
 }
 
 // --- Helper Components for the Dashboard Overhaul ---
 
-function SectionView({ title, shows, subtitle, total_projected, total_adjusted, accentColor, footerTitle, footerLabel }: any) {
+const formatCurrencyLocal = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
+
+function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel }: any) {
   if (shows.length === 0) return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b-4 border-slate-100 pb-4">
@@ -509,12 +580,24 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
             <div className="absolute top-4 right-6 opacity-20 group-hover:opacity-40 transition-opacity">
               <TrendingUp className="text-white" size={32} />
             </div>
-            <p className="text-white/60 text-[10px] font-black uppercase tracking-[0.3em] mb-2">{footerTitle}</p>
-            <p className="text-white text-4xl font-black tabular-nums">
-              {total_adjusted} <span className="text-white/40 text-lg uppercase tracking-widest ml-2">{footerLabel}</span>
-            </p>
-            <p className="text-[10px] text-white/40 font-medium italic mt-2 uppercase tracking-widest">
-              * Ajustado por factor de conversión por cliente
+            <div className="flex flex-col md:flex-row justify-center items-center gap-8 md:gap-16">
+               <div>
+                  <p className="text-white/60 text-[10px] font-black uppercase tracking-[0.3em] mb-2">{footerTitle}</p>
+                  <p className="text-white text-4xl font-black tabular-nums">
+                    {total_adjusted} <span className="text-white/40 text-lg uppercase tracking-widest ml-1">{footerLabel}</span>
+                  </p>
+               </div>
+               <div className="hidden md:block w-px h-16 bg-white/20"></div>
+               <div className="w-full md:hidden h-px bg-white/20"></div>
+               <div>
+                  <p className="text-emerald-400/80 text-[10px] font-black uppercase tracking-[0.3em] mb-2">Total a Facturar</p>
+                  <p className="text-emerald-400 text-4xl font-black tabular-nums">
+                    {formatCurrencyLocal(total_revenue)}
+                  </p>
+               </div>
+            </div>
+            <p className="text-[10px] text-white/40 font-medium italic mt-6 uppercase tracking-widest">
+              * PAX Ajustado por factor de conversión por cliente
             </p>
          </div>
       </div>
@@ -527,6 +610,7 @@ function EffectivenessCard({ show }: { show: any }) {
   const day = evDate.getDate()
   const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
   const today = new Date().toISOString().split('T')[0]
+  const isToday = show.date === today
   
   const statusColors: any = {
     ejecutado: 'bg-indigo-600 text-white border-indigo-700',
@@ -537,57 +621,88 @@ function EffectivenessCard({ show }: { show: any }) {
   const cls = statusColors[show.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'
 
   return (
-    <div className="bg-white rounded-[2rem] border border-slate-200 shadow-sm overflow-hidden group hover:shadow-md transition-all relative">
-      <div className="p-5 flex flex-col md:flex-row items-start md:items-center gap-6">
+    <Link href={`/ventas-evento?eventId=${show.id}`} className={`block bg-white rounded-[2.5rem] border shadow-sm overflow-hidden group transition-all relative cursor-pointer
+      ${isToday ? 'border-emerald-400 ring-4 ring-emerald-50 scale-[1.02] shadow-xl z-20' : 'border-slate-200 hover:shadow-md hover:border-indigo-400'}
+    `}>
+      <div className={`p-6 flex flex-col gap-6 ${isToday ? '' : 'md:flex-row md:items-center'}`}>
         
-        {/* 1. Date Block */}
-        <div className="flex flex-row md:flex-col items-center justify-center bg-slate-50 px-5 py-3 rounded-2xl border border-slate-100 shrink-0 min-w-[80px]">
-          <span className="text-2xl font-black text-slate-900 tabular-nums leading-none">{day}</span>
-          <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest md:mt-1">{month}</span>
-        </div>
+        <div className="flex items-center gap-6 flex-1">
+          {/* 1. Date Block */}
+          <div className={`flex flex-col items-center justify-center px-6 py-4 rounded-3xl border shrink-0 min-w-[90px]
+            ${isToday ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-slate-50 border-slate-100 text-slate-900'}
+          `}>
+            <span className="text-3xl font-black tabular-nums leading-none">{day}</span>
+            <span className={`text-[10px] font-black uppercase tracking-widest mt-1 ${isToday ? 'text-white/80' : 'text-indigo-500'}`}>{month}</span>
+          </div>
 
-        {/* 2. Show & Venue */}
-        <div className="flex-1 min-w-0 space-y-1">
-          <h3 className="text-xl font-black text-slate-900 uppercase italic tracking-tighter truncate leading-tight group-hover:text-indigo-600 transition-colors">
-            {show.show}
-          </h3>
-          <div className="flex items-center gap-2">
-            <MapPin size={12} className="text-slate-400" />
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-wide">{show.venue}</span>
+          {/* 2. Show & Venue */}
+          <div className="flex-1 min-w-0 space-y-1.5">
+            <h3 className={`text-2xl font-black uppercase italic tracking-tighter truncate leading-tight group-hover:text-indigo-600 transition-colors ${isToday ? 'text-slate-900' : 'text-slate-900'}`}>
+              {show.show}
+            </h3>
+            <div className="flex items-center gap-2">
+              <MapPin size={14} className={isToday ? "text-emerald-500" : "text-slate-400"} />
+              <span className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-emerald-700' : 'text-slate-500'}`}>{show.venue}</span>
+            </div>
           </div>
         </div>
 
-        {/* 3. Metrics */}
-        <div className="flex items-center gap-8 px-6 py-3 bg-slate-50/50 rounded-2xl border border-slate-100/50 shrink-0">
-          {show.sold > 0 && (
-             <>
-             <div className="text-center">
-               <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Ventas</p>
-               <p className="text-lg font-black text-emerald-600 tabular-nums">{show.sold}</p>
-             </div>
-             <div className="h-6 w-px bg-slate-200" />
-             </>
-          )}
-          <div className="text-center">
-            <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
-            <p className="text-lg font-black text-indigo-600 tabular-nums">{show.projected}</p>
+        {/* 3. Logistics Info (Today Only) */}
+        {isToday && show.coordinators && show.coordinators.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5 bg-emerald-50/50 rounded-[1.5rem] border border-emerald-100">
+            {show.coordinators.map((c: any, idx: number) => (
+              <div key={idx} className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
+                  <Users size={20} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Coordinador — {c.company}</p>
+                  <p className="text-sm font-bold text-slate-800">{c.name}</p>
+                  <p className="text-xs font-medium text-slate-500">{c.phone}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center justify-between gap-6 mt-auto md:mt-0">
+          {/* 4. Metrics */}
+          <div className="flex items-center gap-8 px-8 py-4 bg-slate-50/50 rounded-3xl border border-slate-100/50 shrink-0 group-hover:bg-indigo-50/50 transition-colors">
+            {show.sold > 0 && (
+              <>
+              <div className="text-center">
+                <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Ventas</p>
+                <p className="text-xl font-black text-emerald-600 tabular-nums">{show.sold}</p>
+              </div>
+              <div className="h-8 w-px bg-slate-200" />
+              </>
+            )}
+            <div className="text-center">
+              <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
+              <p className="text-xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
+            </div>
+            <div className="h-8 w-px bg-slate-200" />
+            <div className="text-center">
+              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
+              <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
+            </div>
+          </div>
+
+          {/* 5. Status */}
+          <div className="shrink-0 min-w-[140px] text-center">
+            <span className={`inline-block w-full text-xs font-black px-6 py-3 rounded-2xl border uppercase tracking-[0.2em] shadow-sm ${cls}`}>
+              {show.status}
+            </span>
           </div>
         </div>
 
-        {/* 4. Status */}
-        <div className="shrink-0 md:min-w-[120px] text-center">
-          <span className={`inline-block w-full text-[9px] font-black px-4 py-2.5 rounded-xl border uppercase tracking-[0.2em] ${cls}`}>
-            {show.status}
-          </span>
-        </div>
-
-        {/* 5. Today Badge */}
-        {show.date === today && (
-           <div className="absolute top-2 right-2 bg-emerald-500 text-white text-[7px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest shadow-sm">
-             ¡HOY!
-           </div>
+        {/* Today Badge */}
+        {isToday && (
+          <div className="absolute top-4 right-6 bg-emerald-500 text-white text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-[0.2em] shadow-lg animate-pulse">
+            ¡HOY!
+          </div>
         )}
       </div>
-    </div>
+    </Link>
   )
 }

@@ -7,6 +7,9 @@ import {
   ClipboardList, MapPin, AlertCircle, CheckCircle2,
   Save, Printer, Loader2, Building2, ChevronDown, ChevronUp
 } from "lucide-react"
+import FleetModal from "@/components/forms/FleetModal"
+import CoordinatorModal from "@/components/forms/CoordinatorModal"
+import { processStockForSaleAction } from "@/app/actions/stock"
 
 interface UnitRecord {
   id: string
@@ -45,22 +48,30 @@ const newUnit = (name: string): UnitRecord => ({
   water: 0, observations: "", details: [], isExpanded: true,
 })
 
-export default function EventSalesForm({ initialEventId, initialCompany, commercialRules = [], coordinators = [], vehicles = [], clients = [] }: any) {
+export default function EventSalesForm({ initialEventId, initialCompany, commercialRules = [], coordinators: initCoordinators = [], vehicles: initVehicles = [], clients = [] }: any) {
   // Master event selection
   const [events, setEvents] = useState<EventMaster[]>([])
   const [selectedEventId, setSelectedEventId] = useState(initialEventId || "")
   const [selectedCompany, setSelectedCompany] = useState(initialCompany || "")
   const [loadingEvents, setLoadingEvents] = useState(true)
 
+  // Modals state
+  const [fleetModal, setFleetModal] = useState(false)
+  const [coordModal, setCoordModal] = useState(false)
+  const [vehicles, setVehicles] = useState(initVehicles)
+  const [coordinators, setCoordinators] = useState(initCoordinators)
+
   // Edición en caliente
   const [savedHeaderId, setSavedHeaderId] = useState<string | null>(null)
   const [isFetchingData, setIsFetchingData] = useState(false)
 
   // Form state
+  const [skipStock, setSkipStock] = useState(false)
   const [deliveryTime, setDeliveryTime] = useState("")
   const [deliveryPoint, setDeliveryPoint] = useState("")
   const [deliveryAddress, setDeliveryAddress] = useState("")
   const [units, setUnits] = useState<UnitRecord[]>([newUnit("Micro 1")])
+  const [paxOverride, setPaxOverride] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
@@ -69,15 +80,27 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     supabase
       .from("events_master")
       .select("*, venues(name, address, meeting_point), coordinators(id, name, phone), event_projections(id, company_name, projected_pax)")
-      .in("status", ["pendiente", "confirmado", "proyectado", "Pendiente", "Confirmado"])
-      .order("event_date", { ascending: true })
+      .order("event_date", { ascending: true }) // Chronological order
       .then(({ data }) => {
         setEvents(data || [])
         setLoadingEvents(false)
       })
   }, [])
 
+  const today = useMemo(() => new Date().toISOString().split('T')[0], [])
+
   // --- Derived Data ---
+  const selectableEvents = useMemo(() => {
+    if (skipStock) {
+      // Historical mode: Show past events
+      return events.filter(e => e.event_date < today)
+    } else {
+      // Normal mode: Show today + future events with specific active statuses
+      const activeStatuses = ["pendiente", "confirmado", "proyectado", "Pendiente", "Confirmado"]
+      return events.filter(e => e.event_date >= today && activeStatuses.includes(e.status))
+    }
+  }, [events, skipStock, today])
+
   const selectedEvent = useMemo(() => events.find(e => e.id === selectedEventId) || null, [events, selectedEventId])
   const availableCompanies = useMemo(() => selectedEvent?.event_projections?.map(p => p.company_name) || [], [selectedEvent])
   const projectedPax = useMemo(() => selectedEvent?.event_projections?.find(p => p.company_name === selectedCompany)?.projected_pax || 0, [selectedEvent, selectedCompany])
@@ -113,6 +136,18 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
       setIsFetchingData(true)
       try {
+        // FETCH ASIGNACIONES LOGISTICAS PLANIFICADAS ANTES QUE NADA
+        const cRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany.toLowerCase())
+        let assignedBuses: any[] = []
+        if (cRecord?.id) {
+           const { data: ab } = await supabase
+             .from('event_bus_assignments')
+             .select('*')
+             .eq('event_id', selectedEventId)
+             .eq('client_id', cRecord.id)
+           if (ab) assignedBuses = ab
+        }
+
         // Buscar cabecera
         const { data: header, error: hErr } = await supabase
           .from('event_sales_headers')
@@ -128,6 +163,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           if (header.delivery_time) setDeliveryTime(header.delivery_time)
           if (header.delivery_point) setDeliveryPoint(header.delivery_point)
           if (header.delivery_address) setDeliveryAddress(header.delivery_address)
+          if (header.pax_projected) setPaxOverride(header.pax_projected)
 
           // Buscar Unidades
           const { data: dbUnits, error: uErr } = await supabase
@@ -137,18 +173,6 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             .order('created_at', { ascending: true })
           
           if (uErr) throw uErr
-
-          // Buscar flota asiganda a esta empresa en este evento
-          const cRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany.toLowerCase())
-          let assignedBuses: any[] = []
-          if (cRecord?.id) {
-             const { data: ab } = await supabase
-               .from('event_bus_assignments')
-               .select('*')
-               .eq('event_id', selectedEventId)
-               .eq('client_id', cRecord.id)
-             if (ab) assignedBuses = ab
-          }
 
           if (dbUnits && dbUnits.length > 0) {
             const mappedUnits: UnitRecord[] = dbUnits.map(du => {
@@ -165,13 +189,11 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
               } catch (e) {}
 
               // Mapear el micro asignado
-              // Asumimos 1-a-1 por la estructura actual o el primero disponible que coincida
-              // (Simplificación aceptable. Lo más seguro es que la app persista luego todo sobreescribiendo).
               let v_id = ""
               let c_id = ""
               if (assignedBuses.length > 0) {
                  const busRecord = assignedBuses.shift()
-                 v_id = busRecord.vehicle_id
+                 v_id = busRecord.vehicle_id || ""
                  c_id = busRecord.coordinator_id || ""
               }
 
@@ -194,11 +216,27 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             })
             setUnits(mappedUnits)
           } else {
-            setUnits([newUnit("Micro 1")])
+            if (assignedBuses.length > 0) {
+              setUnits(assignedBuses.map((ab, idx) => ({
+                ...newUnit(`Micro ${idx + 1}`),
+                vehicle_id: ab.vehicle_id || "",
+                coordinator_id: ab.coordinator_id || ""
+              })))
+            } else {
+              setUnits([newUnit("Micro 1")])
+            }
           }
         } else {
           setSavedHeaderId(null)
-          setUnits([newUnit("Micro 1")])
+          if (assignedBuses.length > 0) {
+            setUnits(assignedBuses.map((ab, idx) => ({
+              ...newUnit(`Micro ${idx + 1}`),
+              vehicle_id: ab.vehicle_id || "",
+              coordinator_id: ab.coordinator_id || ""
+            })))
+          } else {
+            setUnits([newUnit("Micro 1")])
+          }
           setDeliveryTime("")
         }
       } catch (err: any) {
@@ -209,6 +247,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     }
 
     fetchExistingSale()
+    setPaxOverride(null)
   }, [selectedEventId, selectedCompany, clients])
 
   // --- Commercial Rule ---
@@ -242,11 +281,32 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     setUnits(prev => prev.map(u => {
       if (u.id !== id) return u
       const updated = { ...u, [field]: value }
+      
+      // Auto-logic: If liberated units change, add/subtract from traditional category by default
+      if (field === 'liberated') {
+        const diff = (Number(value) || 0) - (Number(u.liberated) || 0)
+        updated.traditional = (Number(updated.traditional) || 0) + diff
+      }
+
       if ((field === 'sold' || field === 'liberated') && activeRule?.includes_water) {
-        updated.water = (Number(updated.sold) || 0) + (Number(updated.liberated) || 0)
+        // Regla especial: Traslados solo agua para sold. Otros (Rock) para ambos.
+        const isTraslados = activeRule.company_name?.toLowerCase().includes("traslados")
+        updated.water = isTraslados ? (Number(updated.sold) || 0) : ((Number(updated.sold) || 0) + (Number(updated.liberated) || 0))
       }
       return updated
     }))
+  }, [activeRule])
+
+  // Recalcular agua si cambia la regla (ej: cambio de empresa)
+  useEffect(() => {
+    if (activeRule?.includes_water) {
+      setUnits(prev => prev.map(u => {
+        const isTraslados = activeRule.company_name?.toLowerCase().includes("traslados")
+        const newWater = isTraslados ? (Number(u.sold) || 0) : ((Number(u.sold) || 0) + (Number(u.liberated) || 0))
+        if (u.water !== newWater) return { ...u, water: newWater }
+        return u
+      }))
+    }
   }, [activeRule])
 
   // --- Totals & Validation ---
@@ -285,7 +345,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     }
 
     const SinTaccFacturables = Math.max(0, consolidated.st - consolidated.liberated)
-    const pax = projectedPax || 0
+    const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
     const limitPct = Number(activeRule.sintacc_limit_pct || 0)
     const CupoGratis = Math.ceil(pax * (limitPct / 100))
     const SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
@@ -335,7 +395,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
         delivery_time: deliveryTime,
         delivery_point: deliveryPoint,
         delivery_address: deliveryAddress,
-        pax_projected: projectedPax,
+        pax_projected: paxOverride !== null ? paxOverride : projectedPax,
         total_amount: totals.amount
       }
 
@@ -365,14 +425,21 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
       // LIMPIAR DEPENDENCIAS ANTERIORES SI ESTAMOS ACTUALIZANDO
       if (savedHeaderId) {
-         await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
-         
-         const validClientRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany?.toLowerCase())
-         if (validClientRecord?.id) {
-            await supabase.from('event_bus_assignments').delete()
-              .eq('event_id', selectedEventId)
-              .eq('client_id', validClientRecord.id)
+         // REVERT STOCK OF OLD UNITS FIRST (Only if not skipStock)
+         if (!skipStock) {
+            await processStockForSaleAction(savedHeaderId, true)
          }
+
+         await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
+      }
+
+      // SIEMPRE LIMPIAR BUS ASSIGNMENTS VIEJOS (Vengan de planning o de ventas anteriores)
+      const validClientRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany?.toLowerCase())
+      const cId = validClientRecord?.id
+      if (cId) {
+         await supabase.from('event_bus_assignments').delete()
+           .eq('event_id', selectedEventId)
+           .eq('client_id', cId)
       }
 
       // INSERTAR NUEVAS UNIDADES
@@ -400,16 +467,20 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           recipe_trad_id: activeRule?.recipe_trad_id,
           recipe_veg_id: activeRule?.recipe_veg_id,
           recipe_vegan_id: activeRule?.recipe_vegan_id,
-          recipe_sintacc_id: activeRule?.recipe_sintacc_id
+          recipe_sintacc_id: activeRule?.recipe_sintacc_id,
+          coordinator_id: u.coordinator_id || null
         }
       })
 
       const { error: uErr } = await supabase.from('event_sales_units').insert(unitsToInsert)
       if (uErr) throw uErr
 
+      // DEDUCT STOCK FOR NEW UNITS
+      if (headerId && !skipStock) {
+         await processStockForSaleAction(headerId, false)
+      }
+
       // INSERTAR NUEVA FLOTA
-      const validClientRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany?.toLowerCase())
-      const cId = validClientRecord?.id
       
       const busesToSave = units.filter(u => u.vehicle_id).map(u => ({
          event_id: selectedEventId,
@@ -421,6 +492,16 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       if (busesToSave.length > 0) {
          const { error: bErr } = await supabase.from('event_bus_assignments').insert(busesToSave)
          if (bErr) throw bErr
+      }
+      
+      // ACTUALIZAR COMISION RV TRASLADOS EN EL MAESTRO (Unidades Vendidas * 1000)
+      if (selectedCompany?.toUpperCase().includes('RV TRASLADOS')) {
+        const totalSold = units.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0)
+        const commission = totalSold * 1000
+        await supabase
+          .from('events_master')
+          .update({ commissions_cost: commission })
+          .eq('id', selectedEventId)
       }
 
       // Persistir estado de edición
@@ -450,7 +531,10 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             .eq('client_id', validClientRecord.id)
       }
       
-      // 2. Borrar Units (Cascade puede que lo haga la db, pero lo forzamos)
+      // 2. REVERT STOCK
+      await processStockForSaleAction(savedHeaderId, true)
+
+      // 3. Borrar Units (Cascade puede que lo haga la db, pero lo forzamos)
       await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
 
       // 3. Borrar Header
@@ -472,143 +556,156 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   // --- PDF Print ---
   const handlePrint = () => {
     if (!selectedEvent) return
-    const venueName = selectedEvent.venues?.name || "Sin Venue"
+    const venueName = selectedEvent.venues?.name || "S/D"
     const dateStr = selectedEvent.event_date?.replace(/-/g, '') || "SinFecha"
     const docFileTitle = `${dateStr} - ${venueName} - ${selectedCompany}`
 
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
+
     printWindow.document.write(`
       <html>
         <head>
-          <title>${docFileTitle} - REMITO</title>
+          <title>${docFileTitle}</title>
           <style>
-            body { font-family: 'Arial', sans-serif; padding: 20px; color: #1e293b; }
-            .page-break { page-break-after: always; padding: 20px 0; }
-            .page-break:last-child { page-break-after: avoid; }
-            .header { border-bottom: 4px solid #4f46e5; padding-bottom: 20px; margin-bottom: 30px; }
-            .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 10px; background: #f8fafc; padding: 20px; border-radius: 12px; }
-            .meta-item b { display: block; text-transform: uppercase; font-size: 9px; color: #64748b; margin-bottom: 2px; }
-            .meta-item span { font-weight: 800; font-size: 13px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; margin-bottom: 25px; }
-            th { background: #f8fafc; text-align: left; padding: 8px 12px; border-bottom: 2px solid #e2e8f0; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-            td { padding: 8px 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; }
-            .total-row { background: #1e293b; color: white; }
-            .total-row td { font-weight: 900; font-size: 14px; padding: 10px 12px; }
-            .section-title { font-size: 13px; text-transform: uppercase; color: #1e293b; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; margin-top: 25px; margin-bottom: 10px; }
-            .footer { margin-top: 40px; font-size: 10px; color: #94a3b8; text-align: center; border-top: 1px solid #eee; padding-top: 15px; }
-            @media print {
-              body { padding: 0 !important; }
-              .page-break { padding: 40px; min-height: 100vh; box-sizing: border-box; }
+            @page { margin: 10mm; }
+            body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 0; color: #000; line-height: 1.2; }
+            .page-break { page-break-after: always; padding: 20px; }
+            .page-break:last-child { page-break-after: auto; }
+            
+            .header-title { border-bottom: 4px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
+            .header-title h1 { margin: 0; font-size: 26px; font-weight: 900; color: #000; text-transform: uppercase; letter-spacing: -1px; }
+            .header-title p { margin: 0; font-size: 18px; font-weight: 900; color: #1e40af; text-transform: uppercase; }
+            
+            .info-grid { 
+              display: grid; 
+              grid-template-columns: 1.2fr 1fr; 
+              gap: 12px; 
+              background: #f1f5f9; 
+              padding: 15px; 
+              border-radius: 12px; 
+              margin-bottom: 20px;
+              border: 2px solid #cbd5e1;
             }
+            .info-item b { display: block; text-transform: uppercase; font-size: 10px; color: #475569; margin-bottom: 1px; font-weight: 900; }
+            .info-item span { font-weight: 900; font-size: 17px; color: #000; }
+
+            .section-title { font-size: 14px; font-weight: 900; text-transform: uppercase; color: #000; border-bottom: 2px solid #000; padding-bottom: 4px; margin: 20px 0 10px 0; }
+            
+            .data-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+            .data-table th { background: #000; text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; color: #fff; }
+            .data-table td { padding: 10px 12px; font-size: 18px; font-weight: 900; border-bottom: 1px solid #cbd5e1; color: #000; }
+            .data-table .qty-cell { text-align: right; width: 100px; font-size: 22px; }
+            .total-row { background: #e2e8f0; color: #000; }
+            .total-row td { padding: 12px; font-size: 20px; font-weight: 900; border: 2px solid #000; }
+            .total-row .qty-cell { font-size: 28px; background: #000; color: #fff; }
+
+            .obs-box { 
+              margin-top: 20px; 
+              border: 3px dashed #000; 
+              border-radius: 12px; 
+              padding: 15px; 
+              min-height: 60px;
+            }
+            .obs-box h4 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; color: #000; font-weight: 900; }
+            .obs-content { font-size: 16px; color: #000; font-weight: 800; font-style: italic; }
+            
+            .footer { margin-top: 20px; text-align: center; font-size: 10px; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 8px; font-weight: 700; }
           </style>
         </head>
         <body>
-          ${units.map((u, index) => {
-            const vehicle = vehicles.find((v: any) => v.id === u.vehicle_id)
-            const patente = vehicle?.plate || 'S/D'
-            
-            const coordinator = coordinators.find((c: any) => c.id === u.coordinator_id)
-            const coordName = coordinator?.name || 'S/D'
-            const coordPhone = coordinator?.phone || 'S/D'
-
-            const totalSandwiches = (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
-            const waterQty = Number(u.water) || 0
+          ${units.map((u, idx) => {
+            const v = vehicles.find((v: any) => v.id === u.vehicle_id)
+            const c = coordinators.find((c: any) => c.id === u.coordinator_id)
+            const solidsTotal = (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
+            const liquidsTotal = Number(u.water) || 0
 
             return `
               <div class="page-break">
-                <div class="header">
-                  <h1 style="margin:0;font-size:20px;font-weight:900;">REMITO DE DESCARGA POR EMPRESA</h1>
-                  <p style="margin:4px 0 0;color:#6366f1;font-weight:800;text-transform:uppercase;letter-spacing:0.1em;font-size:12px;">UNIDAD: ${u.name}</p>
+                <div class="header-title">
+                  <h1>Remito de Descarga por Empresa</h1>
+                  <p>Unidad: ${u.name}</p>
                 </div>
 
-                <div class="meta-grid">
-                  <div class="meta-item"><b>Empresa de Transporte</b><span>${selectedCompany}</span></div>
-                  <div class="meta-item"><b>Vehículo / Patente</b><span>${vehicle?.internal_name || 'S/D'} ${patente !== 'S/D' ? `(${patente})` : ''}</span></div>
-                  <div class="meta-item"><b>Coordinador / Responsable</b><span>${coordName}</span></div>
-                  <div class="meta-item"><b>Teléfono Coordinador</b><span>${coordPhone}</span></div>
-                </div>
-                
-                <div style="margin-bottom: 25px; border-top: 2px solid #e2e8f0; padding-top: 15px;" class="meta-grid">
-                  <div class="meta-item"><b>Evento / Show</b><span>${selectedEvent.show_name}</span></div>
-                  <div class="meta-item"><b>Fecha</b><span>${new Date(selectedEvent.event_date + 'T12:00:00').toLocaleDateString('es-AR')}</span></div>
-                  <div class="meta-item"><b>Horario de Descarga</b><span>${deliveryTime || 'S/D'}</span></div>
-                  <div class="meta-item"><b>Punto de Entrega / Venue</b><span>${venueName} - ${deliveryPoint || ''}</span></div>
+                <div class="info-grid">
+                  <div class="info-item"><b>Empresa de Transporte</b><span>${selectedCompany}</span></div>
+                  <div class="info-item"><b>Evento / Show</b><span>${selectedEvent.show_name}</span></div>
+                  <div class="info-item"><b>Vehículo / Patente</b><span>${v?.internal_name || 'S/D'} ${v?.plate ? `(${v.plate})` : ''}</span></div>
+                  <div class="info-item"><b>Fecha</b><span>${new Date(selectedEvent.event_date + 'T12:00:00').toLocaleDateString('es-AR')}</span></div>
+                  <div class="info-item"><b>Coordinador / Responsable</b><span>${c?.name || 'S/D'}</span></div>
+                  <div class="info-item"><b>Horario de Descarga</b><span>${deliveryTime || 'S/D'}</span></div>
+                  <div class="info-item"><b>Teléfono Coordinador</b><span>${c?.phone || 'S/D'}</span></div>
+                  <div class="info-item"><b>Punto de Entrega / Venue</b><span>${venueName} - ${deliveryPoint || 'S/D'}</span></div>
                 </div>
 
-                <h3 class="section-title">1. Detalle de Viandas (Sólidos)</h3>
-                <table>
+                <div class="section-title">1. Detalle de Viandas (Sólidos)</div>
+                <table class="data-table">
                   <thead>
-                    <tr><th>Tipo de Menu</th><th>Cantidad</th></tr>
+                    <tr>
+                      <th>Tipo de Menú</th>
+                      <th class="qty-cell">Cantidad</th>
+                    </tr>
                   </thead>
                   <tbody>
-                    <tr><td>Menu Tradicional</td><td>${u.traditional}</td></tr>
-                    <tr><td>Menu Vegetariano</td><td>${u.vegetarian}</td></tr>
-                    <tr><td>Menu Vegano</td><td>${u.vegana}</td></tr>
-                    <tr><td>Menu Sin TACC</td><td>${u.sin_tacc}</td></tr>
-                    <tr class="total-row"><td>TOTAL SANDWICHES</td><td>${totalSandwiches}</td></tr>
+                    <tr><td>Menú Tradicional</td><td class="qty-cell">${u.traditional || 0}</td></tr>
+                    <tr><td>Menú Vegetariano</td><td class="qty-cell">${u.vegetarian || 0}</td></tr>
+                    <tr><td>Menú Vegano</td><td class="qty-cell">${u.vegana || 0}</td></tr>
+                    <tr><td>Menú Sin TACC</td><td class="qty-cell">${u.sin_tacc || 0}</td></tr>
+                    <tr class="total-row">
+                      <td>TOTAL SANDWICHES</td>
+                      <td class="qty-cell">${solidsTotal}</td>
+                    </tr>
                   </tbody>
                 </table>
 
-                <h3 class="section-title">2. Detalle de Bebidas (Líquidos)</h3>
-                <table>
+                <div class="section-title">2. Detalle de Bebidas (Líquidos)</div>
+                <table class="data-table">
                   <thead>
-                    <tr><th>Tipo de Bebida</th><th>Cantidad</th></tr>
+                    <tr>
+                      <th>Tipo de Bebida</th>
+                      <th class="qty-cell">Cantidad</th>
+                    </tr>
                   </thead>
                   <tbody>
-                    <tr><td>Agua Sin Gas (500ml)</td><td>${waterQty}</td></tr>
-                    <tr class="total-row"><td>TOTAL BEBIDAS</td><td>${waterQty}</td></tr>
+                    <tr><td>Agua Sin Gas (500ml)</td><td class="qty-cell">${u.water || 0}</td></tr>
+                    <tr class="total-row">
+                      <td>TOTAL BEBIDAS</td>
+                      <td class="qty-cell">${liquidsTotal}</td>
+                    </tr>
                   </tbody>
                 </table>
 
-                ${u.details && u.details.length > 0 ? `
-                  <div style="margin-top: 15px; padding: 12px; background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px;">
-                     <h4 style="margin: 0 0 8px 0; color: #b45309; font-size: 11px; text-transform: uppercase;">Pedidos Especiales</h4>
-                     ${u.details.filter((d:any) => d.obs && d.qty > 0).map((d:any) => `<div style="font-size: 12px; color: #92400e;">▸ ${d.qty}x ${d.category.toUpperCase()} - ${d.obs}</div>`).join('')}
-                  </div>
-                ` : ''}
-
-                <div style="margin-top: 25px; border: 2px dashed #cbd5e1; padding: 15px; border-radius: 12px;">
-                  <p style="margin: 0 0 10px 0; font-weight: bold; text-transform: uppercase; font-size: 10px; color: #475569;">Observaciones Operativas</p>
-                  <p style="color: #0f172a; font-size: 12px; min-height: 40px; font-style: italic;">${u.observations || 'Sin observaciones...'}</p>
-                </div>
-
-                <div style="margin-top: 50px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px;">
-                  <div></div>
-                  <div style="border-top: 1px solid #94a3b8; padding-top: 10px;">
-                    <p style="margin: 0 0 15px 0; font-weight: bold; font-size: 11px; text-transform: uppercase;">Conforme Recepción Cliente</p>
-                    <div style="font-size: 12px; color: #475569; display: grid; grid-template-columns: 1fr; gap: 15px;">
-                      <div>Nombre: ..............................................................</div>
-                      <div>Firma: .................................................................</div>
-                      <div>Fecha y Hora: .......................................................</div>
-                    </div>
+                <div class="obs-box">
+                  <h4>Observaciones Operativas</h4>
+                  <div class="obs-content">
+                    ${u.observations || 'Sin observaciones...'}
+                    ${u.details && u.details.length > 0 ? `
+                      <div style="margin-top: 8px; font-size: 11px; font-style: normal;">
+                        ${u.details.filter((d:any) => d.qty > 0).map((d:any) => `<div>• ${d.qty}x ${d.category} - ${d.obs}</div>`).join('')}
+                      </div>
+                    ` : ''}
                   </div>
                 </div>
 
                 <div class="footer">
-                  Página ${index + 1} de ${units.length} | Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')} | ${docFileTitle}.pdf
+                  Página ${idx + 1} de ${units.length} | Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')}
                 </div>
               </div>
             `
           }).join('')}
+
           <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
           <script>
             window.onload = function() {
               var element = document.body;
               var opt = {
-                margin:       10,
+                margin:       0,
                 filename:     '${docFileTitle}.pdf',
                 image:        { type: 'jpeg', quality: 0.98 },
                 html2canvas:  { scale: 2 },
                 jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
               };
-              
-              html2pdf().set(opt).from(element).save().then(function() {
-                 setTimeout(() => {
-                    window.print();
-                    setTimeout(() => window.close(), 500);
-                 }, 500);
-              });
+              html2pdf().set(opt).from(element).save();
             };
           </script>
         </body>
@@ -617,15 +714,26 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     printWindow.document.close()
   }
 
+
   // --- Render ---
   return (
     <div className="flex flex-col gap-8 pb-32">
 
       {/* SECTION 1: EVENTO + EMPRESA */}
       <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200">
-        <div className="flex items-center gap-2 mb-6 border-b pb-4">
-          <ClipboardList className="text-indigo-500" />
-          <h2 className="text-xl font-bold text-slate-900">Selección de Evento</h2>
+        <div className="flex items-center justify-between mb-6 border-b pb-4">
+          <div className="flex items-center gap-2">
+            <ClipboardList className="text-indigo-500" />
+            <h2 className="text-xl font-bold text-slate-900">Selección de Evento</h2>
+          </div>
+          <label className="flex items-center gap-3 cursor-pointer group bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all">
+             <div className="text-right">
+                <p className={`text-[10px] font-black uppercase tracking-widest ${skipStock ? 'text-indigo-600' : 'text-slate-400'} transition`}>Carga Histórica</p>
+                <p className="text-[8px] font-bold text-slate-400 uppercase">No afecta stock actual</p>
+             </div>
+             <input type="checkbox" checked={skipStock} onChange={e => setSkipStock(e.target.checked)} 
+                    className="w-5 h-5 rounded-lg border-2 border-slate-200 text-indigo-600 focus:ring-indigo-500 transition-all cursor-pointer" />
+          </label>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 relative">
@@ -654,7 +762,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                 onChange={e => setSelectedEventId(e.target.value)}
               >
                 <option value="">-- Seleccionar Evento --</option>
-                {events.map(e => (
+                {selectableEvents.map(e => (
                   <option key={e.id} value={e.id}>
                     {new Date(e.event_date + 'T12:00:00').toLocaleDateString('es-AR')} — {e.show_name} @ {e.venues?.name}
                   </option>
@@ -695,8 +803,14 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
         {selectedEvent && selectedCompany && (
           <div className="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4 p-4 bg-slate-50 rounded-2xl border border-slate-200">
             <div>
-              <p className="text-[9px] font-bold text-slate-400 uppercase">PAX Proyectados</p>
-              <p className="text-2xl font-bold text-slate-900">{projectedPax}</p>
+              <p className="text-[9px] font-bold text-slate-400 uppercase">PAX Proyectados (Editable)</p>
+              <input 
+                type="text" inputMode="numeric"
+                className="w-full bg-transparent text-2xl font-bold text-slate-900 outline-none border-b-2 border-transparent focus:border-indigo-500 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                value={paxOverride !== null ? paxOverride : projectedPax}
+                onChange={e => setPaxOverride(parseInt(e.target.value.replace(/\D/g, '')) || 0)}
+                onFocus={e => e.target.select()}
+              />
             </div>
             <div>
               <p className="text-[9px] font-bold text-slate-400 uppercase">Venue</p>
@@ -784,33 +898,43 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-b pb-6 bg-slate-50 p-4 rounded-2xl border border-slate-100">
                         <div className="space-y-1">
                           <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Vehículo Físico</label>
-                          <select
-                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none font-bold text-slate-700 text-xs focus:border-indigo-400 transition"
-                            value={u.vehicle_id}
-                            onChange={e => updateUnit(u.id, 'vehicle_id', e.target.value)}
-                          >
-                            <option value="">-- Seleccionar --</option>
-                            {filteredVehicles.map((v: any) => (
-                              <option key={v.id} value={v.id}>
-                                {v.internal_name} {v.plate ? `(${v.plate})` : ''}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="flex gap-1">
+                            <select
+                              className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none font-bold text-slate-700 text-xs focus:border-indigo-400 transition"
+                              value={u.vehicle_id}
+                              onChange={e => updateUnit(u.id, 'vehicle_id', e.target.value)}
+                            >
+                              <option value="">-- Seleccionar --</option>
+                              {filteredVehicles.map((v: any) => (
+                                <option key={v.id} value={v.id}>
+                                  {v.internal_name} {v.plate ? `(${v.plate})` : ''}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="button" onClick={() => setFleetModal(true)} className="px-3 bg-white border border-slate-200 text-slate-400 rounded-xl hover:bg-slate-50 transition">
+                              <Plus size={14} />
+                            </button>
+                          </div>
                         </div>
                         <div className="space-y-1">
                           <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Coordinador M.</label>
-                          <select
-                            className="w-full px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none font-bold text-slate-700 text-xs focus:border-indigo-400 transition"
-                            value={u.coordinator_id}
-                            onChange={e => updateUnit(u.id, 'coordinator_id', e.target.value)}
-                          >
-                            <option value="">-- Seleccionar --</option>
-                            {filteredCoordinators.map((c: any) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
+                          <div className="flex gap-1">
+                            <select
+                              className="flex-1 px-3 py-2.5 bg-white border border-slate-200 rounded-xl outline-none font-bold text-slate-700 text-xs focus:border-indigo-400 transition"
+                              value={u.coordinator_id}
+                              onChange={e => updateUnit(u.id, 'coordinator_id', e.target.value)}
+                            >
+                              <option value="">-- Seleccionar --</option>
+                              {filteredCoordinators.map((c: any) => (
+                                <option key={c.id} value={c.id}>
+                                  {c.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button type="button" onClick={() => setCoordModal(true)} className="px-3 bg-white border border-slate-200 text-slate-400 rounded-xl hover:bg-slate-50 transition">
+                              <Plus size={14} />
+                            </button>
+                          </div>
                         </div>
                       </div>
 
@@ -969,9 +1093,9 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                     <Printer size={16} /> REMITO PDF
                   </button>
                   <button onClick={saveAll} disabled={!totals?.allValid || loading}
-                    className={`px-6 py-2.5 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2 ${totals?.allValid ? 'bg-indigo-600 text-white hover:bg-indigo-500 shadow-sm' : 'bg-slate-200 text-slate-400 cursor-not-allowed'}`}>
-                    {loading ? <Loader2 className="animate-spin" size={16} /> : <Save size={16} />}
-                    {loading ? 'DURMIENDO...' : (savedHeaderId ? 'ACTUALIZAR' : 'CONFIRMAR Y GUARDAR')}
+                    className={`px-8 py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2 shadow-lg ${totals?.allValid ? 'bg-emerald-600 text-white hover:bg-emerald-500 hover:shadow-emerald-600/30 hover:-translate-y-0.5' : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'}`}>
+                    {loading ? <Loader2 className="animate-spin" size={18} /> : <Save size={18} />}
+                    {loading ? 'GUARDANDO...' : (savedHeaderId ? 'ACTUALIZAR CARGA' : 'GUARDAR Y CONFIRMAR')}
                   </button>
                 </div>
               </div>
@@ -1061,6 +1185,22 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           <p className="text-slate-400">Una vez seleccionados, podrás cargar los micros y sus viandas.</p>
         </div>
       )}
+      {/* Modals */}
+      <FleetModal 
+        isOpen={fleetModal} 
+        onClose={() => setFleetModal(false)} 
+        onSuccess={() => {
+          supabase.from("vehicles").select("id, internal_name, plate, client_id").order("internal_name").then(({ data }) => setVehicles(data || []))
+        }} 
+        clients={clients.map((c: any) => ({ id: c.id, name: c.name }))} 
+      />
+      <CoordinatorModal 
+        isOpen={coordModal} 
+        onClose={() => setCoordModal(false)} 
+        onSuccess={() => {
+          supabase.from("coordinators").select("id, name, company, phone").order("name").then(({ data }) => setCoordinators(data || []))
+        }} 
+      />
     </div>
   )
 }

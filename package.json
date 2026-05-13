@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
+    "@supabase/ssr": "^0.10.2",
     "@supabase/supabase-js": "^2.103.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.378.0",
@@ -17,7 +18,9 @@
     "react": "^18",
     "react-dom": "^18",
     "react-hook-form": "^7.73.1",
+    "recharts": "^3.8.1",
     "tailwind-merge": "^2.3.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.6"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 
@@ -25,6 +25,20 @@ export default function CoordinatorModal({
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [clients, setClients] = useState<{ id: string; name: string }[]>([])
+
+  useEffect(() => {
+    if (isOpen) {
+      const fetchClients = async () => {
+        const { data } = await supabase
+          .from("clients")
+          .select("id, name")
+          .order("name")
+        setClients(data || [])
+      }
+      fetchClients()
+    }
+  }, [isOpen])
 
   if (!isOpen) return null
 
@@ -107,13 +121,19 @@ export default function CoordinatorModal({
 
           <div className="flex flex-col gap-1">
             <label className="text-sm font-medium text-slate-700">Empresa / Afiliación</label>
-            <input
+            <select
               required
               name="company"
               defaultValue={coordinator?.company}
-              placeholder="Ej. Rock en las Venas"
-              className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-[#7FB3D5] focus:ring-1 focus:ring-[#7FB3D5]"
-            />
+              className="rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-[#7FB3D5] focus:ring-1 focus:ring-[#7FB3D5] bg-white"
+            >
+              <option value="">Seleccione una empresa...</option>
+              {clients.map(client => (
+                <option key={client.id} value={client.name}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-100">

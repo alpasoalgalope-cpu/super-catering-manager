@@ -97,8 +97,8 @@ export default function ProduccionPage() {
               const details = JSON.parse(u.special_breakdown)
               if (Array.isArray(details)) {
                 details.forEach((d: any) => {
-                  if (d.qty > 0 && d.note && specialsMap[d.type]) {
-                    specialsMap[d.type].push({ qty: d.qty, note: d.note })
+                  if ((Number(d.qty) > 0 || (d.note && d.note.trim() !== "")) && specialsMap[d.type]) {
+                    specialsMap[d.type].push({ qty: Number(d.qty) || 0, note: d.note })
                   }
                 })
               }
@@ -152,6 +152,104 @@ export default function ProduccionPage() {
   const uniqueDates = Array.from(new Set(eventos.map(e => e.event_date))).sort()
   const totalProjectedPax = eventsForSelectedDate.reduce((acc, e) => acc + (e.total_projected_pax || e.pax_projected || 0), 0)
 
+  const handlePrint = () => {
+    if (!consolidado || !selectedDate) return
+    const docFileTitle = `CONSOLIDADO-COCINA-${selectedDate}`
+    
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>${docFileTitle}</title>
+          <style>
+            body { font-family: 'Arial', sans-serif; padding: 20px; color: #1e293b; background: white; }
+            .header { text-align: center; border-bottom: 3px solid #0f172a; padding-bottom: 15px; margin-bottom: 20px; }
+            .date-title { font-size: 42px; font-weight: 900; text-transform: uppercase; margin: 0; line-height: 1; }
+            .show-info { font-size: 16px; font-weight: 700; color: #64748b; margin-top: 10px; }
+            .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 15px 0; border-top: 1px solid #eee; padding-top: 10px; }
+            .stat-box { text-align: center; }
+            .stat-label { font-size: 9px; font-weight: 900; color: #94a3b8; text-transform: uppercase; }
+            .stat-value { font-size: 24px; font-weight: 900; }
+            .items-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+            .item-card { border: 2px solid #0f172a; border-radius: 15px; padding: 15px; text-align: center; }
+            .item-label { font-size: 14px; font-weight: 900; color: #94a3b8; text-transform: uppercase; }
+            .item-qty { font-size: 56px; font-weight: 900; display: block; margin: 5px 0; line-height: 1; }
+            .special-box { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 10px; margin-top: 10px; text-align: left; }
+            .special-item { font-size: 12px; font-weight: 800; color: #92400e; margin-bottom: 2px; }
+            .total-banner { grid-column: span 2; background: #0f172a; color: white; padding: 20px; border-radius: 15px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; }
+            .total-label { font-size: 16px; font-weight: 900; text-transform: uppercase; color: #94a3b8; }
+            .total-value { font-size: 56px; font-weight: 900; line-height: 1; }
+            .footer { margin-top: 20px; text-align: center; font-size: 9px; color: #94a3b8; font-style: italic; border-top: 1px solid #eee; padding-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <p style="margin:0; font-size:12px; font-weight:900; color:#6366f1; letter-spacing:0.2em; text-transform:uppercase;">Centro de Producción Consolidado</p>
+            <h1 class="date-title">${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')}</h1>
+            <div class="show-info">
+              ${eventsForSelectedDate.map(e => e.show_name + ' @ ' + (e.venue_name || e.venue)).join(' + ')}
+            </div>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-box">
+              <p class="stat-label">PAX Proyectados</p>
+              <p class="stat-value">${totalProjectedPax}</p>
+            </div>
+            <div class="stat-box">
+              <p class="stat-label">Unidades en Venta</p>
+              <p class="stat-value">${consolidado.sold + consolidado.liberated}</p>
+            </div>
+          </div>
+
+          <div class="items-grid">
+            ${consolidado.items.map((item:any) => `
+              <div class="item-card">
+                <span class="item-label">${item.label}</span>
+                <span class="item-qty">${item.qty}</span>
+                ${(consolidado.specials?.[item.key] || []).length > 0 ? `
+                  <div class="special-box">
+                    ${consolidado.specials[item.key].map((s:any) => `<div class="special-item">▸ ${s.qty > 0 ? s.qty + 'x ' : ''}"${s.note}"</div>`).join('')}
+                  </div>
+                ` : ''}
+              </div>
+            `).join('')}
+
+            <div class="total-banner">
+              <div>
+                <p class="total-label">Total Producción Comida</p>
+                <p style="margin:0; font-size:12px; color:#6366f1; font-weight:bold;">Suma consolidada de todas las empresas</p>
+              </div>
+              <span class="total-value">${consolidado.total}</span>
+            </div>
+          </div>
+
+          <div class="footer">
+            Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')} — ${docFileTitle}.pdf
+          </div>
+
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+          <script>
+            window.onload = function() {
+              var element = document.body;
+              var opt = {
+                margin:       10,
+                filename:     '${docFileTitle}.pdf',
+                image:        { type: 'jpeg', quality: 0.98 },
+                html2canvas:  { scale: 2 },
+                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+              };
+              html2pdf().set(opt).from(element).save();
+            };
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
+  }
+
   return (
     <div className="max-w-5xl mx-auto p-4 md:p-10 space-y-10">
 
@@ -182,7 +280,7 @@ export default function ProduccionPage() {
                 )
               })}
             </select>
-            <button onClick={() => window.print()}
+            <button onClick={handlePrint}
               className="bg-slate-900 text-white p-4 rounded-2xl hover:bg-slate-800 transition shadow-lg">
               <Printer size={24} />
             </button>
@@ -249,8 +347,8 @@ export default function ProduccionPage() {
                     <div className="mt-4 w-full border-t-2 border-dashed border-slate-100 pt-4 flex flex-col gap-2">
                       {itemSpecials.map((s: any, i: number) => (
                         <div key={i} className="flex justify-between items-center bg-amber-50 p-3 rounded-2xl border border-amber-200">
-                          <span className="text-3xl font-black text-amber-600">{s.qty}</span>
-                          <span className="text-sm font-black text-amber-900 uppercase italic">"{s.note}"</span>
+                          {s.qty > 0 && <span className="text-3xl font-black text-amber-600">{s.qty}</span>}
+                          <span className={`${s.qty > 0 ? 'text-sm' : 'text-base'} font-black text-amber-900 uppercase italic`}>"{s.note}"</span>
                         </div>
                       ))}
                     </div>

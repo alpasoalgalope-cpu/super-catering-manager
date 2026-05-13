@@ -17,6 +17,7 @@ interface IngredientNeed {
   totalQuantity: number
   gramsPerUnit: number
   familyName: string
+  stockActual: number
 }
 
 interface EventSummary {
@@ -69,7 +70,7 @@ export default function ProyeccionInsumosPage() {
         { data: waterProduct }
       ] = await Promise.all([
         supabase.from("events_master")
-          .select("id, event_date, show_name, status, event_projections(company_name, projected_pax)")
+          .select("id, event_date, show_name, status, event_projections(company_name, projected_pax), event_bus_assignments(crew_count)")
           .gte("event_date", today)
           .lte("event_date", endDate)
           .neq("status", "cancelado"), // Excluir eventos cancelados
@@ -85,6 +86,7 @@ export default function ProyeccionInsumosPage() {
               nombre, 
               unidad_medida, 
               gramos_por_unidad,
+              stock_actual,
               familias (nombre)
             )
           )
@@ -130,7 +132,7 @@ export default function ProyeccionInsumosPage() {
   }, [rawData])
 
   // --- Real-time Recalculation Engine ---
-  const { ingredients, events } = useMemo(() => {
+  const { ingredients, procurementList, events } = useMemo(() => {
     const ingredientsNeed: Record<string, IngredientNeed> = {}
     const eventSummaries: EventSummary[] = []
 
@@ -141,6 +143,28 @@ export default function ProyeccionInsumosPage() {
       
       // Consolidation Map for the event (category -> total qty)
       const consolidatedDetails: Record<string, { quantity: number, recipeName: string, recipeId: string }> = {}
+
+      // Calculate Crew (Liberados) from bus assignments
+      const eventCrewTotal = (m.event_bus_assignments || []).reduce((acc: number, ba: any) => acc + (ba.crew_count || 0), 0)
+      if (eventCrewTotal > 0) {
+        // We assume crew gets Traditional viandas. 
+        // We'll find a rule (any rule for the event) to get the traditional recipe ID, 
+        // or just use the first available one.
+        const anyComp = m.event_projections?.[0]?.company_name
+        const rule = anyComp ? maps.ruleMap[normalizeKey(anyComp)] : null
+        const tradRecipeId = rule?.recipe_trad_id || (rawData.rules.length > 0 ? rawData.rules[0].recipe_trad_id : null)
+        
+        if (tradRecipeId) {
+          const recipe = maps.recipeMap[tradRecipeId]
+          if (recipe) {
+            consolidatedDetails['traditional'] = { 
+              quantity: eventCrewTotal, 
+              recipeName: recipe.nombre, 
+              recipeId: recipe.id 
+            }
+          }
+        }
+      }
 
       // Deduplicate projections
       const seenCompanies = new Set()
@@ -221,7 +245,8 @@ export default function ProyeccionInsumosPage() {
                 unit: insumo.productos?.unidad_medida || "un",
                 totalQuantity: 0,
                 gramsPerUnit: insumo.productos?.gramos_por_unidad || 0,
-                familyName: insumo.productos?.familias?.nombre || "SIN FAMILIA"
+                familyName: insumo.productos?.familias?.nombre || "SIN FAMILIA",
+                stockActual: Number(insumo.productos?.stock_actual) || 0
               } as any
             }
             ingredientsNeed[pid].totalQuantity += totalInsumoQty
@@ -236,7 +261,8 @@ export default function ProyeccionInsumosPage() {
               unit: waterProduct.unidad_medida,
               totalQuantity: 0,
               gramsPerUnit: waterProduct.gramos_por_unidad || 0,
-              familyName: waterProduct.familias?.nombre || "Bebidas"
+              familyName: waterProduct.familias?.nombre || "Bebidas",
+              stockActual: Number(waterProduct.stock_actual) || 0
             } as any
           }
           ingredientsNeed[pid].totalQuantity += roundedQty
@@ -270,8 +296,14 @@ export default function ProyeccionInsumosPage() {
       return a.name.localeCompare(b.name)
     })
 
+    const procurementList = finalIngredients.map(ing => {
+       const deficit = ing.totalQuantity - ing.stockActual
+       return { ...ing, deficit }
+    }).filter(ing => ing.deficit > 0)
+
     return { 
       ingredients: finalIngredients, 
+      procurementList,
       events: eventSummaries.sort((a,b) => a.date.localeCompare(b.date)) 
     }
   }, [rawData, maps, selectedEventIds])
@@ -373,6 +405,55 @@ export default function ProyeccionInsumosPage() {
                 })
               )}
             </div>
+
+            {/* PROCUREMENT ALERTS */}
+            {procurementList.length > 0 && (
+              <div className="mt-12 space-y-6 animate-in fade-in slide-in-from-bottom-4">
+                <div className="flex items-center justify-between px-2">
+                  <h2 className="text-2xl font-black text-rose-600 tracking-tight flex items-center gap-2">
+                     <ShoppingCart size={24} /> Compra Mínima Obligatoria
+                  </h2>
+                  <span className="text-[10px] font-black bg-rose-500 text-white px-4 py-1.5 rounded-full uppercase tracking-widest shadow-lg shadow-rose-200">Alerta de Stock</span>
+                </div>
+                
+                <div className="bg-white rounded-[2.5rem] border-2 border-rose-200 shadow-md divide-y divide-rose-50 overflow-hidden">
+                    {procurementList.map((ing, idx) => {
+                      const showHeader = idx === 0 || procurementList[idx-1].familyName !== ing.familyName
+                      
+                      return (
+                        <React.Fragment key={'proc_'+ing.productId}>
+                          {showHeader && (
+                            <div className="bg-rose-50/50 px-8 py-3 border-y border-rose-100">
+                               <span className="text-[10px] font-black text-rose-500 uppercase tracking-[0.3em]">{ing.familyName}</span>
+                            </div>
+                          )}
+                          <div className="p-6 flex items-center justify-between hover:bg-rose-50/30 transition-colors">
+                            <div className="flex items-center gap-5">
+                              <div className="p-4 bg-rose-100 text-rose-600 rounded-2xl">
+                                <ShoppingCart size={24} />
+                              </div>
+                              <div>
+                                <h4 className="text-lg font-black text-slate-950 uppercase tracking-tight leading-none mb-1">{ing.name}</h4>
+                                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest inline-block">
+                                  En Stock: {ing.stockActual} {ing.unit}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right bg-rose-50 px-4 py-2 rounded-xl border border-rose-100">
+                              <p className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-0.5">Faltan</p>
+                              <p className="text-2xl font-black text-rose-700 tabular-nums">
+                                {ing.deficit.toLocaleString('es-AR')}
+                                <span className="text-xs text-rose-500 ml-1 uppercase font-bold">{ing.unit}</span>
+                              </p>
+                            </div>
+                          </div>
+                        </React.Fragment>
+                      )
+                    })}
+                </div>
+              </div>
+            )}
+
           </div>
 
           {/* RIGHT: SHOW PICKER */}
