@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
 import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight } from "lucide-react"
-import { supabase } from "@/lib/supabase"
+import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 
 interface EventData {
@@ -28,6 +28,7 @@ interface EventData {
 }
 
 export default function DashboardPage() {
+  const supabase = createClient()
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [role, setRole] = useState<string | null>(null)
@@ -364,9 +365,13 @@ export default function DashboardPage() {
       <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4 mb-10">
         <div>
           <h2 className="text-5xl font-bold tracking-tighter text-slate-900 uppercase italic">
-            Monitor de Control <span className="text-indigo-600">360°</span>
+            {role === 'cocina' ? 'Planificación de' : 'Monitor de Control'} <span className="text-indigo-600">{role === 'cocina' ? 'Producción' : '360°'}</span>
           </h2>
-          <p className="text-2xl text-slate-500 font-medium mt-2">Visión estratégica de ventas y planificación logística semanal.</p>
+          <p className="text-2xl text-slate-500 font-medium mt-2">
+            {role === 'cocina' 
+              ? 'Seguimiento de PAX y necesidades de cocina para las próximas semanas.' 
+              : 'Visión estratégica de ventas y planificación logística semanal.'}
+          </p>
         </div>
       </div>
 
@@ -710,31 +715,35 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
               <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
               <p className="text-xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
             </div>
-            {role !== 'cocina' && (
-              <>
-                <div className="h-8 w-px bg-slate-200" />
-                <div className="text-center">
-                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
-                  <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
-                </div>
-              </>
+            {role === 'cocina' ? (
+              show.projections && show.projections.length > 0 && (
+                <>
+                  <div className="h-8 w-px bg-slate-200" />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Detalle Empresas</p>
+                    <div className="flex flex-wrap gap-2 max-w-[350px]">
+                      {show.projections.map((p: any, idx: number) => (
+                        <div key={idx} className="flex flex-col items-center leading-tight bg-indigo-50/50 px-2 py-1 rounded-lg border border-indigo-100/50">
+                          <span className="text-[7px] font-black text-indigo-400 uppercase truncate max-w-[100px]">{p.company}</span>
+                          <span className="text-[10px] font-bold text-slate-700">{p.pax} <span className="text-indigo-600">→ {p.adjusted}</span></span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )
+            ) : (
+              role && (
+                <>
+                  <div className="h-8 w-px bg-slate-200" />
+                  <div className="text-center">
+                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
+                    <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
+                  </div>
+                </>
+              )
             )}
           </div>
-
-          {/* 4b. Company Breakdown (Cocina Only) */}
-          {role === 'cocina' && show.projections && show.projections.length > 0 && (
-            <div className="flex flex-wrap gap-2 max-w-md">
-              {show.projections.map((p: any, idx: number) => (
-                <div key={idx} className="bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-xl flex flex-col items-center">
-                  <p className="text-[7px] font-black text-indigo-400 uppercase tracking-tighter leading-none mb-1">{p.company}</p>
-                  <div className="flex items-baseline gap-1">
-                    <span className="text-[10px] font-bold text-slate-400">{p.pax}</span>
-                    <span className="text-[10px] font-black text-indigo-600">→ {p.adjusted}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* 5. Status */}
           <div className="shrink-0 min-w-[140px] text-center">
