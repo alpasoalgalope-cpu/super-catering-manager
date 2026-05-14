@@ -715,33 +715,30 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
               <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
               <p className="text-xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
             </div>
-            {role === 'cocina' ? (
-              show.projections && show.projections.length > 0 && (
-                <>
-                  <div className="h-8 w-px bg-slate-200" />
-                  <div className="flex flex-col gap-1">
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Detalle Empresas</p>
-                    <div className="flex flex-wrap gap-2 max-w-[350px]">
-                      {show.projections.map((p: any, idx: number) => (
-                        <div key={idx} className="flex flex-col items-center leading-tight bg-indigo-50/50 px-2 py-1 rounded-lg border border-indigo-100/50">
-                          <span className="text-[7px] font-black text-indigo-400 uppercase truncate max-w-[100px]">{p.company}</span>
-                          <span className="text-[10px] font-bold text-slate-700">{p.pax} <span className="text-indigo-600">→ {p.adjusted}</span></span>
-                        </div>
-                      ))}
-                    </div>
+            {show.projections && show.projections.length > 0 && (
+              <>
+                <div className="h-8 w-px bg-slate-200" />
+                <div className="flex flex-col gap-1">
+                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Empresas (PAX → Ventas)</p>
+                  <div className="flex flex-wrap gap-2 max-w-[350px]">
+                    {show.projections.map((p: any, idx: number) => (
+                      <div key={idx} className="flex flex-col items-center leading-tight bg-indigo-50/50 px-2 py-1 rounded-lg border border-indigo-100/50">
+                        <span className="text-[7px] font-black text-indigo-400 uppercase truncate max-w-[100px]">{p.company}</span>
+                        <span className="text-[10px] font-bold text-slate-700">{p.pax} <span className="text-indigo-600">→ {p.adjusted}</span></span>
+                      </div>
+                    ))}
                   </div>
-                </>
-              )
-            ) : (
-              role && (
-                <>
-                  <div className="h-8 w-px bg-slate-200" />
-                  <div className="text-center">
-                    <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
-                    <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
-                  </div>
-                </>
-              )
+                </div>
+              </>
+            )}
+            {role && role !== 'cocina' && (
+              <>
+                <div className="h-8 w-px bg-slate-200" />
+                <div className="text-center">
+                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
+                  <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
+                </div>
+              </>
             )}
           </div>
 
