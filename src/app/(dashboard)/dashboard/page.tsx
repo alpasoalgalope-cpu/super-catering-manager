@@ -705,26 +705,30 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
             {show.sold > 0 && (
               <>
               <div className="text-center">
-                <p className="text-[8px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Ventas</p>
-                <p className="text-xl font-black text-emerald-600 tabular-nums">{show.sold}</p>
+                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Ventas</p>
+                <p className="text-2xl font-black text-emerald-600 tabular-nums">{show.sold}</p>
               </div>
-              <div className="h-8 w-px bg-slate-200" />
+              <div className="h-10 w-px bg-slate-200" />
               </>
             )}
             <div className="text-center">
-              <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
-              <p className="text-xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
+              <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Ajustado</p>
+              <p className="text-2xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
             </div>
             {show.projections && show.projections.length > 0 && (
               <>
-                <div className="h-8 w-px bg-slate-200" />
-                <div className="flex flex-col gap-1">
-                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Empresas (PAX → Ventas)</p>
-                  <div className="flex flex-wrap gap-2 max-w-[350px]">
+                <div className="h-10 w-px bg-slate-200" />
+                <div className="flex flex-col gap-1.5">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Detalle Empresas (PAX → Venta)</p>
+                  <div className="flex flex-wrap gap-3 max-w-[500px]">
                     {show.projections.map((p: any, idx: number) => (
-                      <div key={idx} className="flex flex-col items-center leading-tight bg-indigo-50/50 px-2 py-1 rounded-lg border border-indigo-100/50">
-                        <span className="text-[7px] font-black text-indigo-400 uppercase truncate max-w-[100px]">{p.company}</span>
-                        <span className="text-[10px] font-bold text-slate-700">{p.pax} <span className="text-indigo-600">→ {p.adjusted}</span></span>
+                      <div key={idx} className="flex flex-col items-center bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 shadow-sm min-w-[80px]">
+                        <span className="text-[10px] font-black text-indigo-500 uppercase truncate max-w-[140px] mb-0.5">{p.company}</span>
+                        <div className="flex items-baseline gap-1.5 leading-none">
+                          <span className="text-base font-black text-slate-700 tabular-nums">{p.pax}</span>
+                          <span className="text-indigo-400 font-bold text-xs">→</span>
+                          <span className="text-base font-black text-indigo-600 tabular-nums">{p.adjusted}</span>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -733,10 +737,10 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
             )}
             {role && role !== 'cocina' && (
               <>
-                <div className="h-8 w-px bg-slate-200" />
+                <div className="h-10 w-px bg-slate-200" />
                 <div className="text-center">
-                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
-                  <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Facturación Est.</p>
+                  <p className="text-2xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
                 </div>
               </>
             )}
