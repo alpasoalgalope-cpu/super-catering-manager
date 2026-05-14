@@ -20,11 +20,17 @@ interface EventData {
       phone: string
       company: string
    }[]
+   projections?: {
+      company: string
+      pax: number
+      adjusted: number
+   }[]
 }
 
 export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [fetchError, setFetchError] = useState<string | null>(null)
+  const [role, setRole] = useState<string | null>(null)
   
   // Dashboard Tops
   const [metrics, setMetrics] = useState({
@@ -49,6 +55,13 @@ export default function DashboardPage() {
   useEffect(() => {
      const bootstrapDashboard = async () => {
         setLoading(true)
+
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+           if (user.email === 'fschottenfeld@gmail.com') setRole('admin')
+           else if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') setRole('cocina')
+           else setRole(user.app_metadata?.role || user.user_metadata?.role || 'cocina')
+        }
 
         // 1. Fetch ALL Events Master (To capture History and Future)
         const { data: masters, error } = await supabase
@@ -179,6 +192,7 @@ export default function DashboardPage() {
            // Calculate Adjusted Projection and Projected Revenue
            let totalAdjustedProj = 0
            let totalProjectedRev = 0
+           const projections: {company: string, pax: number, adjusted: number}[] = []
 
            m.event_projections?.forEach((p: any) => {
               const compKey = p.company_name?.trim().toLowerCase()
@@ -188,6 +202,12 @@ export default function DashboardPage() {
               const basePax = Number(p.projected_pax) || 0
               const adjustedSales = basePax * factor
               totalAdjustedProj += adjustedSales
+
+              projections.push({
+                 company: p.company_name,
+                 pax: basePax,
+                 adjusted: Math.round(adjustedSales)
+              })
               
               if (rule) {
                  // Formula solicitada: PAX Ajustado * Precio Base (Sin restar liberados, costeando el 100%)
@@ -220,7 +240,8 @@ export default function DashboardPage() {
                projected: Math.round(totalAdjustedProj),
                sold: eSold,
                revenue: eRev > 0 ? eRev : totalProjectedRev,
-               coordinators
+               coordinators,
+               projections
             }
         })
 
@@ -371,6 +392,7 @@ export default function DashboardPage() {
             accentColor="emerald"
             footerTitle="Planificación de Compras"
             footerLabel="PAX AJUSTADOS"
+            role={role}
           />
           
           <SectionView 
@@ -383,6 +405,7 @@ export default function DashboardPage() {
             accentColor="indigo"
             footerTitle="Previsión Logística"
             footerLabel="PAX ESTIMADOS"
+            role={role}
           />
         </div>
       </div>
@@ -404,7 +427,9 @@ export default function DashboardPage() {
                   <div key={ev.id} className="relative group">
                      <div className="flex justify-between items-baseline mb-1">
                         <span className="font-bold text-slate-800 text-xs truncate max-w-[150px]">{ev.show}</span>
-                        <span className="text-[10px] font-black text-emerald-600">{formatCurrency(ev.revenue)}</span>
+                        {role !== 'cocina' && (
+                           <span className="text-[10px] font-black text-emerald-600">{formatCurrency(ev.revenue)}</span>
+                        )}
                      </div>
                      <div className="flex items-center gap-2">
                         <div className="h-2 flex-1 bg-slate-200 rounded-full overflow-hidden">
@@ -535,7 +560,7 @@ export default function DashboardPage() {
 
 const formatCurrencyLocal = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
-function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel }: any) {
+function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel, role }: any) {
   if (shows.length === 0) return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b-4 border-slate-100 pb-4">
@@ -571,7 +596,7 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
       
       <div className="space-y-6">
         {shows.map((show: any, i: number) => (
-          <EffectivenessCard key={i} show={show} />
+          <EffectivenessCard key={i} show={show} role={role} />
         ))}
       </div>
 
@@ -587,14 +612,18 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
                     {total_adjusted} <span className="text-white/40 text-lg uppercase tracking-widest ml-1">{footerLabel}</span>
                   </p>
                </div>
-               <div className="hidden md:block w-px h-16 bg-white/20"></div>
-               <div className="w-full md:hidden h-px bg-white/20"></div>
-               <div>
-                  <p className="text-emerald-400/80 text-[10px] font-black uppercase tracking-[0.3em] mb-2">Total a Facturar</p>
-                  <p className="text-emerald-400 text-4xl font-black tabular-nums">
-                    {formatCurrencyLocal(total_revenue)}
-                  </p>
-               </div>
+               {role !== 'cocina' && (
+                 <>
+                   <div className="hidden md:block w-px h-16 bg-white/20"></div>
+                   <div className="w-full md:hidden h-px bg-white/20"></div>
+                   <div>
+                      <p className="text-emerald-400/80 text-[10px] font-black uppercase tracking-[0.3em] mb-2">Total a Facturar</p>
+                      <p className="text-emerald-400 text-4xl font-black tabular-nums">
+                        {formatCurrencyLocal(total_revenue)}
+                      </p>
+                   </div>
+                 </>
+               )}
             </div>
             <p className="text-[10px] text-white/40 font-medium italic mt-6 uppercase tracking-widest">
               * PAX Ajustado por factor de conversión por cliente
@@ -605,7 +634,7 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
   )
 }
 
-function EffectivenessCard({ show }: { show: any }) {
+function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
   const evDate = new Date(show.date + 'T12:00:00')
   const day = evDate.getDate()
   const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
@@ -681,12 +710,31 @@ function EffectivenessCard({ show }: { show: any }) {
               <p className="text-[8px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
               <p className="text-xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
             </div>
-            <div className="h-8 w-px bg-slate-200" />
-            <div className="text-center">
-              <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
-              <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
-            </div>
+            {role !== 'cocina' && (
+              <>
+                <div className="h-8 w-px bg-slate-200" />
+                <div className="text-center">
+                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
+                  <p className="text-xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
+                </div>
+              </>
+            )}
           </div>
+
+          {/* 4b. Company Breakdown (Cocina Only) */}
+          {role === 'cocina' && show.projections && show.projections.length > 0 && (
+            <div className="flex flex-wrap gap-2 max-w-md">
+              {show.projections.map((p: any, idx: number) => (
+                <div key={idx} className="bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-xl flex flex-col items-center">
+                  <p className="text-[7px] font-black text-indigo-400 uppercase tracking-tighter leading-none mb-1">{p.company}</p>
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-[10px] font-bold text-slate-400">{p.pax}</span>
+                    <span className="text-[10px] font-black text-indigo-600">→ {p.adjusted}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* 5. Status */}
           <div className="shrink-0 min-w-[140px] text-center">
