@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react"
 import { getRVTrasladosReportAction, RVCoordinatorPerformance } from "@/app/actions/reports"
-import { Users, TrendingUp, DollarSign, Package, Calendar, Loader2, ArrowLeft, Trophy } from "lucide-react"
+import { Users, TrendingUp, DollarSign, Package, Calendar, Loader2, ArrowLeft, Trophy, Zap } from "lucide-react"
 import Link from "next/link"
 
 export default function RVTrasladosReport() {
@@ -50,35 +50,81 @@ export default function RVTrasladosReport() {
 
       {error && <div className="p-6 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl font-bold">{error}</div>}
 
-      {/* Podium / Top Performer */}
-      {data.length > 0 && (
-        <div className="bg-gradient-to-br from-indigo-600 to-violet-700 rounded-[3rem] p-8 text-white shadow-2xl shadow-indigo-200 flex flex-col md:flex-row items-center gap-8 relative overflow-hidden">
-          <div className="absolute top-0 right-0 p-12 opacity-10 rotate-12">
-            <Trophy size={200} />
-          </div>
-          <div className="bg-white/20 p-6 rounded-[2rem] backdrop-blur-md border border-white/30 shrink-0">
-             <Trophy size={60} className="text-amber-300" />
-          </div>
-          <div className="flex-1 text-center md:text-left space-y-2">
-             <p className="text-indigo-100 font-black uppercase tracking-[0.2em] text-[10px]">Top Performer Histórico</p>
-             <h2 className="text-5xl font-black italic tracking-tighter">{data[0].coordinador}</h2>
-             <div className="flex flex-wrap items-center justify-center md:justify-start gap-6 pt-4">
-                <div className="flex items-center gap-2">
-                   <DollarSign size={18} className="text-emerald-400" />
-                   <span className="text-2xl font-black">{formatCurrency(data[0].total_venta)}</span>
+      {/* Podium / Dual Top Performers */}
+      {data.length > 0 && (() => {
+        const topVolumeCoord = data[0];
+        const topEfficiencyCoord = [...data].sort((a, b) => b.conversion - a.conversion)[0];
+        
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Card 1: Master de Volumen */}
+            <div className="bg-gradient-to-br from-slate-900 to-indigo-950 rounded-[3rem] p-8 text-white shadow-xl relative overflow-hidden group hover:shadow-2xl hover:shadow-indigo-950/20 transition-all duration-300">
+              <div className="absolute top-0 right-0 p-8 opacity-5 rotate-12 group-hover:scale-110 transition-transform duration-500">
+                <Trophy size={160} />
+              </div>
+              <div className="flex items-center gap-4 mb-6">
+                <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/20">
+                   <Trophy size={28} className="text-amber-300" />
                 </div>
-                <div className="flex items-center gap-2">
-                   <Calendar size={18} className="text-indigo-300" />
-                   <span className="text-xl font-bold">{data[0].total_eventos} Eventos</span>
+                <div>
+                  <p className="text-indigo-300 font-black uppercase tracking-[0.2em] text-[9px] leading-none mb-1">Máxima Facturación</p>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-widest leading-none">Master de Volumen</h4>
                 </div>
-                <div className="flex items-center gap-2">
-                   <TrendingUp size={18} className="text-amber-400" />
-                   <span className="text-xl font-bold">{data[0].conversion.toFixed(1)}% Conv.</span>
+              </div>
+              <div className="space-y-4">
+                 <h2 className="text-4xl font-black italic tracking-tighter truncate">{topVolumeCoord.coordinador}</h2>
+                 <div className="flex flex-wrap items-center gap-6 pt-2 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                       <DollarSign size={16} className="text-emerald-400" />
+                       <span className="text-xl font-black">{formatCurrency(topVolumeCoord.total_venta)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <Calendar size={16} className="text-indigo-300" />
+                       <span className="text-sm font-bold text-slate-300">{topVolumeCoord.total_eventos} Eventos</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <TrendingUp size={16} className="text-amber-400" />
+                       <span className="text-sm font-bold text-slate-300">{topVolumeCoord.conversion.toFixed(1)}% Conv.</span>
+                    </div>
+                 </div>
+              </div>
+            </div>
+
+            {/* Card 2: Líder de Eficiencia */}
+            <div className="bg-gradient-to-br from-emerald-600 to-teal-800 rounded-[3rem] p-8 text-white shadow-xl relative overflow-hidden group hover:shadow-2xl hover:shadow-emerald-950/20 transition-all duration-300">
+              <div className="absolute top-0 right-0 p-8 opacity-5 rotate-12 group-hover:scale-110 transition-transform duration-500">
+                <Zap size={160} />
+              </div>
+              <div className="flex items-center gap-4 mb-6">
+                <div className="bg-white/10 p-4 rounded-2xl backdrop-blur-md border border-white/20">
+                   <Zap size={28} className="text-amber-300" />
                 </div>
-             </div>
+                <div>
+                  <p className="text-emerald-200 font-black uppercase tracking-[0.2em] text-[9px] leading-none mb-1">Efectividad Comercial</p>
+                  <h4 className="text-xs font-bold text-white uppercase tracking-widest leading-none">Líder de Eficiencia</h4>
+                </div>
+              </div>
+              <div className="space-y-4">
+                 <h2 className="text-4xl font-black italic tracking-tighter truncate">{topEfficiencyCoord.coordinador}</h2>
+                 <div className="flex flex-wrap items-center gap-6 pt-2 border-t border-white/10">
+                    <div className="flex items-center gap-2">
+                       <TrendingUp size={16} className="text-amber-300" />
+                       <span className="text-xl font-black">{topEfficiencyCoord.conversion.toFixed(1)}% Conv.</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <DollarSign size={16} className="text-emerald-300" />
+                       <span className="text-sm font-bold text-emerald-100">{formatCurrency(topEfficiencyCoord.total_venta)}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <Calendar size={16} className="text-teal-200" />
+                       <span className="text-sm font-bold text-teal-100">{topEfficiencyCoord.total_eventos} Eventos</span>
+                    </div>
+                 </div>
+              </div>
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Grid Stats */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
