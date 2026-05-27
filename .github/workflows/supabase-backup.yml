@@ -15,9 +15,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Add PostgreSQL 15 repository
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor | sudo tee /etc/apt/trusted.gpg.d/postgresql.gpg >/dev/null
+          sudo apt-get update
+
       - name: Install PostgreSQL Client 15
         run: |
-          sudo apt-get update
           sudo apt-get install -y postgresql-client-15
 
       - name: Run pg_dump via Connection Pooler
