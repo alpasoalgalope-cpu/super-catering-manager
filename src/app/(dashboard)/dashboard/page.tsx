@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
-import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight } from "lucide-react"
+import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight, Truck, Package } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 
@@ -52,6 +52,7 @@ export default function DashboardPage() {
   const [futureByMonth, setFutureByMonth] = useState<{name: string, projected: number}[]>([])
   const [futureByVenue, setFutureByVenue] = useState<{name: string, projected: number}[]>([])
   const [futureByCompany, setFutureByCompany] = useState<{name: string, projected: number}[]>([])
+  const [incomingPOs, setIncomingPOs] = useState<any[]>([])
 
   useEffect(() => {
      const bootstrapDashboard = async () => {
@@ -62,7 +63,28 @@ export default function DashboardPage() {
            if (user.email === 'fschottenfeld@gmail.com') setRole('admin')
            else if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') setRole('cocina')
            else setRole(user.app_metadata?.role || user.user_metadata?.role || 'cocina')
-        }
+         }
+
+         // Fetch Pending Purchase Orders
+         const { data: poData, error: poErr } = await supabase
+            .from('purchase_orders')
+            .select(`
+               id,
+               fecha_esperada,
+               costo_total,
+               estado,
+               proveedores (nombre),
+               purchase_order_items (
+                 cantidad,
+                 productos (nombre, unidad_medida)
+               )
+            `)
+            .eq('estado', 'PENDIENTE')
+            .order('fecha_esperada', { ascending: true })
+
+         if (poErr) {
+            console.error("Dashboard PO fetch error:", poErr)
+         }
 
         // 1. Fetch ALL Events Master (To capture History and Future)
         const { data: masters, error } = await supabase
@@ -328,7 +350,17 @@ export default function DashboardPage() {
 
         setFutureByMonth(Object.keys(monthAggr).map(name => ({name, projected: monthAggr[name]})))
         setFutureByVenue(Object.keys(futVenueAggr).map(name => ({name, projected: futVenueAggr[name]})).sort((a,b) => b.projected - a.projected))
-        setFutureByCompany(Object.keys(futCompanyAggr).map(name => ({name, projected: futCompanyAggr[name]})).sort((a,b) => b.projected - a.projected))
+        setFutureByCompany(Object.keys(futCompanyAggr).map(name => ({name, projected: futCompanyAggr[name]})))
+
+         // Filter pending POs for this week and overdue
+         const filteredPOs = poData ? poData.filter((po: any) => {
+            if (!po.fecha_esperada) return false
+            const poDate = new Date(po.fecha_esperada + 'T12:00:00')
+            // Show if it is overdue (before today) OR if it is within this week
+            return poDate <= endOfThisWeek
+         }) : []
+         
+         setIncomingPOs(filteredPOs)
 
         setLoading(false)
      }
@@ -358,6 +390,10 @@ export default function DashboardPage() {
       )
   }
 
+  const today = new Date()
+  const todayDate = new Date(today)
+  todayDate.setHours(0,0,0,0)
+
   const formatCurrency = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
   return (
@@ -375,46 +411,144 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      <div className="grid gap-8">
-         {/* CHART 1: FUTURO (AHORA OCUPA TODO EL ANCHO SI ES NECESARIO O SE AJUSTA) */}
-      <div className="bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
-        <div className="mb-12">
-          <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
-            <TrendingUp className="text-indigo-600" size={40} /> 
-            Shows Próximas Semanas
-          </h3>
-          <p className="text-xl text-slate-500 font-medium mt-2">Seguimiento de ventas real vs. proyección para planificación de compras.</p>
-        </div>
-        
-        <div className="space-y-16">
-          <SectionView 
-            title="Esta Semana" 
-            shows={upcoming10Days} 
-            subtitle="Hoy — Domingo" 
-            total_projected={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)}
-            total_adjusted={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)} // Note: in dashboard projected is already adjusted
-            total_revenue={upcoming10Days.reduce((acc, curr) => acc + curr.revenue, 0)}
-            accentColor="emerald"
-            footerTitle="Planificación de Compras"
-            footerLabel="PAX AJUSTADOS"
-            role={role}
-          />
-          
-          <SectionView 
-            title="Próxima Semana" 
-            shows={upcomingCharts} 
-            subtitle="Lunes — Domingo"
-            total_projected={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
-            total_adjusted={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
-            total_revenue={upcomingCharts.reduce((acc, curr) => acc + curr.revenue, 0)}
-            accentColor="indigo"
-            footerTitle="Previsión Logística"
-            footerLabel="PAX ESTIMADOS"
-            role={role}
-          />
-        </div>
+      <div className="grid lg:grid-cols-3 gap-8 items-start">
+         {/* COLUMNA 1 y 2: SHOWS PRÓXIMAS SEMANAS (2/3 ancho) */}
+         <div className="lg:col-span-2 bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
+           <div className="mb-12">
+             <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
+               <TrendingUp className="text-indigo-600" size={40} /> 
+               Shows Próximas Semanas
+             </h3>
+             <p className="text-xl text-slate-500 font-medium mt-2">Seguimiento de ventas real vs. proyección para planificación de compras.</p>
+           </div>
+           
+           <div className="space-y-16">
+             <SectionView 
+               title="Esta Semana" 
+               shows={upcoming10Days} 
+               subtitle="Hoy — Domingo" 
+               total_projected={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)}
+               total_adjusted={upcoming10Days.reduce((acc, curr) => acc + curr.projected, 0)} // Note: in dashboard projected is already adjusted
+               total_revenue={upcoming10Days.reduce((acc, curr) => acc + curr.revenue, 0)}
+               accentColor="emerald"
+               footerTitle="Planificación de Compras"
+               footerLabel="PAX AJUSTADOS"
+               role={role}
+             />
+             
+             <SectionView 
+               title="Próxima Semana" 
+               shows={upcomingCharts} 
+               subtitle="Lunes — Domingo"
+               total_projected={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
+               total_adjusted={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
+               total_revenue={upcomingCharts.reduce((acc, curr) => acc + curr.revenue, 0)}
+               accentColor="indigo"
+               footerTitle="Previsión Logística"
+               footerLabel="PAX ESTIMADOS"
+               role={role}
+             />
+           </div>
+         </div>
+
+         {/* COLUMNA 3: MERCADERÍA A RECIBIR (1/3 ancho) */}
+         <div className="lg:col-span-1 bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
+           <div className="mb-12">
+             <h3 className="text-3xl font-bold text-slate-900 tracking-tighter flex items-center gap-3">
+               <Truck className="text-indigo-600 animate-pulse" size={32} /> 
+               Recibir esta Semana
+             </h3>
+             <p className="text-sm text-slate-500 font-medium mt-2">Calendario de mercadería a recibir de proveedores.</p>
+           </div>
+           
+           <div className="space-y-6 max-h-[780px] overflow-y-auto pr-2">
+              {incomingPOs.length === 0 ? (
+                 <div className="py-20 text-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                    <Package className="mx-auto text-slate-300 mb-4 animate-bounce" size={40} />
+                    <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Sin entregas pendientes</p>
+                 </div>
+              ) : (
+                 incomingPOs.map((po, index) => {
+                    const poDate = new Date(po.fecha_esperada + 'T12:00:00')
+                    const isOverdue = poDate < todayDate
+                    const isPoToday = po.fecha_esperada === today.toISOString().split('T')[0]
+                    
+                    const weekday = poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
+                    const dayNum = poDate.getDate()
+                    const monthName = poDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.', '')
+                    
+                    return (
+                       <div 
+                          key={po.id} 
+                          className={`p-6 rounded-[2rem] border transition-all relative ${
+                             isPoToday 
+                                ? 'border-emerald-400 bg-emerald-50/10 ring-2 ring-emerald-50' 
+                                : isOverdue 
+                                   ? 'border-rose-300 bg-rose-50/10' 
+                                   : 'border-slate-200 hover:border-indigo-300 bg-white shadow-sm'
+                          }`}
+                       >
+                          <div className="flex justify-between items-start gap-3">
+                             <div className="flex gap-4">
+                                <div className={`flex flex-col items-center justify-center w-12 h-14 rounded-2xl border text-center shrink-0 ${
+                                   isPoToday 
+                                      ? 'bg-emerald-500 border-emerald-600 text-white' 
+                                      : isOverdue 
+                                         ? 'bg-rose-500 border-rose-600 text-white animate-pulse' 
+                                         : 'bg-slate-50 border-slate-100 text-slate-700'
+                                }`}>
+                                   <span className="text-[10px] font-black leading-none">{weekday}</span>
+                                   <span className="text-base font-black leading-none mt-1">{dayNum}</span>
+                                </div>
+                                
+                                <div>
+                                   <div className="flex items-center gap-1.5 flex-wrap">
+                                      {isOverdue && (
+                                         <span className="bg-rose-100 text-rose-800 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
+                                            Atrasado
+                                         </span>
+                                      )}
+                                      {isPoToday && (
+                                         <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                                            Hoy
+                                         </span>
+                                      )}
+                                      <span className="text-[9px] font-bold text-slate-400">
+                                         {monthName}
+                                      </span>
+                                   </div>
+                                   
+                                   <h4 className="font-black text-slate-800 text-base uppercase mt-1 leading-tight">
+                                      {po.proveedores?.nombre || 'Proveedor Eliminado'}
+                                   </h4>
+                                </div>
+                             </div>
+                          </div>
+                          
+                          <div className="mt-4 pt-3 border-t border-slate-100">
+                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 font-mono">Insumos Solicitados:</p>
+                             <ul className="space-y-1">
+                                {po.purchase_order_items?.map((item: any, idx: number) => (
+                                   <li key={idx} className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
+                                      <span className="font-black text-indigo-700 tabular-nums">{item.cantidad} {item.productos?.unidad_medida || 'un'}</span>
+                                      <span className="truncate max-w-[150px]">{item.productos?.nombre}</span>
+                                   </li>
+                                ))}
+                             </ul>
+                          </div>
+                          
+                          <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
+                             <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
+                             <span className="text-xs font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
+                          </div>
+                       </div>
+                    )
+                 })
+              )}
+           </div>
+         </div>
       </div>
-    </div>
 
       {/* HISTORICAL CHARTS SECTION */}
       <h3 className="text-xl font-black mt-10 mb-4 px-2 text-slate-800 flex items-center gap-2"><History size={20}/> Análisis Histórico Contable (Completos/Ejecutados)</h3>
@@ -599,10 +733,38 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
          </div>
       </div>
       
-      <div className="space-y-6">
-        {shows.map((show: any, i: number) => (
-          <EffectivenessCard key={i} show={show} role={role} />
-        ))}
+      <div className="space-y-8">
+        {Object.values(shows.reduce((acc: any, s: any) => {
+           if (!acc[s.date]) acc[s.date] = { date: s.date, shows: [], totalPax: 0, totalAdjusted: 0 }
+           acc[s.date].shows.push(s)
+           acc[s.date].totalAdjusted += s.projected
+           s.projections?.forEach((p: any) => acc[s.date].totalPax += p.pax)
+           return acc
+        }, {})).map((group: any, i: number) => {
+           const evDate = new Date(group.date + 'T12:00:00')
+           const dateStr = evDate.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
+           return (
+             <div key={i} className="space-y-4">
+                {group.shows.length > 1 && (
+                   <div className="flex items-center gap-4 px-2 mb-2 animate-in fade-in slide-in-from-bottom-4">
+                      <div className="h-px bg-indigo-200/50 flex-1"></div>
+                      <div className="flex flex-col items-center">
+                         <span className="text-[10px] font-black uppercase text-indigo-400 tracking-[0.2em]">{dateStr}</span>
+                         <span className="text-[11px] font-black uppercase text-indigo-700 bg-indigo-50 px-4 py-1.5 rounded-full mt-1 border border-indigo-100 shadow-sm">
+                            TOTAL DE LA JORNADA: {group.totalPax} PAX Estimados | {group.totalAdjusted} PAX Ajustados
+                         </span>
+                      </div>
+                      <div className="h-px bg-indigo-200/50 flex-1"></div>
+                   </div>
+                )}
+                <div className="space-y-6">
+                   {group.shows.map((show: any, j: number) => (
+                     <EffectivenessCard key={j} show={show} role={role} />
+                   ))}
+                </div>
+             </div>
+           )
+        })}
       </div>
 
       <div className="pt-4">
@@ -655,7 +817,7 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
   const cls = statusColors[show.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'
 
   return (
-    <Link href={`/ventas-evento?eventId=${show.id}`} className={`block bg-white rounded-[2.5rem] border shadow-sm overflow-hidden group transition-all relative cursor-pointer
+    <div className={`block bg-white rounded-[2.5rem] border shadow-sm overflow-hidden group transition-all relative
       ${isToday ? 'border-emerald-400 ring-4 ring-emerald-50 scale-[1.02] shadow-xl z-20' : 'border-slate-200 hover:shadow-md hover:border-indigo-400'}
     `}>
       <div className={`p-6 flex flex-col gap-6 ${isToday ? '' : 'md:flex-row md:items-center'}`}>
@@ -746,11 +908,19 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
             )}
           </div>
 
-          {/* 5. Status */}
-          <div className="shrink-0 min-w-[140px] text-center">
-            <span className={`inline-block w-full text-xs font-black px-6 py-3 rounded-2xl border uppercase tracking-[0.2em] shadow-sm ${cls}`}>
+          {/* 5. Status & Actions */}
+          <div className="shrink-0 min-w-[160px] flex flex-col gap-3">
+            <span className={`inline-block w-full text-center text-[10px] font-black px-4 py-2.5 rounded-2xl border uppercase tracking-[0.2em] shadow-sm ${cls}`}>
               {show.status}
             </span>
+            <div className="flex flex-col gap-2">
+               <Link href={`/settings/eventos?eventId=${show.id}`} className="w-full text-center text-[10px] font-black bg-slate-50 hover:bg-slate-100 text-slate-700 py-2.5 rounded-xl uppercase tracking-widest transition-colors border border-slate-200">
+                  Gestión del Evento
+               </Link>
+               <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[10px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 rounded-xl uppercase tracking-widest transition-colors border border-indigo-100 shadow-sm">
+                  Carga de Ventas
+               </Link>
+            </div>
           </div>
         </div>
 
@@ -761,6 +931,6 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
           </div>
         )}
       </div>
-    </Link>
+    </div>
   )
 }
