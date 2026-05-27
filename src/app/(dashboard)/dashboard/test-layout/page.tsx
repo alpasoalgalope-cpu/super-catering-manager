@@ -399,7 +399,7 @@ export default function DashboardTestPage() {
   return (
     <div className="space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
-      {/* Estilos locales para inyectar CSS que oculte barras de scroll nativas */}
+      {/* Estilos locales para inyectar CSS que oculte barras de scroll nativas en paneles verticales */}
       <style>{`
         .scrollbar-none::-webkit-scrollbar {
           display: none;
@@ -476,7 +476,7 @@ export default function DashboardTestPage() {
         </div>
       </div>
 
-      {/* Grid General con Dos Columnas: Shows (2/3) y Entregas (1/3) */}
+      {/* Grid General con Dos Columnas Estables (Sin Scroll Horizontal en ningún caso) */}
       <div className="grid lg:grid-cols-3 gap-8 items-start">
          
          {/* COLUMNA 1 y 2: SHOWS PRÓXIMAS SEMANAS (2/3 de ancho) */}
@@ -528,12 +528,12 @@ export default function DashboardTestPage() {
              <p className="text-sm text-slate-500 font-medium mt-2">Calendario de mercadería a recibir de proveedores.</p>
            </div>
            
-           {/* Contenedor con scroll vertical para entregas de mercadería */}
+           {/* Contenedor con scroll vertical limpio para entregas de mercadería */}
            <div className="relative group/scroll-po">
-              <div className="space-y-6 max-h-[780px] overflow-y-auto pr-2 scrollbar-none scroll-smooth">
+              <div className="space-y-6 max-h-[780px] overflow-y-auto pr-2 scrollbar-none scroll-smooth pb-10">
                  {incomingPOs.length === 0 ? (
                     <div className="py-20 text-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
-                       <Package className="mx-auto text-slate-300 mb-4 animate-bounce" size={40} />
+                       <Package className="mx-auto text-slate-300 mb-4" size={40} />
                        <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Sin entregas pendientes</p>
                     </div>
                  ) : (
@@ -563,7 +563,7 @@ export default function DashboardTestPage() {
                                       isPoToday 
                                          ? 'bg-emerald-500 border-emerald-600 text-white' 
                                          : isOverdue 
-                                            ? 'bg-rose-500 border-rose-600 text-white animate-pulse' 
+                                            ? 'bg-rose-500 border-rose-600 text-white' 
                                             : 'bg-slate-50 border-slate-100 text-slate-700'
                                    }`}>
                                       <span className="text-[10px] font-black leading-none">{weekday}</span>
@@ -617,7 +617,7 @@ export default function DashboardTestPage() {
                  )}
               </div>
               {/* Gradiente sutil indicador al final de la columna scrollable */}
-              <div className="absolute left-0 right-2 bottom-0 h-10 bg-gradient-to-t from-white to-transparent pointer-events-none opacity-80" />
+              <div className="absolute left-0 right-2 bottom-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none opacity-90" />
            </div>
          </div>
       </div>
@@ -803,7 +803,8 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
          </div>
       </div>
       
-      <div className="space-y-8">
+      {/* Listado Vertical en base a una cuadrícula pura (Zero Scroll Horizontal) */}
+      <div className="space-y-12">
         {Object.values(shows.reduce((acc: any, s: any) => {
            if (!acc[s.date]) acc[s.date] = { date: s.date, shows: [], totalPax: 0, totalAdjusted: 0 }
            acc[s.date].shows.push(s)
@@ -814,29 +815,24 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
            const evDate = new Date(group.date + 'T12:00:00')
            const dateStr = evDate.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' })
            return (
-              <div key={i} className="space-y-4">
-                 <div className="flex items-center gap-4 px-2 mb-2">
-                    <div className="h-px bg-indigo-200/50 flex-1"></div>
+              <div key={i} className="space-y-6">
+                 {/* Cabecera de la Jornada */}
+                 <div className="flex items-center gap-4 px-2">
+                    <div className="h-px bg-indigo-100 flex-1"></div>
                     <div className="flex flex-col items-center">
                        <span className="text-[10px] font-black uppercase text-indigo-400 tracking-[0.2em]">{dateStr}</span>
                        <span className="text-[11px] font-black uppercase text-indigo-700 bg-indigo-50 px-4 py-1.5 rounded-full mt-1 border border-indigo-100 shadow-sm">
-                          TOTAL DE LA JORNADA: {group.totalPax} PAX Estimados | {group.totalAdjusted} PAX Ajustados
+                          {group.shows.length > 1 ? 'TOTAL DE LA JORNADA' : 'DETALLE DE LA JORNADA'}: {group.totalPax} PAX Estimados | {group.totalAdjusted} PAX Ajustados
                        </span>
                     </div>
-                    <div className="h-px bg-indigo-200/50 flex-1"></div>
+                    <div className="h-px bg-indigo-100 flex-1"></div>
                  </div>
                  
-                 {/* Scroll Horizontal snap-x con gradiente desvanecido sutil a la derecha */}
-                 <div className="relative group/scroll-shows">
-                    <div className="flex gap-6 overflow-x-auto pb-4 pt-1 scrollbar-none snap-x snap-mandatory scroll-smooth">
-                       {group.shows.map((show: any, j: number) => (
-                         <div key={j} className="min-w-[340px] sm:min-w-[480px] md:min-w-[620px] max-w-full snap-start shrink-0">
-                           <EffectivenessCard show={show} role={role} />
-                         </div>
-                       ))}
-                    </div>
-                    {/* Gradiente sutil derecho */}
-                    <div className="absolute right-0 top-0 bottom-4 w-12 bg-gradient-to-l from-white to-transparent pointer-events-none opacity-80" />
+                 {/* Cuadrícula Adaptativa Dinámica: 1 columna si hay un solo show, 2 columnas en pantallas medianas si hay más */}
+                 <div className={`grid grid-cols-1 ${group.shows.length > 1 ? 'md:grid-cols-2' : ''} gap-6`}>
+                    {group.shows.map((show: any, j: number) => (
+                      <EffectivenessCard key={j} show={show} role={role} />
+                    ))}
                  </div>
               </div>
            )
@@ -879,6 +875,7 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
 
 function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
   const evDate = new Date(show.date + 'T12:00:00')
+  const weekday = evDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
   const day = evDate.getDate()
   const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
   const today = new Date().toISOString().split('T')[0]
@@ -893,120 +890,104 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
   const cls = statusColors[show.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'
 
   return (
-    <div className={`block bg-white rounded-[2.5rem] border shadow-sm overflow-hidden group transition-all duration-300 relative
-      ${isToday ? 'border-emerald-400 ring-4 ring-emerald-50 scale-[0.99] shadow-xl z-20' : 'border-slate-200 hover:shadow-md hover:border-indigo-400'}
+    <div className={`block bg-white rounded-[2.5rem] border shadow-sm hover:shadow-lg transition-all duration-300 relative flex flex-col justify-between h-full p-6
+      ${isToday ? 'border-emerald-400 ring-4 ring-emerald-50 scale-[1.01] z-20 shadow-xl' : 'border-slate-200 hover:border-indigo-400'}
     `}>
-      <div className={`p-6 flex flex-col gap-6 ${isToday ? '' : 'md:flex-row md:items-center'}`}>
-        
-        <div className="flex items-center gap-6 flex-1">
-          {/* 1. Date Block */}
-          <div className={`flex flex-col items-center justify-center px-6 py-4 rounded-3xl border shrink-0 min-w-[90px]
-            ${isToday ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-slate-50 border-slate-100 text-slate-900'}
-          `}>
-            <span className="text-3xl font-black tabular-nums leading-none">{day}</span>
-            <span className={`text-[10px] font-black uppercase tracking-widest mt-1 ${isToday ? 'text-white/80' : 'text-indigo-500'}`}>{month}</span>
+      {/* Fila Superior: Badge del Día y Estado */}
+      <div className="flex justify-between items-center mb-6">
+        <div className="flex items-center gap-3">
+          <div className={`flex flex-col items-center justify-center w-12 h-12 rounded-2xl border text-center shrink-0 ${
+             isToday ? 'bg-emerald-500 border-emerald-600 text-white' : 'bg-slate-50 border-slate-100 text-slate-700'
+          }`}>
+             <span className="text-[9px] font-black leading-none uppercase">{weekday}</span>
+             <span className="text-base font-black leading-none mt-0.5">{day}</span>
           </div>
+          <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{month}</span>
+        </div>
+        
+        <span className={`text-[9px] font-black px-3 py-1.5 rounded-full border uppercase tracking-widest shadow-sm ${cls}`}>
+          {show.status}
+        </span>
+      </div>
 
-          {/* 2. Show & Venue */}
-          <div className="flex-1 min-w-0 space-y-1.5">
-            <h3 className="text-2xl font-black uppercase italic tracking-tighter truncate leading-tight group-hover:text-indigo-600 transition-colors text-slate-900">
-              {show.show}
-            </h3>
-            <div className="flex items-center gap-2">
-              <MapPin size={14} className={isToday ? "text-emerald-500" : "text-slate-400"} />
-              <span className={`text-xs font-bold uppercase tracking-wide ${isToday ? 'text-emerald-700' : 'text-slate-500'}`}>{show.venue}</span>
+      {/* Título & Sede */}
+      <div className="space-y-2 mb-6">
+        <h3 className="text-2xl font-black uppercase italic tracking-tight text-slate-900 truncate leading-tight group-hover:text-indigo-600 transition-colors">
+          {show.show}
+        </h3>
+        <div className="flex items-center gap-1.5 text-slate-500">
+          <MapPin size={12} className={isToday ? "text-emerald-500" : "text-slate-400"} />
+          <span className="text-[10px] font-black uppercase tracking-wider">{show.venue}</span>
+        </div>
+      </div>
+
+      {/* Coordinadores (Hoy Solamente) */}
+      {isToday && show.coordinators && show.coordinators.length > 0 && (
+        <div className="mb-6 p-4 bg-emerald-50/50 rounded-[1.5rem] border border-emerald-100 space-y-2">
+          {show.coordinators.map((c: any, idx: number) => (
+            <div key={idx} className="flex items-center gap-2 text-xs">
+              <Users size={12} className="text-emerald-600 shrink-0" />
+              <span className="font-bold text-slate-700">{c.name} ({c.company}):</span>
+              <span className="text-slate-500 font-medium">{c.phone}</span>
             </div>
+          ))}
+        </div>
+      )}
+
+      {/* Micro-Dashboard Interno de PAX y Costos */}
+      <div className="bg-slate-50/60 border border-slate-100 rounded-3xl p-5 mb-6 space-y-4">
+        <div className="grid grid-cols-2 gap-4">
+          {show.sold > 0 && (
+            <div>
+              <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mb-0.5">Ventas</p>
+              <p className="text-xl font-black text-emerald-600 tabular-nums">{show.sold}</p>
+            </div>
+          )}
+          <div>
+            <p className="text-[9px] font-black text-indigo-400 uppercase tracking-widest mb-0.5">Ajustado</p>
+            <p className="text-xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
           </div>
         </div>
 
-        {/* 3. Logistics Info (Today Only) */}
-        {isToday && show.coordinators && show.coordinators.length > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 p-5 bg-emerald-50/50 rounded-[1.5rem] border border-emerald-100">
-            {show.coordinators.map((c: any, idx: number) => (
-              <div key={idx} className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-600 shrink-0">
-                  <Users size={20} />
-                </div>
-                <div>
-                  <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest">Coordinador — {c.company}</p>
-                  <p className="text-sm font-bold text-slate-800">{c.name}</p>
-                  <p className="text-xs font-medium text-slate-500">{c.phone}</p>
-                </div>
-              </div>
-            ))}
+        {role && role !== 'cocina' && (
+          <div className="pt-3 border-t border-slate-200/60">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
+            <p className="text-lg font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-6 mt-auto md:mt-0">
-          {/* 4. Metrics */}
-          <div className="flex items-center gap-8 px-8 py-4 bg-slate-50/50 rounded-3xl border border-slate-100/50 shrink-0 group-hover:bg-indigo-50/50 transition-colors">
-            {show.sold > 0 && (
-              <>
-              <div className="text-center">
-                <p className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-1">Ventas</p>
-                <p className="text-2xl font-black text-emerald-600 tabular-nums">{show.sold}</p>
-              </div>
-              <div className="h-10 w-px bg-slate-200" />
-              </>
-            )}
-            <div className="text-center">
-              <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">Ajustado</p>
-              <p className="text-2xl font-black text-indigo-600 tabular-nums">{show.projected}</p>
-            </div>
-            {show.projections && show.projections.length > 0 && (
-              <>
-                <div className="h-10 w-px bg-slate-200" />
-                <div className="flex flex-col gap-1.5">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Detalle Empresas (PAX → Venta)</p>
-                  <div className="flex flex-wrap gap-3 max-w-[500px]">
-                    {show.projections.map((p: any, idx: number) => (
-                      <div key={idx} className="flex flex-col items-center bg-indigo-50 px-4 py-2 rounded-2xl border border-indigo-100 shadow-sm min-w-[80px]">
-                        <span className="text-[10px] font-black text-indigo-500 uppercase truncate max-w-[140px] mb-0.5">{p.company}</span>
-                        <div className="flex items-baseline gap-1.5 leading-none">
-                          <span className="text-base font-black text-slate-700 tabular-nums">{p.pax}</span>
-                          <span className="text-indigo-400 font-bold text-xs">→</span>
-                          <span className="text-base font-black text-indigo-600 tabular-nums">{p.adjusted}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+        {/* Desglose de Proyecciones de Clientes */}
+        {show.projections && show.projections.length > 0 && (
+          <div className="pt-3 border-t border-slate-200/60 space-y-1.5">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Empresas (PAX → Venta)</p>
+            <div className="flex flex-wrap gap-2">
+              {show.projections.map((p: any, idx: number) => (
+                <div key={idx} className="flex items-center gap-1 bg-white border border-slate-200/60 px-3 py-1 rounded-xl shadow-xs text-[10px] font-bold">
+                  <span className="text-slate-500 font-medium truncate max-w-[100px]">{p.company}:</span>
+                  <span className="text-slate-800 font-black">{p.pax}→{p.adjusted}</span>
                 </div>
-              </>
-            )}
-            {role && role !== 'cocina' && (
-              <>
-                <div className="h-10 w-px bg-slate-200" />
-                <div className="text-center">
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Facturación Est.</p>
-                  <p className="text-2xl font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* 5. Status & Actions */}
-          <div className="shrink-0 min-w-[160px] flex flex-col gap-3">
-            <span className={`inline-block w-full text-center text-[10px] font-black px-4 py-2.5 rounded-2xl border uppercase tracking-[0.2em] shadow-sm ${cls}`}>
-              {show.status}
-            </span>
-            <div className="flex flex-col gap-2">
-               <Link href={`/settings/eventos?eventId=${show.id}`} className="w-full text-center text-[10px] font-black bg-slate-50 hover:bg-slate-100 text-slate-700 py-2.5 rounded-xl uppercase tracking-widest transition-colors border border-slate-200">
-                  Gestión del Evento
-               </Link>
-               <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[10px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 rounded-xl uppercase tracking-widest transition-colors border border-indigo-100 shadow-sm">
-                  Carga de Ventas
-               </Link>
+              ))}
             </div>
-          </div>
-        </div>
-
-        {/* Today Badge */}
-        {isToday && (
-          <div className="absolute top-4 right-6 bg-emerald-500 text-white text-[10px] font-black px-4 py-1 rounded-full uppercase tracking-[0.2em] shadow-lg animate-pulse">
-            ¡HOY!
           </div>
         )}
       </div>
+
+      {/* Botones de Acción */}
+      <div className="grid grid-cols-2 gap-3 mt-auto">
+        <Link href={`/settings/eventos?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-slate-50 hover:bg-slate-100 text-slate-700 py-3 rounded-xl uppercase tracking-widest transition-all border border-slate-200">
+          Gestión
+        </Link>
+        <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-3 rounded-xl uppercase tracking-widest transition-all border border-indigo-100 shadow-sm">
+          Ventas
+        </Link>
+      </div>
+
+      {/* Etiqueta de Hoy */}
+      {isToday && (
+        <div className="absolute -top-2 right-6 bg-emerald-500 text-white text-[8px] font-black px-3 py-0.5 rounded-full uppercase tracking-[0.2em] shadow-md animate-pulse">
+          ¡HOY!
+        </div>
+      )}
     </div>
   )
 }
