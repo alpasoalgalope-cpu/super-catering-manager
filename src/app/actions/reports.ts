@@ -204,8 +204,8 @@ export async function getRVTrasladosReportAction(): Promise<{ data?: RVCoordinat
     headers.forEach(h => {
       const hUnits = (units || []).filter(u => u.header_id === h.id);
       
-      // Calculate Header-level targets
-      const headerTotalPaxAdjusted = (Number(h.pax_projected) || 0) * rvFactor;
+      // Calculate Header-level targets using ORIGINAL projected PAX
+      const headerTotalPaxOriginal = Number(h.pax_projected) || 0;
       const headerTotalUnitsSold = hUnits.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0);
 
       hUnits.forEach((u) => {
@@ -226,8 +226,8 @@ export async function getRVTrasladosReportAction(): Promise<{ data?: RVCoordinat
 
         const sold = Number(u.sold_qty) || 0;
         
-        // Distribution proportional to buses count in the header
-        const unitPax = hUnits.length > 0 ? headerTotalPaxAdjusted / hUnits.length : 0;
+        // Distribution proportional to buses count in the header based on ORIGINAL PAX
+        const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0;
         
         // Billing: (Header Total / Sold Units) * This Unit Sold Units
         const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0;
@@ -270,13 +270,22 @@ export async function getRVTrasladosReportAction(): Promise<{ data?: RVCoordinat
 export interface FinancialReportData {
   month: string;
   monthName: string;
-  ventas: number;
-  materiaPrima: number;
-  logistica: number;
-  extras: number;
-  comisiones: number;
-  totalGastos: number;
-  utilidad: number;
+  ventas: number;          // Teórico
+  materiaPrima: number;    // Teórico
+  logistica: number;       // Teórico (Proyectado)
+  extras: number;          // Teórico (Proyectado)
+  comisiones: number;      // Teórico (Proyectado)
+  totalGastos: number;     // Teórico Total
+  utilidad: number;        // Teórico Neto
+  
+  ventasReal: number;      // Real
+  materiaPrimaReal: number;// Real
+  logisticaReal: number;   // Real Logistics
+  extrasReal: number;      // Real Extras
+  gastosEstructuraReal: number; // Real Overhead
+  egrVariosReal: number;   // Real Misc Expenses
+  totalGastosReal: number; // Real Total Expenses
+  utilidadReal: number;    // Real Net Profit
 }
 
 export async function getFinancialReportsAction(): Promise<{ data?: FinancialReportData[], error?: string }> {
@@ -297,6 +306,114 @@ export async function getFinancialReportsAction(): Promise<{ data?: FinancialRep
     if (!events || events.length === 0) return { data: [] };
 
     const eventIds = events.map(e => e.id);
+
+    // 1b. Fetch Cash Movements for Estructura Expenses
+    const { data: cmEstructura, error: cmErr } = await supabase
+      .from('cash_movements')
+      .select('fecha, mes, conc_caja, importe')
+      .ilike('concepto', 'Estructura')
+      .lt('importe', 0)
+      .gte('fecha', dateLimit);
+
+    if (cmErr) {
+      console.error("Error fetching cash movements for financial report:", cmErr);
+    }
+
+    const cashEstructuraByMonth: Record<string, number> = {};
+    const cashLogisticaByMonth: Record<string, number> = {};
+    const cashExtrasByMonth: Record<string, number> = {};
+
+    cmEstructura?.forEach(m => {
+      if (!m.mes) return;
+      const match = m.mes.match(/^(\d{2})\./);
+      if (match) {
+        const monthNum = match[1]; // "05"
+        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
+        const key = `${year}-${monthNum}`;
+        const amount = Math.abs(Number(m.importe) || 0);
+
+        cashEstructuraByMonth[key] = (cashEstructuraByMonth[key] || 0) + amount;
+
+        const concCaja = String(m.conc_caja).toLowerCase();
+        if (concCaja.includes('log') || concCaja === 'logística') {
+          cashLogisticaByMonth[key] = (cashLogisticaByMonth[key] || 0) + amount;
+        } else if (concCaja.includes('ext') || concCaja === 'extras') {
+          cashExtrasByMonth[key] = (cashExtrasByMonth[key] || 0) + amount;
+        }
+      }
+    });
+
+    // 1c. Fetch Cash Movements for Materia Prima
+    const { data: cmMateriaPrima, error: mpErr } = await supabase
+      .from('cash_movements')
+      .select('fecha, mes, importe')
+      .ilike('concepto', 'Materia Prima')
+      .lt('importe', 0)
+      .gte('fecha', dateLimit);
+
+    if (mpErr) {
+      console.error("Error fetching materia prima cash movements:", mpErr);
+    }
+
+    const cashMateriaPrimaByMonth: Record<string, number> = {};
+    cmMateriaPrima?.forEach(m => {
+      if (!m.mes) return;
+      const match = m.mes.match(/^(\d{2})\./);
+      if (match) {
+        const monthNum = match[1];
+        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
+        const key = `${year}-${monthNum}`;
+        cashMateriaPrimaByMonth[key] = (cashMateriaPrimaByMonth[key] || 0) + Math.abs(Number(m.importe) || 0);
+      }
+    });
+
+    // 1d. Fetch Cash Movements for Ventas (Income)
+    const { data: cmVentas, error: vErr } = await supabase
+      .from('cash_movements')
+      .select('fecha, mes, importe')
+      .ilike('concepto', 'VENTAS')
+      .gt('importe', 0)
+      .gte('fecha', dateLimit);
+
+    if (vErr) {
+      console.error("Error fetching ventas cash movements:", vErr);
+    }
+
+    const cashVentasByMonth: Record<string, number> = {};
+    cmVentas?.forEach(m => {
+      if (!m.mes) return;
+      const match = m.mes.match(/^(\d{2})\./);
+      if (match) {
+        const monthNum = match[1];
+        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
+        const key = `${year}-${monthNum}`;
+        cashVentasByMonth[key] = (cashVentasByMonth[key] || 0) + Math.abs(Number(m.importe) || 0);
+      }
+    });
+
+    // 1e. Fetch Cash Movements for Egr. Varios (Expense)
+    const { data: cmEgrVarios, error: evErr } = await supabase
+      .from('cash_movements')
+      .select('fecha, mes, importe')
+      .ilike('concepto', 'EGR. Varios')
+      .lt('importe', 0)
+      .gte('fecha', dateLimit);
+
+    if (evErr) {
+      console.error("Error fetching egr varios cash movements:", evErr);
+    }
+
+    const cashEgrVariosByMonth: Record<string, number> = {};
+    cmEgrVarios?.forEach(m => {
+      if (!m.mes) return;
+      const match = m.mes.match(/^(\d{2})\./);
+      if (match) {
+        const monthNum = match[1];
+        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
+        const key = `${year}-${monthNum}`;
+        cashEgrVariosByMonth[key] = (cashEgrVariosByMonth[key] || 0) + Math.abs(Number(m.importe) || 0);
+      }
+    });
 
     // 2. Fetch ALL Sales Headers for these events (both legacy and master links)
     const { data: allHeaders, error: hErr } = await supabase
@@ -423,7 +540,15 @@ export async function getFinancialReportsAction(): Promise<{ data?: FinancialRep
           extras: 0,
           comisiones: 0,
           totalGastos: 0,
-          utilidad: 0
+          utilidad: 0,
+          gastosEstructuraReal: cashEstructuraByMonth[monthKey] || 0,
+          materiaPrimaReal: cashMateriaPrimaByMonth[monthKey] || 0,
+          logisticaReal: cashLogisticaByMonth[monthKey] || 0,
+          extrasReal: cashExtrasByMonth[monthKey] || 0,
+          ventasReal: cashVentasByMonth[monthKey] || 0,
+          egrVariosReal: cashEgrVariosByMonth[monthKey] || 0,
+          totalGastosReal: 0,
+          utilidadReal: 0
         };
       }
 
@@ -463,11 +588,20 @@ export async function getFinancialReportsAction(): Promise<{ data?: FinancialRep
 
     // 5. Finalize totals and utility
     const result = Object.values(monthlyStats).map(s => {
+      // Teórico
       const totalGastos = s.materiaPrima + s.logistica + s.extras + s.comisiones;
+      const utilidad = s.ventas - totalGastos;
+
+      // Real (Puro de Caja)
+      const totalGastosReal = s.materiaPrimaReal + s.gastosEstructuraReal + s.egrVariosReal;
+      const utilidadReal = s.ventasReal - totalGastosReal;
+
       return {
         ...s,
         totalGastos,
-        utilidad: s.ventas - totalGastos
+        utilidad,
+        totalGastosReal,
+        utilidadReal
       };
     });
 
