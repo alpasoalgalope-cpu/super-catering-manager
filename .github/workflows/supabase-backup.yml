@@ -1,0 +1,36 @@
+name: Weekly Supabase Database Backup
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install PostgreSQL Client 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-15
+
+      - name: Run pg_dump via Connection Pooler
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          mkdir -p backups
+          FILENAME="backups/supabase-backup-$(date +'%Y-%m-%d').sql.gz"
+          pg_dump -h aws-0-us-east-1.pooler.supabase.com -U postgres.wfxglxbbhwvduhmcguep -d postgres -p 6543 | gzip > "$FILENAME"
+
+      - name: Upload Backup as GitHub Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: supabase-backup-${{ github.run_id }}
+          path: backups/*.sql.gz
+          retention-days: 90
