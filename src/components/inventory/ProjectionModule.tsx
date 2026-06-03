@@ -5,7 +5,7 @@ import {
   Calendar, Users, ShoppingCart, Calculator, 
   ArrowRight, CheckCircle2, AlertCircle, Loader2,
   Filter, Download, Trash2, Package, CheckSquare,
-  Square, ChevronDown, ChevronUp
+  Square, ChevronDown, ChevronUp, Shield
 } from "lucide-react"
 import { Receta, Producto } from "@/types/inventory"
 import { supabase } from "@/lib/supabase"
@@ -20,6 +20,7 @@ export default function ProjectionModule({ recetas, productos }: Props) {
   const [events, setEvents] = useState<any[]>([])
   const [selectedEventIds, setSelectedEventIds] = useState<string[]>([])
   const [isEventsExpanded, setIsEventsExpanded] = useState(true)
+  const [bufferPercentage, setBufferPercentage] = useState(20)
   
   // Mapping categories to recipes
   const [mappings, setMappings] = useState({
@@ -114,7 +115,8 @@ export default function ProjectionModule({ recetas, productos }: Props) {
 
     return Object.values(ingredientAggregation).map(item => {
       const rinde = item.prod.factor_merma || 1
-      const grossQty = item.netQty / rinde
+      const baseGrossQty = item.netQty / rinde
+      const grossQty = baseGrossQty * (1 + bufferPercentage / 100)
       const latestPrice = item.prod.precios_historicos?.sort((a,b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0]
       const costPerBase = latestPrice?.costo_unidad_base || 0
       
@@ -128,7 +130,7 @@ export default function ProjectionModule({ recetas, productos }: Props) {
         proveedor: item.prod.proveedores?.nombre
       }
     }).sort((a,b) => b.cost - a.cost)
-  }, [selectedEventIds, events, mappings, recetas, productos])
+  }, [selectedEventIds, events, mappings, recetas, productos, bufferPercentage])
 
   const totalProjectionCost = projection.reduce((acc, item) => acc + item.cost, 0)
 
@@ -230,6 +232,31 @@ export default function ProjectionModule({ recetas, productos }: Props) {
                </div>
             </div>
           </div>
+
+          <div className="bg-white rounded-[2.5rem] border border-slate-100 shadow-sm overflow-hidden h-fit">
+            <div className="p-8 border-b border-slate-50 bg-emerald-50/30">
+               <h3 className="text-sm font-black uppercase tracking-widest text-emerald-900 flex items-center gap-2 italic">
+                 <Shield size={16} className="text-emerald-600" /> 3. Margen de Seguridad
+               </h3>
+            </div>
+            <div className="p-10 space-y-6">
+               <p className="text-[10px] font-bold text-slate-400 uppercase leading-relaxed">
+                 Colchón adicional a la compra bruta para evitar quiebres de stock en el evento.
+               </p>
+               <div className="flex items-center justify-between gap-4">
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max="100" 
+                    step="5"
+                    value={bufferPercentage}
+                    onChange={(e) => setBufferPercentage(Number(e.target.value))}
+                    className="w-full accent-emerald-500 h-2 bg-slate-100 rounded-lg appearance-none cursor-pointer"
+                  />
+                  <span className="text-2xl font-black text-emerald-900 w-16 text-right">{bufferPercentage}%</span>
+               </div>
+            </div>
+          </div>
         </div>
 
         {/* 3. RESULTADOS (EXPLOSION) */}
@@ -288,7 +315,10 @@ export default function ProjectionModule({ recetas, productos }: Props) {
                                    ? `${(item.gross / 1000).toFixed(2)} ${item.unidad === 'gr' ? 'KG' : 'LT'}`
                                    : `${item.gross.toFixed(0)} ${item.unidad}`}
                                </div>
-                               <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase rounded mt-1">Considerando Merma</span>
+                               <div className="flex gap-1 mt-1">
+                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 text-[8px] font-black uppercase rounded">Merma</span>
+                                  {bufferPercentage > 0 && <span className="px-2 py-0.5 bg-blue-50 text-blue-600 text-[8px] font-black uppercase rounded">+{bufferPercentage}% Margen</span>}
+                               </div>
                             </div>
                           </td>
                           <td className="px-10 py-6 text-right">

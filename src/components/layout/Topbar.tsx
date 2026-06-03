@@ -1,5 +1,5 @@
 import Link from "next/link"
-import { Calculator, CalendarDays, DollarSign } from "lucide-react"
+import { Calculator, CalendarDays, DollarSign, BarChart3 } from "lucide-react"
 
 export default function Topbar() {
   return (
@@ -16,6 +16,9 @@ export default function Topbar() {
 
         {/* Favourites Buttons */}
         <div className="hidden lg:flex items-center gap-3">
+          <Link href="/informes" className="flex items-center gap-2 px-4 py-2 bg-violet-50 text-violet-700 rounded-xl text-[10px] font-black uppercase tracking-widest border border-violet-100 hover:bg-violet-100 transition-all shadow-sm">
+            <BarChart3 size={14} /> Central de Informes
+          </Link>
           <Link href="/inventario/proyeccion" className="flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-700 rounded-xl text-[10px] font-black uppercase tracking-widest border border-indigo-100 hover:bg-indigo-100 transition-all shadow-sm">
             <Calculator size={14} /> Proyección de Insumos
           </Link>

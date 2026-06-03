@@ -730,3 +730,334 @@ export async function getIngredientPriceEvolutionAction(month?: string): Promise
     return { error: err.message || "Error al obtener evolución de precios" };
   }
 }
+
+export async function getCoordinatorConversionRatesAction(): Promise<{ data?: Record<string, number>, error?: string }> {
+  try {
+    const reportRes = await getRVTrasladosReportAction();
+    if (reportRes.error) throw new Error(reportRes.error);
+    
+    const rates: Record<string, number> = {};
+    if (reportRes.data) {
+      reportRes.data.forEach(item => {
+        const name = item.coordinador.trim().toLowerCase();
+        if (name && name !== 's/d') {
+          rates[name] = item.conversion / 100;
+        }
+      });
+    }
+    return { data: rates };
+  } catch (err: any) {
+    console.error("Error in getCoordinatorConversionRatesAction:", err);
+    return { error: err.message || "Error al obtener factores de conversión de coordinadores" };
+  }
+}
+
+export interface SatisfactionReportRow {
+  id: string;
+  event_master_id: string;
+  event_date: string;
+  show_name: string;
+  venue_name: string;
+  company_name: string;
+  respuestas_excelente: number;
+  respuestas_muy_bueno: number;
+  respuestas_bueno: number;
+  respuestas_regular: number;
+  respuestas_malo: number;
+  total_respuestas: number;
+  unidades_vendidas: number;
+  tasa_respuesta: number;
+  indice_satisfaccion: number;
+}
+
+export interface SatisfactionInput {
+  id?: string;
+  event_master_id: string;
+  company_name: string;
+  respuestas_excelente: number;
+  respuestas_muy_bueno: number;
+  respuestas_bueno: number;
+  respuestas_regular: number;
+  respuestas_malo: number;
+}
+
+export interface ExecutedEvent {
+  id: string;
+  show_name: string;
+  event_date: string;
+  venue_name: string;
+}
+
+export async function getSatisfactionReportsAction(): Promise<{ data?: SatisfactionReportRow[], error?: string }> {
+  try {
+    const { data: entries, error: sErr } = await supabase
+      .from('event_satisfaction')
+      .select(`
+        *,
+        events_master (
+          id,
+          event_date,
+          show_name,
+          venues (name)
+        )
+      `);
+
+    if (sErr) throw sErr;
+    if (!entries || entries.length === 0) return { data: [] };
+
+    const eventMasterIds = Array.from(new Set(entries.map(e => e.event_master_id)));
+
+    // Fetch headers
+    const { data: headers } = await supabase
+      .from('event_sales_headers')
+      .select('id, event_master_id, company_name, company')
+      .in('event_master_id', eventMasterIds);
+
+    const headerIds = headers?.map(h => h.id) || [];
+    const { data: units } = await supabase
+      .from('event_sales_units')
+      .select('header_id, sold_qty')
+      .in('header_id', headerIds);
+
+    const salesMap: Record<string, number> = {};
+    if (headers && units) {
+      headers.forEach(h => {
+        const hUnits = units.filter(u => u.header_id === h.id);
+        const totalSold = hUnits.reduce((sum, u) => sum + (Number(u.sold_qty) || 0), 0);
+        const company = (h.company_name || h.company || '').trim().toLowerCase();
+        const key = `${h.event_master_id}_${company}`;
+        salesMap[key] = (salesMap[key] || 0) + totalSold;
+      });
+    }
+
+    const reportData: SatisfactionReportRow[] = entries.map((entry: any) => {
+      const event = entry.events_master;
+      const totalResponses = 
+        (entry.respuestas_excelente || 0) +
+        (entry.respuestas_muy_bueno || 0) +
+        (entry.respuestas_bueno || 0) +
+        (entry.respuestas_regular || 0) +
+        (entry.respuestas_malo || 0);
+
+      // Math.round logic for satisfaction index
+      let satisfactionIndex = 0;
+      if (totalResponses > 0) {
+        const rawIndex = (
+          ((entry.respuestas_excelente || 0) * 100) +
+          ((entry.respuestas_muy_bueno || 0) * 80) +
+          ((entry.respuestas_bueno || 0) * 60) +
+          ((entry.respuestas_regular || 0) * 40) +
+          ((entry.respuestas_malo || 0) * 10)
+        ) / totalResponses;
+        satisfactionIndex = Math.round(rawIndex);
+      }
+
+      // Math.round logic for response rate
+      const companyKey = `${entry.event_master_id}_${(entry.company_name || '').trim().toLowerCase()}`;
+      const unitsSold = salesMap[companyKey] || 0;
+      let responseRate = 0;
+      if (unitsSold > 0) {
+        const rawRate = (totalResponses / unitsSold) * 100;
+        responseRate = Math.round(rawRate);
+      }
+
+      return {
+        id: entry.id,
+        event_master_id: entry.event_master_id,
+        event_date: event?.event_date || 'S/D',
+        show_name: event?.show_name || 'S/D',
+        venue_name: event?.venues?.name || 'S/D',
+        company_name: entry.company_name,
+        respuestas_excelente: entry.respuestas_excelente || 0,
+        respuestas_muy_bueno: entry.respuestas_muy_bueno || 0,
+        respuestas_bueno: entry.respuestas_bueno || 0,
+        respuestas_regular: entry.respuestas_regular || 0,
+        respuestas_malo: entry.respuestas_malo || 0,
+        total_respuestas: totalResponses,
+        unidades_vendidas: unitsSold,
+        tasa_respuesta: responseRate,
+        indice_satisfaccion: satisfactionIndex
+      };
+    });
+
+    // Sort by date descending
+    reportData.sort((a, b) => new Date(b.event_date).getTime() - new Date(a.event_date).getTime());
+
+    return { data: reportData };
+  } catch (err: any) {
+    console.error("Error fetching satisfaction reports data:", err);
+    return { error: err.message || "Error al obtener informe de satisfacción" };
+  }
+}
+
+export async function saveSatisfactionAction(input: SatisfactionInput): Promise<{ success: boolean; error?: string }> {
+  try {
+    if (input.id) {
+      const { error } = await supabase
+        .from('event_satisfaction')
+        .update({
+          event_master_id: input.event_master_id,
+          company_name: input.company_name,
+          respuestas_excelente: input.respuestas_excelente,
+          respuestas_muy_bueno: input.respuestas_muy_bueno,
+          respuestas_bueno: input.respuestas_bueno,
+          respuestas_regular: input.respuestas_regular,
+          respuestas_malo: input.respuestas_malo
+        })
+        .eq('id', input.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase
+        .from('event_satisfaction')
+        .insert({
+          event_master_id: input.event_master_id,
+          company_name: input.company_name,
+          respuestas_excelente: input.respuestas_excelente,
+          respuestas_muy_bueno: input.respuestas_muy_bueno,
+          respuestas_bueno: input.respuestas_bueno,
+          respuestas_regular: input.respuestas_regular,
+          respuestas_malo: input.respuestas_malo
+        });
+      if (error) throw error;
+    }
+    return { success: true };
+  } catch (err: any) {
+    console.error("Error in saveSatisfactionAction:", err);
+    if (err.code === '23505') {
+      return { success: false, error: "Ya existe un registro de satisfacción para este show y cliente." };
+    }
+    return { success: false, error: err.message || "Error al guardar la satisfacción" };
+  }
+}
+
+export async function deleteSatisfactionAction(id: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('event_satisfaction')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    return { success: true };
+  } catch (err: any) {
+    console.error("Error in deleteSatisfactionAction:", err);
+    return { success: false, error: err.message || "Error al eliminar la satisfacción" };
+  }
+}
+
+export async function getExecutedEventsAction(): Promise<{ data?: ExecutedEvent[], error?: string }> {
+  try {
+    const { data: events, error: eErr } = await supabase
+      .from('events_master')
+      .select(`
+        id,
+        event_date,
+        show_name,
+        venues (name)
+      `)
+      .ilike('status', '%ejecutado%')
+      .order('event_date', { ascending: false });
+
+    if (eErr) throw eErr;
+
+    const formatted = (events || []).map((e: any) => ({
+      id: e.id,
+      show_name: e.show_name || 'S/D',
+      event_date: e.event_date,
+      venue_name: e.venues?.name || 'S/D'
+    }));
+
+    return { data: formatted };
+  } catch (err: any) {
+    console.error("Error in getExecutedEventsAction:", err);
+    return { error: err.message || "Error al obtener eventos ejecutados" };
+  }
+}
+
+export interface EventSalesSummary {
+  event_master_id: string;
+  show_name: string;
+  event_date: string;
+  venue_name: string;
+  companies: {
+    company_name: string;
+    sold_qty: number;
+  }[];
+}
+
+export async function getEventSalesSummaryAction(): Promise<{ data?: EventSalesSummary[], error?: string }> {
+  try {
+    // 1. Fetch executed events
+    const { data: events, error: eErr } = await supabase
+      .from('events_master')
+      .select(`
+        id,
+        event_date,
+        show_name,
+        venues (name)
+      `)
+      .ilike('status', '%ejecutado%')
+      .order('event_date', { ascending: false });
+
+    if (eErr) throw eErr;
+    if (!events || events.length === 0) return { data: [] };
+
+    const eventIds = events.map(e => e.id);
+
+    // 2. Fetch sales headers for these events
+    const { data: headers, error: hErr } = await supabase
+      .from('event_sales_headers')
+      .select('id, event_master_id, company_name, company')
+      .in('event_master_id', eventIds);
+
+    if (hErr) throw hErr;
+
+    // 3. Fetch sales units
+    const headerIds = headers?.map(h => h.id) || [];
+    const { data: units, error: uErr } = await supabase
+      .from('event_sales_units')
+      .select('header_id, sold_qty')
+      .in('header_id', headerIds);
+
+    if (uErr) throw uErr;
+
+    // 4. Map and group units
+    const salesMap: Record<string, Record<string, number>> = {}; // event_id -> company_name -> sold_qty
+    headers?.forEach(h => {
+      const hUnits = units?.filter(u => u.header_id === h.id) || [];
+      const totalSold = hUnits.reduce((sum, u) => sum + (Number(u.sold_qty) || 0), 0);
+      const company = (h.company_name || h.company || 'S/D').trim();
+      
+      if (!salesMap[h.event_master_id]) {
+        salesMap[h.event_master_id] = {};
+      }
+      salesMap[h.event_master_id][company] = (salesMap[h.event_master_id][company] || 0) + totalSold;
+    });
+
+    const summary: EventSalesSummary[] = events.map((e: any) => {
+      const eventCompanies = salesMap[e.id] || {};
+      const companiesList = Object.entries(eventCompanies).map(([name, qty]) => ({
+        company_name: name,
+        sold_qty: qty
+      }));
+
+      // If no sales headers but we want to allow typing any company, we'll list a default
+      if (companiesList.length === 0) {
+        companiesList.push({ company_name: "RV Traslados", sold_qty: 0 });
+      }
+
+      return {
+        event_master_id: e.id,
+        show_name: e.show_name || 'S/D',
+        event_date: e.event_date,
+        venue_name: e.venues?.name || 'S/D',
+        companies: companiesList
+      };
+    });
+
+    return { data: summary };
+  } catch (err: any) {
+    console.error("Error in getEventSalesSummaryAction:", err);
+    return { error: err.message || "Error al obtener resumen de ventas por evento" };
+  }
+}

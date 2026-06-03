@@ -4,8 +4,9 @@ import React, { useEffect, useState } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
 import DashboardCard from '@/components/ui/DashboardCard'
-import { Users, Clock, ChefHat, Calendar, Link as LinkIcon, Building2, Truck, Activity, ArrowLeft, Trash2 } from 'lucide-react'
+import { Users, Clock, ChefHat, Calendar, Link as LinkIcon, Building2, Truck, Activity, ArrowLeft, Trash2, Save, Loader2 } from 'lucide-react'
 import Link from "next/link"
+import { syncStockForSaleAction } from "@/app/actions/stock"
 
 export default function EventDetailPage() {
   const { id } = useParams()
@@ -15,6 +16,11 @@ export default function EventDetailPage() {
   const [buses, setBuses] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({ sold: 0, specials: 0 })
+
+  // Edits
+  const [editedPax, setEditedPax] = useState<Record<string, number>>({})
+  const [editedStatus, setEditedStatus] = useState<string | undefined>(undefined)
+  const [isSaving, setIsSaving] = useState(false)
 
   const fetchRealData = async () => {
     if (!id) return
@@ -41,7 +47,7 @@ export default function EventDetailPage() {
     // Projections (Companies)
     const { data: projs } = await supabase
       .from("event_projections")
-      .select("company_name, projected_pax")
+      .select("id, company_name, projected_pax")
       .eq("event_id", id)
     setProjections(projs || [])
 
@@ -49,13 +55,23 @@ export default function EventDetailPage() {
     const { data: assignments } = await supabase
       .from("event_bus_assignments")
       .select(`
-         unit_name, observations, coordinator_name,
+         id, coordinator_id, vehicle_id, crew_count,
          clients (name),
-         vehicles (internal_name, plate)
+         vehicles (internal_name, plate),
+         coordinators (name)
       `)
       .eq("event_id", id)
     
-    setBuses(assignments || [])
+    const mappedBuses = (assignments || []).map((b: any, index: number) => ({
+      id: b.id,
+      unit_name: `Micro ${index + 1}`,
+      observations: "",
+      clients: b.clients,
+      vehicles: b.vehicles,
+      coordinator_name: b.coordinators?.name || '',
+      coordinator_id: b.coordinator_id
+    }))
+    setBuses(mappedBuses || [])
 
     // Sales Logic
     const { data: headers } = await supabase
@@ -97,7 +113,13 @@ export default function EventDetailPage() {
         .select('id').eq('event_master_id', id).eq('company_name', companyName).maybeSingle()
       
       if (header) {
+        // Delete units first so the stock delta sync knows we want to consume 0 units
         await supabase.from('event_sales_units').delete().eq('header_id', header.id)
+        
+        // Run stock delta engine to calculate and post full reversion automatically
+        await syncStockForSaleAction(header.id)
+        
+        // Finally delete the sales header
         await supabase.from('event_sales_headers').delete().eq('id', header.id)
       }
 
@@ -138,6 +160,27 @@ export default function EventDetailPage() {
     }
   }
 
+  const handleSave = async () => {
+    setIsSaving(true)
+    const paxProms = Object.keys(editedPax).map(pid => 
+       supabase.from("event_projections").update({ projected_pax: editedPax[pid] }).eq("id", pid)
+    )
+    
+    let allProms = [...paxProms]
+    if (editedStatus !== undefined) {
+       allProms.push(supabase.from("events_master").update({ status: editedStatus }).eq("id", id))
+    }
+
+    await Promise.all(allProms)
+    
+    setEditedPax({})
+    setEditedStatus(undefined)
+    await fetchRealData()
+    setIsSaving(false)
+  }
+
+  const hasEdits = Object.keys(editedPax).length > 0 || editedStatus !== undefined
+
   if (loading && !eventData) return <div className="p-20 text-center animate-pulse font-bold text-slate-400">Cargando inteligencia del evento...</div>
   if (!eventData && !loading) return <div className="p-20 text-center text-red-500 font-bold">Error: Evento no encontrado o eliminado.</div>
 
@@ -154,7 +197,21 @@ export default function EventDetailPage() {
              <div className="flex items-center gap-4 text-sm font-bold text-slate-500 mt-2">
                <span className="flex items-center gap-1"><Calendar size={16}/> {new Date(eventData.event_date + 'T12:00:00').toLocaleDateString('es-AR')}</span>
                <span className="flex items-center gap-1"><Activity size={16}/> {eventData.venues?.name || "Sin Venue"}</span>
-               <span className={`px-3 py-1 rounded-full text-[10px] uppercase tracking-widest ${eventData.status === 'cancelado' ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-600'}`}>{eventData.status}</span>
+               <select 
+                  className={`px-3 py-1.5 rounded-full text-[10px] uppercase tracking-widest font-black outline-none cursor-pointer border ${
+                     (editedStatus !== undefined ? editedStatus : eventData.status) === 'cancelado' 
+                        ? 'bg-red-50 text-red-600 border-red-200' 
+                        : 'bg-emerald-50 text-emerald-600 border-emerald-200'
+                  }`}
+                  value={editedStatus !== undefined ? editedStatus : eventData.status}
+                  onChange={e => setEditedStatus(e.target.value)}
+               >
+                  <option value="pendiente">PENDIENTE</option>
+                  <option value="proyectado">PROYECTADO</option>
+                  <option value="confirmado">CONFIRMADO</option>
+                  <option value="ejecutado">EJECUTADO</option>
+                  <option value="cancelado">CANCELADO</option>
+               </select>
              </div>
            </div>
         </div>
@@ -181,8 +238,17 @@ export default function EventDetailPage() {
                   {projections.map((p, i) => (
                      <div key={i} className="flex justify-between items-center bg-slate-50 p-4 rounded-xl group hover:bg-slate-100 transition">
                         <div>
-                           <span className="font-bold text-slate-800 block">{p.company_name}</span>
-                           <span className="text-xs font-black text-indigo-500 bg-indigo-100 px-2 py-0.5 rounded-full inline-block mt-1">{p.projected_pax} PAX</span>
+                           <span className="font-bold text-slate-800 block mb-1">{p.company_name}</span>
+                           <div className="flex items-center">
+                              <input 
+                                 type="number"
+                                 min={0}
+                                 className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1 text-indigo-600 font-black text-xs outline-none focus:ring-2 focus:ring-indigo-100"
+                                 value={editedPax[p.id] !== undefined ? editedPax[p.id] : p.projected_pax}
+                                 onChange={e => setEditedPax({...editedPax, [p.id]: Number(e.target.value)})}
+                              />
+                              <span className="text-[10px] font-black text-indigo-400 ml-2 uppercase">PAX Estimados</span>
+                           </div>
                         </div>
                         <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition">
                            <Link href={`/ventas-evento?eventId=${id}&company=${encodeURIComponent(p.company_name)}`}
@@ -236,6 +302,22 @@ export default function EventDetailPage() {
             )}
          </div>
       </div>
+
+      {/* Floating Save Button */}
+      {hasEdits && (
+         <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-900 text-white p-4 rounded-[2rem] shadow-2xl flex items-center gap-6 z-50 animate-in slide-in-from-bottom-10">
+            <div className="pl-2">
+               <p className="font-bold text-sm">Cambios sin guardar</p>
+               <p className="text-xs text-indigo-300">Tienes ediciones pendientes</p>
+            </div>
+            <button 
+               onClick={handleSave} disabled={isSaving}
+               className="bg-indigo-500 hover:bg-indigo-400 text-white px-8 py-3 rounded-xl font-bold flex items-center gap-2 transition disabled:opacity-50">
+               {isSaving ? <Loader2 className="animate-spin" size={20}/> : <Save size={20}/>}
+               Guardar Cambios
+            </button>
+         </div>
+      )}
     </div>
   )
 }

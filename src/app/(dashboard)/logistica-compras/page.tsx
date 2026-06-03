@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState, useMemo } from "react"
 import { supabase } from "@/lib/supabase"
+import { getCoordinatorConversionRatesAction } from "@/app/actions/reports"
 import { 
   TrendingUp, Calendar, Users, MapPin, 
   Loader2, ChevronRight, Package, Info, 
@@ -46,17 +47,28 @@ export default function LogisticaComprasPage() {
       const fourteenDaysLater = new Date(today)
       fourteenDaysLater.setDate(today.getDate() + 14)
 
-      // 1. Fetch Masters + Projections
-      const { data: masters, error: mErr } = await supabase
-        .from("events_master")
-        .select(`
-          id, event_date, show_name, status,
-          venues (name),
-          event_projections (company_name, projected_pax)
-        `)
-        .gte("event_date", today.toISOString().split('T')[0])
-        .lte("event_date", fourteenDaysLater.toISOString().split('T')[0])
-        .order("event_date", { ascending: true })
+      // 1. Fetch Masters + Projections + Bus Assignments + Clients + Coordinator Rates
+      const [
+        { data: masters, error: mErr },
+        { data: clients, error: cErr },
+        coordinatorRatesRes
+      ] = await Promise.all([
+        supabase
+          .from("events_master")
+          .select(`
+            id, event_date, show_name, status,
+            venues (name),
+            event_projections (company_name, projected_pax),
+            event_bus_assignments (client_id, coordinators(id, name, phone, company))
+          `)
+          .gte("event_date", today.toISOString().split('T')[0])
+          .lte("event_date", fourteenDaysLater.toISOString().split('T')[0])
+          .order("event_date", { ascending: true }),
+        supabase
+          .from("clients")
+          .select("id, name, conversion_factor"),
+        getCoordinatorConversionRatesAction()
+      ])
 
       if (mErr) {
         console.error("Error fetching effectiveness masters:", mErr)
@@ -64,25 +76,26 @@ export default function LogisticaComprasPage() {
         return
       }
 
-      // 2. Fetch Clients for Conversion Factor
-      const { data: clients, error: cErr } = await supabase
-        .from("clients")
-        .select("name, conversion_factor")
-
       if (cErr) {
         console.error("Error fetching clients for metrics:", cErr)
         setLoading(false)
         return
       }
 
-      // 3. Create Conversion Map
+      // 3. Create Conversion Map and identify RV Client ID
       const conversionMap: Record<string, number> = {}
+      let rvClientId: string | undefined = undefined
       clients?.forEach(c => {
         conversionMap[c.name] = Number(c.conversion_factor) || 1.0
+        if (c.name?.trim().toLowerCase() === "rv traslados") {
+          rvClientId = c.id
+        }
       })
 
+      const coordinatorRates = coordinatorRatesRes.data || {}
+
       // 4. Process and Group Data
-      const processed = processMetrics(masters || [], conversionMap)
+      const processed = processMetrics(masters || [], conversionMap, coordinatorRates, rvClientId)
       setData(processed)
       setLoading(false)
     }
@@ -91,7 +104,12 @@ export default function LogisticaComprasPage() {
   }, [])
 
   // --- Logic Function (Requested by User) ---
-  function processMetrics(masters: any[], conversionMap: Record<string, number>) {
+  function processMetrics(
+    masters: any[],
+    conversionMap: Record<string, number>,
+    coordinatorRates: Record<string, number>,
+    rvClientId: string | undefined
+  ) {
     const today = new Date()
     today.setHours(0,0,0,0)
 
@@ -118,7 +136,24 @@ export default function LogisticaComprasPage() {
       let showAdj = 0
 
       m.event_projections?.forEach((p: any) => {
-        const factor = conversionMap[p.company_name] || 1.0
+        const compKey = p.company_name?.trim().toLowerCase()
+        
+        let factor = conversionMap[p.company_name] || 1.0
+        if (compKey === "rv traslados") {
+          const rvAssignment = m.event_bus_assignments?.find((ba: any) => {
+            if (rvClientId && ba.client_id === rvClientId) return true
+            if (ba.coordinators?.company?.trim().toLowerCase() === "rv traslados") return true
+            return false
+          })
+          const coordName = rvAssignment?.coordinators?.name
+          if (coordName) {
+            const coordRate = coordinatorRates[coordName.trim().toLowerCase()]
+            if (coordRate !== undefined && coordRate > 0) {
+              factor = coordRate
+            }
+          }
+        }
+
         const proj = Number(p.projected_pax) || 0
         showProj += proj
         showAdj += proj * factor

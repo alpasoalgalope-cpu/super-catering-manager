@@ -8,6 +8,7 @@ import {
   Loader2, CheckCircle2, AlertCircle, Trash2, ChevronDown,
   ChevronUp, Settings2, Search, X, Truck, DollarSign
 } from "lucide-react"
+import { useSearchParams } from "next/navigation"
 import VenueModal from "@/components/forms/VenueModal"
 import CompanyModal from "@/components/forms/CompanyModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
@@ -68,7 +69,16 @@ function EventProfitabilityBadge({ eventId, status, refreshKey }: { eventId: str
 interface Venue { id: string; name: string; address?: string; meeting_point?: string }
 interface Coordinator { id: string; name: string; company: string; phone?: string }
 interface Vehicle { id: string; internal_name: string; plate?: string; client_id: string; vehicle_type?: string }
-interface BusAssignment { id?: string; vehicle_id: string; coordinator_id: string; client_id?: string; crew_count?: number }
+interface BusAssignment { 
+  id?: string; 
+  vehicle_id: string; 
+  coordinator_id: string; 
+  client_id?: string; 
+  crew_count?: number;
+  unit_name?: string;
+  coordinator_name?: string;
+  observations?: string;
+}
 interface ProjectionRow { id?: string; company_name: string; projected_pax: number; bus_assignments?: BusAssignment[] }
 interface EventMaster {
   id: string
@@ -87,6 +97,9 @@ interface EventMaster {
 
 // --- Main Component ---
 export default function MasterEventForm() {
+  const searchParams = useSearchParams()
+  const eventIdFromUrl = searchParams.get('eventId')
+
   const [events, setEvents] = useState<EventMaster[]>([])
   const [venues, setVenues] = useState<Venue[]>([])
   const [coordinators, setCoordinators] = useState<Coordinator[]>([])
@@ -191,17 +204,28 @@ export default function MasterEventForm() {
     
     setEvents(processedEvents)
     if (processedEvents.length > 0) {
-      // Auto-expand only the first 5 UPCOMING events (to match default view)
-      const now = new Date().toISOString().split('T')[0]
-      const upcomingIds = processedEvents
-        .filter(e => e.event_date >= now)
-        .slice(0, 5)
-        .map(e => e.id)
-      setExpandedIds(new Set(upcomingIds))
+      if (eventIdFromUrl) {
+        setExpandedIds(new Set([eventIdFromUrl]))
+        const ev = processedEvents.find((e: any) => e.id === eventIdFromUrl)
+        if (ev) {
+          if (ev.event_date < new Date().toISOString().split('T')[0]) {
+            setView("all")
+          }
+          setSearchTerm(ev.show_name || "")
+        }
+      } else {
+        // Auto-expand only the first 5 UPCOMING events (to match default view)
+        const now = new Date().toISOString().split('T')[0]
+        const upcomingIds = processedEvents
+          .filter(e => e.event_date >= now)
+          .slice(0, 5)
+          .map(e => e.id)
+        setExpandedIds(new Set(upcomingIds))
+      }
     }
     setLocalEdits({})
     setLoading(false)
-  }, [])
+  }, [eventIdFromUrl])
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
@@ -1091,6 +1115,10 @@ export default function MasterEventForm() {
                     <Link href={`/ventas-evento?eventId=${ev.id}`} className="px-4 py-2 bg-indigo-50 text-indigo-600 font-black rounded-xl hover:bg-indigo-100 transition shadow-sm flex items-center gap-2">
                        <DollarSign size={16} />
                        <span className="text-xs">Ventas</span>
+                    </Link>
+                    <Link href={`/inventario/trazabilidad?event_id=${ev.id}`} className="px-4 py-2 bg-emerald-50 text-emerald-600 font-black rounded-xl hover:bg-emerald-100 transition shadow-sm flex items-center gap-2">
+                       <Truck size={16} />
+                       <span className="text-xs">Consolidado</span>
                     </Link>
                     <button onClick={() => {
                       setExpandedIds(prev => {

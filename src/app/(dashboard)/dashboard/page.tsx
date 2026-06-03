@@ -515,108 +515,110 @@ export default function DashboardPage() {
            </div>
          </div>
 
-         {/* COLUMNA 3: MERCADERÍA A RECIBIR (1/3 de ancho) */}
-         <div className="lg:col-span-1 bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
-           <div className="mb-8">
-             <h3 className="text-3xl font-bold text-slate-900 tracking-tighter flex items-center gap-3">
-               <Truck className="text-indigo-600 animate-pulse" size={32} /> 
-               Recibir esta Semana
-             </h3>
-             <p className="text-sm text-slate-500 font-medium mt-2">Calendario de mercadería a recibir de proveedores.</p>
-           </div>
-           
-           {/* Contenedor con scroll vertical limpio para entregas de mercadería */}
-           <div className="relative group/scroll-po">
-              <div className="space-y-6 max-h-[780px] overflow-y-auto pr-2 scrollbar-none scroll-smooth pb-10">
-                 {incomingPOs.length === 0 ? (
-                    <div className="py-20 text-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
-                       <Package className="mx-auto text-slate-300 mb-4" size={40} />
-                       <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">Sin entregas pendientes</p>
-                    </div>
-                 ) : (
-                    incomingPOs.map((po, index) => {
-                       const poDate = new Date(po.fecha_esperada + 'T12:00:00')
-                       const isOverdue = poDate < todayDate
-                       const isPoToday = po.fecha_esperada === today.toISOString().split('T')[0]
-                       
-                       const weekday = poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
-                       const dayNum = poDate.getDate()
-                       const monthName = poDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.', '')
-                       
-                       return (
-                          <div 
-                             key={po.id} 
-                             className={`p-6 rounded-[2rem] border transition-all duration-300 relative hover:shadow-md ${
-                                isPoToday 
-                                   ? 'border-emerald-400 bg-emerald-50/10 ring-2 ring-emerald-50' 
-                                   : isOverdue 
-                                      ? 'border-rose-300 bg-rose-50/10' 
-                                      : 'border-slate-200 hover:border-indigo-300 bg-white shadow-sm'
-                             }`}
-                          >
-                             <div className="flex justify-between items-start gap-3">
-                                <div className="flex gap-4">
-                                   <div className={`flex flex-col items-center justify-center w-12 h-14 rounded-2xl border text-center shrink-0 ${
-                                      isPoToday 
-                                         ? 'bg-emerald-500 border-emerald-600 text-white' 
-                                         : isOverdue 
-                                            ? 'bg-rose-500 border-rose-600 text-white animate-pulse' 
-                                            : 'bg-slate-50 border-slate-100 text-slate-700'
-                                   }`}>
-                                      <span className="text-[10px] font-black leading-none">{weekday}</span>
-                                      <span className="text-base font-black leading-none mt-1">{dayNum}</span>
-                                   </div>
-                                   
-                                   <div>
-                                      <div className="flex items-center gap-1.5 flex-wrap">
-                                         {isOverdue && (
-                                            <span className="bg-rose-100 text-rose-800 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider">
-                                               Atrasado
-                                            </span>
-                                         )}
-                                         {isPoToday && (
-                                            <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-2 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
-                                               Hoy
-                                            </span>
-                                         )}
-                                         <span className="text-[9px] font-bold text-slate-400">
-                                            {monthName}
-                                         </span>
-                                      </div>
-                                      
-                                      <h4 className="font-black text-slate-800 text-base uppercase mt-1 leading-tight">
-                                         {po.proveedores?.nombre || 'Proveedor Eliminado'}
-                                      </h4>
-                                   </div>
-                                </div>
-                             </div>
-                             
-                             <div className="mt-4 pt-3 border-t border-slate-100">
-                                <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5 font-mono">Insumos Solicitados:</p>
-                                <ul className="space-y-1">
-                                   {po.purchase_order_items?.map((item: any, idx: number) => (
-                                      <li key={idx} className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
-                                         <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 shrink-0" />
-                                         <span className="font-black text-indigo-700 tabular-nums">{item.cantidad} {item.productos?.unidad_medida || 'un'}</span>
-                                         <span className="truncate max-w-[150px]">{item.productos?.nombre}</span>
-                                      </li>
-                                   ))}
-                                </ul>
-                             </div>
-                             
-                             <div className="mt-4 pt-3 border-t border-slate-100 flex justify-between items-center">
-                                <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
-                                <span className="text-xs font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
-                             </div>
-                          </div>
-                       )
-                    })
-                 )}
-              </div>
-              {/* Gradiente sutil indicador al final de la columna scrollable */}
-              <div className="absolute left-0 right-2 bottom-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none opacity-90" />
-           </div>
-         </div>
+          {/* COLUMNA 3: MERCADERÍA A RECIBIR (1/3 de ancho) */}
+          <div className="lg:col-span-1 bg-white rounded-[2.5rem] border border-slate-200 p-6 md:p-8 shadow-xl shadow-slate-200/50">
+            <div className="mb-6">
+              <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
+                <Truck className="text-indigo-600 animate-pulse" size={28} /> 
+                Recibir esta Semana
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">Mercadería a recibir de proveedores.</p>
+            </div>
+            
+            {/* Contenedor con scroll vertical limpio para entregas de mercadería */}
+            <div className="relative group/scroll-po">
+               <div className="space-y-4 max-h-[780px] overflow-y-auto pr-2 scrollbar-none scroll-smooth pb-10">
+                  {incomingPOs.length === 0 ? (
+                     <div className="py-16 text-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
+                        <Package className="mx-auto text-slate-300 mb-3" size={32} />
+                        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Sin entregas pendientes</p>
+                     </div>
+                  ) : (
+                     incomingPOs.map((po, index) => {
+                        const poDate = new Date(po.fecha_esperada + 'T12:00:00')
+                        const isOverdue = poDate < todayDate
+                        const isPoToday = po.fecha_esperada === today.toISOString().split('T')[0]
+                        
+                        const weekday = poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
+                        const dayNum = poDate.getDate()
+                        const monthName = poDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.', '')
+                        
+                        return (
+                           <div 
+                              key={po.id} 
+                              className={`p-4 rounded-[1.5rem] border transition-all duration-300 relative hover:shadow-md ${
+                                 isPoToday 
+                                    ? 'border-emerald-400 bg-emerald-50/10 ring-2 ring-emerald-50 shadow-sm' 
+                                    : isOverdue 
+                                       ? 'border-rose-300 bg-rose-50/10' 
+                                       : 'border-slate-200 hover:border-indigo-300 bg-white shadow-sm'
+                              }`}
+                           >
+                              <div className="flex justify-between items-start gap-2">
+                                 <div className="flex gap-3 min-w-0 flex-1 items-center">
+                                    <div className={`flex flex-col items-center justify-center w-10 h-12 rounded-xl border text-center shrink-0 ${
+                                       isPoToday 
+                                          ? 'bg-emerald-500 border-emerald-600 text-white' 
+                                          : isOverdue 
+                                             ? 'bg-rose-500 border-rose-600 text-white animate-pulse' 
+                                             : 'bg-slate-50 border-slate-100 text-slate-700'
+                                    }`}>
+                                       <span className="text-[8px] font-black leading-none uppercase">{weekday}</span>
+                                       <span className="text-sm font-black leading-none mt-0.5">{dayNum}</span>
+                                    </div>
+                                    
+                                    <div className="min-w-0 flex-1">
+                                       <div className="flex items-center gap-1.5 flex-wrap">
+                                          {isOverdue && (
+                                             <span className="bg-rose-100 text-rose-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                                                Atrasado
+                                             </span>
+                                          )}
+                                          {isPoToday && (
+                                             <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                                                Hoy
+                                             </span>
+                                          )}
+                                          <span className="text-[9px] font-bold text-slate-400">
+                                             {monthName}
+                                          </span>
+                                       </div>
+                                       
+                                       <h4 className="font-black text-slate-800 text-sm uppercase mt-0.5 leading-tight truncate" title={po.proveedores?.nombre}>
+                                          {po.proveedores?.nombre || 'Proveedor Eliminado'}
+                                       </h4>
+                                    </div>
+                                 </div>
+                              </div>
+                              
+                              <div className="mt-3 pt-2.5 border-t border-slate-100">
+                                 <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5 font-mono">Insumos Solicitados:</p>
+                                 <ul className="space-y-1">
+                                    {po.purchase_order_items?.map((item: any, idx: number) => (
+                                       <li key={idx} className="text-[11px] font-semibold text-slate-600 flex items-center justify-between gap-1.5">
+                                          <span className="flex items-center gap-1.5 min-w-0">
+                                             <span className="w-1 h-1 rounded-full bg-indigo-500 shrink-0" />
+                                             <span className="truncate max-w-[130px] md:max-w-[150px]" title={item.productos?.nombre}>{item.productos?.nombre}</span>
+                                          </span>
+                                          <span className="font-black text-indigo-700 tabular-nums shrink-0">{item.cantidad} {item.productos?.unidad_medida || 'un'}</span>
+                                       </li>
+                                    ))}
+                                 </ul>
+                              </div>
+                              
+                              <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center text-[10px]">
+                                 <span className="font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
+                                 <span className="font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
+                              </div>
+                           </div>
+                        )
+                     })
+                  )}
+               </div>
+               {/* Gradiente sutil indicador al final de la columna scrollable */}
+               <div className="absolute left-0 right-2 bottom-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none opacity-90" />
+            </div>
+          </div>
       </div>
 
       {/* HISTORICAL CHARTS SECTION */}

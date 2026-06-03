@@ -50,6 +50,23 @@ export default function FinancialReportsPage() {
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(val)
 
+  const getDeviation = (real: number, teorico: number, isExpense: boolean) => {
+    const diff = real - teorico;
+    if (teorico === 0) {
+      if (real === 0) return null;
+      return {
+        text: `${diff > 0 ? '+' : ''}${formatCurrency(diff)}`,
+        isPositive: isExpense ? false : true
+      };
+    }
+    const pct = (diff / teorico) * 100;
+    const isPositive = isExpense ? (diff <= 0) : (diff >= 0);
+    return {
+      text: `${diff > 0 ? '+' : ''}${formatCurrency(diff)} (${diff > 0 ? '+' : ''}${pct.toFixed(1)}%)`,
+      isPositive
+    };
+  };
+
   if (loading) return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-slate-400">
       <Loader2 className="animate-spin mb-4" size={40} />
@@ -59,7 +76,7 @@ export default function FinancialReportsPage() {
 
   // Datos filtrados para las tarjetas KPI
   const currentMonthData = data.find(m => m.month === selectedMonth) || { 
-    month: "", monthName: "", ventas: 0, materiaPrima: 0, logistica: 0, extras: 0, comisiones: 0, totalGastos: 0, utilidad: 0 
+    month: "", monthName: "", ventas: 0, materiaPrima: 0, logistica: 0, extras: 0, comisiones: 0, totalGastos: 0, utilidad: 0, gastosEstructuraReal: 0, materiaPrimaReal: 0, logisticaReal: 0, extrasReal: 0, ventasReal: 0, egrVariosReal: 0, totalGastosReal: 0, utilidadReal: 0
   };
 
   const priceDataByFamily = priceData || {};
@@ -101,48 +118,208 @@ export default function FinancialReportsPage() {
       {error && <div className="p-6 bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl font-bold">{error}</div>}
 
       {/* KPI Cards (Filtradas por el mes seleccionado) */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-2 relative overflow-hidden group">
-          <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl w-fit"><Wallet size={20}/></div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Ventas {currentMonthData.monthName}</p>
-          <p className="text-2xl font-black text-slate-900">{formatCurrency(currentMonthData.ventas)}</p>
-          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition">
-             <DollarSign size={80} />
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+        {/* Ventas */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-all flex flex-col justify-between min-h-[220px]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl w-fit"><Wallet size={20}/></div>
+              <span className="text-[9px] font-black text-emerald-500 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">Ingresos</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Ventas {currentMonthData.monthName}</p>
+              
+              <div className="space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Real (Caja):</span>
+                  <span className="text-xl font-black text-slate-900">{formatCurrency(currentMonthData.ventasReal)}</span>
+                </div>
+                <div className="flex items-baseline justify-between border-t border-slate-100 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Teórico:</span>
+                  <span className="text-xs font-black text-slate-500">{formatCurrency(currentMonthData.ventas)}</span>
+                </div>
+              </div>
+            </div>
           </div>
-        </div>
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-2 relative overflow-hidden group">
-          <div className="p-2 bg-rose-50 text-rose-600 rounded-xl w-fit"><Package size={20}/></div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Materia Prima</p>
-          <p className="text-2xl font-black text-slate-900">{formatCurrency(currentMonthData.materiaPrima)}</p>
-          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition">
-             <PieChart size={80} />
-          </div>
-        </div>
-        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-2 relative overflow-hidden group">
-          <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl w-fit"><Truck size={20}/></div>
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Logística y Extras</p>
-          <p className="text-2xl font-black text-slate-900">{formatCurrency(currentMonthData.logistica + currentMonthData.extras)}</p>
-          <div className="mt-4 flex items-center gap-2">
-            <span className="text-[10px] font-bold text-rose-500 bg-rose-50 px-2 py-0.5 rounded-full">
-              {((currentMonthData.materiaPrima / (currentMonthData.ventas || 1)) * 100).toFixed(1)}% de venta
-            </span>
+
+          {/* Desvío */}
+          <div className="mt-4 pt-2 border-t border-dashed border-slate-150 flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-400 uppercase">Desvío:</span>
+            {(() => {
+              const dev = getDeviation(currentMonthData.ventasReal, currentMonthData.ventas, false);
+              if (!dev) return <span className="text-[9px] font-bold text-slate-400">Sin desvío</span>;
+              return (
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dev.isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {dev.text}
+                </span>
+              );
+            })()}
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-md transition-all group">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-emerald-500 transition-colors">Utilidad Operativa</p>
-          <p className="text-2xl font-black text-emerald-600">{formatCurrency(currentMonthData.utilidad)}</p>
-          <div className="mt-4 flex items-center gap-2">
-             <span className="text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-0.5 rounded-full">
-               {((currentMonthData.utilidad / (currentMonthData.ventas || 1)) * 100).toFixed(1)}% margen
-             </span>
+        {/* Materia Prima */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-all flex flex-col justify-between min-h-[220px]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2 bg-rose-50 text-rose-600 rounded-xl w-fit"><Package size={20}/></div>
+              <span className="text-[9px] font-black text-rose-500 bg-rose-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">Costo</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Materia Prima</p>
+              
+              <div className="space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Real (Caja):</span>
+                  <span className="text-xl font-black text-slate-900">{formatCurrency(currentMonthData.materiaPrimaReal)}</span>
+                </div>
+                <div className="flex items-baseline justify-between border-t border-slate-100 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Teórico:</span>
+                  <span className="text-xs font-black text-slate-500">{formatCurrency(currentMonthData.materiaPrima)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desvío */}
+          <div className="mt-4 pt-2 border-t border-dashed border-slate-150 flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-400 uppercase">Desvío:</span>
+            {(() => {
+              const dev = getDeviation(currentMonthData.materiaPrimaReal, currentMonthData.materiaPrima, true);
+              if (!dev) return <span className="text-[9px] font-bold text-slate-400">Sin desvío</span>;
+              return (
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dev.isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {dev.text}
+                </span>
+              );
+            })()}
           </div>
         </div>
 
-        <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-sm hover:shadow-md transition-all group">
-          <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 group-hover:text-slate-600 transition-colors">Gastos Estructura</p>
-          <p className="text-2xl font-black text-slate-400">{formatCurrency(currentMonthData.logistica + currentMonthData.extras + currentMonthData.comisiones)}</p>
-          <div className="mt-4 h-1.5 w-full bg-slate-50 rounded-full" />
+        {/* Gastos Estructura */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-all flex flex-col justify-between min-h-[220px]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2 bg-indigo-50 text-indigo-600 rounded-xl w-fit"><Truck size={20}/></div>
+              <span className="text-[9px] font-black text-indigo-500 bg-indigo-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">Fijos</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Gastos Estructura</p>
+              
+              <div className="space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Real (Caja):</span>
+                  <span className="text-xl font-black text-slate-900">{formatCurrency(currentMonthData.gastosEstructuraReal)}</span>
+                </div>
+                <div className="flex items-baseline justify-between border-t border-slate-100 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Teórico:</span>
+                  <span className="text-xs font-black text-slate-500">
+                    {formatCurrency(currentMonthData.logistica + currentMonthData.extras + currentMonthData.comisiones)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desvío */}
+          <div className="mt-4 pt-2 border-t border-dashed border-slate-150 flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-400 uppercase">Desvío:</span>
+            {(() => {
+              const teoricoEstructura = currentMonthData.logistica + currentMonthData.extras + currentMonthData.comisiones;
+              const dev = getDeviation(currentMonthData.gastosEstructuraReal, teoricoEstructura, true);
+              if (!dev) return <span className="text-[9px] font-bold text-slate-400">Sin desvío</span>;
+              return (
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dev.isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {dev.text}
+                </span>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Egresos Varios */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-all flex flex-col justify-between min-h-[220px]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2 bg-amber-50 text-amber-600 rounded-xl w-fit"><Activity size={20}/></div>
+              <span className="text-[9px] font-black text-amber-500 bg-amber-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">Otros</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Egresos Varios</p>
+              
+              <div className="space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Real (Caja):</span>
+                  <span className="text-xl font-black text-slate-900">{formatCurrency(currentMonthData.egrVariosReal)}</span>
+                </div>
+                <div className="flex items-baseline justify-between border-t border-slate-100 pt-1">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Teórico:</span>
+                  <span className="text-xs font-black text-slate-500">$0</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desvío */}
+          <div className="mt-4 pt-2 border-t border-dashed border-slate-150 flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-400 uppercase">Desvío:</span>
+            {(() => {
+              const dev = getDeviation(currentMonthData.egrVariosReal, 0, true);
+              if (!dev) return <span className="text-[9px] font-bold text-slate-400">Sin desvío</span>;
+              return (
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dev.isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {dev.text}
+                </span>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* Utilidad Operativa */}
+        <div className="bg-white p-6 rounded-[2.5rem] border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-all flex flex-col justify-between min-h-[220px]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="p-2 bg-emerald-50 text-emerald-600 rounded-xl w-fit"><TrendingUp size={20}/></div>
+              <span className="text-[9px] font-black text-emerald-500 bg-emerald-50 px-2.5 py-0.5 rounded-full uppercase tracking-wider">Neto</span>
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Utilidad Operativa</p>
+              
+              <div className="space-y-1">
+                <div className="flex items-baseline justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Real (Caja):</span>
+                    <span className="text-[8px] font-bold text-emerald-500">
+                      {((currentMonthData.utilidadReal / (currentMonthData.ventasReal || 1)) * 100).toFixed(1)}% margen
+                    </span>
+                  </div>
+                  <span className="text-xl font-black text-emerald-600">{formatCurrency(currentMonthData.utilidadReal)}</span>
+                </div>
+                <div className="flex items-baseline justify-between border-t border-slate-100 pt-1">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase">Teórico:</span>
+                    <span className="text-[8px] font-bold text-slate-400">
+                      {((currentMonthData.utilidad / (currentMonthData.ventas || 1)) * 100).toFixed(1)}% margen
+                    </span>
+                  </div>
+                  <span className="text-xs font-black text-slate-500">{formatCurrency(currentMonthData.utilidad)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Desvío */}
+          <div className="mt-4 pt-2 border-t border-dashed border-slate-150 flex items-center justify-between">
+            <span className="text-[9px] font-black text-slate-400 uppercase">Desvío:</span>
+            {(() => {
+              const dev = getDeviation(currentMonthData.utilidadReal, currentMonthData.utilidad, false);
+              if (!dev) return <span className="text-[9px] font-bold text-slate-400">Sin desvío</span>;
+              return (
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${dev.isPositive ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>
+                  {dev.text}
+                </span>
+              );
+            })()}
+          </div>
         </div>
       </div>
 

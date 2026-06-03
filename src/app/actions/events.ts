@@ -182,11 +182,117 @@ export async function updateEventMasterAction(eventId: string, edits: any) {
       await freezeEventCostsAction(eventId)
     }
 
+    // Sync automatic cash flow entries for logistics/extras
+    await syncEventCashMovements(eventId)
+
     revalidatePath("/settings/eventos")
     return { success: true }
   } catch (err: any) {
     console.error("Error updating event master:", err)
     return { success: false, error: err.message }
+  }
+}
+
+export async function syncEventCashMovements(eventId: string) {
+  try {
+    // 1. Fetch latest event details
+    const { data: event, error: eErr } = await supabase
+      .from('events_master')
+      .select('event_date, show_name, logistics_cost, extras_cost, status')
+      .eq('id', eventId)
+      .single()
+
+    if (eErr || !event) {
+      console.error("Error fetching event for cash sync:", eErr)
+      return
+    }
+
+    const eventDate = event.event_date
+    const showName = event.show_name || 'Evento S/D'
+    const logCost = Number(event.logistics_cost) || 0
+    const extCost = Number(event.extras_cost) || 0
+    const isEjecutado = event.status?.toLowerCase().includes('ejecutado')
+
+    const logHash = `event-logistics-${eventId}`
+    const extHash = `event-extras-${eventId}`
+
+    // Si el evento NO está ejecutado, remover cualquier movimiento automático (solo impacta real al ejecutarse)
+    if (!isEjecutado) {
+      await supabase.from('cash_movements').delete().in('hash_id', [logHash, extHash])
+      return
+    }
+
+    // Helper functions inside (reused from finances.ts)
+    const getMonthNameFormatted = (dateStr: string) => {
+      const date = new Date(dateStr + 'T12:00:00')
+      const monthNum = date.getMonth() + 1
+      const monthStr = monthNum.toString().padStart(2, '0')
+      const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+      return `${monthStr}. ${monthNames[monthNum - 1]}`
+    }
+
+    const getWeekNumber = (dateStr: string) => {
+      const date = new Date(dateStr + 'T12:00:00')
+      const day = date.getDate()
+      if (day <= 7) return "1"
+      if (day <= 14) return "2"
+      if (day <= 21) return "3"
+      return "4"
+    }
+
+    const mes = getMonthNameFormatted(eventDate)
+    const semana = getWeekNumber(eventDate)
+
+    // Sync Logistics Cost to Cash Book
+    if (logCost > 0) {
+      const logRow = {
+        sucursal: 'Galope Bustamante',
+        mes,
+        fecha: eventDate,
+        semana,
+        turno: 'T1',
+        tipo: 'Egreso',
+        concepto: 'Estructura',
+        cod_cga: 'EVENTO',
+        conc_caja: 'Logística',
+        detalle: `Logística: ${showName}`,
+        importe: -Math.abs(logCost),
+        esrecu: 'N',
+        oculta: 'N',
+        rubro: 'Gastos',
+        hash_id: logHash
+      }
+      await supabase.from('cash_movements').upsert([logRow], { onConflict: 'hash_id' })
+    } else {
+      await supabase.from('cash_movements').delete().eq('hash_id', logHash)
+    }
+
+    // Sync Extras Cost to Cash Book
+    if (extCost > 0) {
+      const extRow = {
+        sucursal: 'Galope Bustamante',
+        mes,
+        fecha: eventDate,
+        semana,
+        turno: 'T1',
+        tipo: 'Egreso',
+        concepto: 'Estructura',
+        cod_cga: 'EVENTO',
+        conc_caja: 'Extras',
+        detalle: `Extras: ${showName}`,
+        importe: -Math.abs(extCost),
+        esrecu: 'N',
+        oculta: 'N',
+        rubro: 'Gastos',
+        hash_id: extHash
+      }
+      await supabase.from('cash_movements').upsert([extRow], { onConflict: 'hash_id' })
+    } else {
+      await supabase.from('cash_movements').delete().eq('hash_id', extHash)
+    }
+
+  } catch (err: any) {
+    console.error("Error syncing event cash movements:", err)
   }
 }
 

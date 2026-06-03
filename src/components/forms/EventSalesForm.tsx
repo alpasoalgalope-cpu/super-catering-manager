@@ -9,7 +9,7 @@ import {
 } from "lucide-react"
 import FleetModal from "@/components/forms/FleetModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
-import { processStockForSaleAction } from "@/app/actions/stock"
+import { syncStockForSaleAction } from "@/app/actions/stock"
 
 interface UnitRecord {
   id: string
@@ -425,11 +425,6 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
       // LIMPIAR DEPENDENCIAS ANTERIORES SI ESTAMOS ACTUALIZANDO
       if (savedHeaderId) {
-         // REVERT STOCK OF OLD UNITS FIRST (Only if not skipStock)
-         if (!skipStock) {
-            await processStockForSaleAction(savedHeaderId, true)
-         }
-
          await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
       }
 
@@ -477,15 +472,14 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
       // DEDUCT STOCK FOR NEW UNITS
       if (headerId && !skipStock) {
-         await processStockForSaleAction(headerId, false)
+         await syncStockForSaleAction(headerId)
       }
 
       // INSERTAR NUEVA FLOTA
-      
-      const busesToSave = units.filter(u => u.vehicle_id).map(u => ({
+      const busesToSave = units.filter(u => u.vehicle_id || u.coordinator_id).map(u => ({
          event_id: selectedEventId,
          client_id: cId,
-         vehicle_id: u.vehicle_id,
+         vehicle_id: u.vehicle_id || null,
          coordinator_id: u.coordinator_id || null
       }))
       
@@ -531,13 +525,13 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             .eq('client_id', validClientRecord.id)
       }
       
-      // 2. REVERT STOCK
-      await processStockForSaleAction(savedHeaderId, true)
-
-      // 3. Borrar Units (Cascade puede que lo haga la db, pero lo forzamos)
+      // 2. Borrar Units primero para que la sincronización calcule consumo deseado = 0
       await supabase.from('event_sales_units').delete().eq('header_id', savedHeaderId)
 
-      // 3. Borrar Header
+      // 3. Sincronizar stock (calculará reversión delta total automática)
+      await syncStockForSaleAction(savedHeaderId)
+
+      // 4. Borrar Header
       const { error: dErr } = await supabase.from('event_sales_headers').delete().eq('id', savedHeaderId)
       if (dErr) throw dErr
 

@@ -41,6 +41,8 @@ const sections = [
     icon: LayoutGrid,
     items: [
       { href: "/", label: "Inicio", icon: Home },
+      { href: "/finanzas", label: "Flujo de Caja", icon: DollarSign },
+      { href: "/finanzas/iva", label: "Gestión de IVA", icon: Calculator },
       { href: "/crm", label: "CRM Comercial", icon: TrendingUp },
       { href: "/clients", label: "Clientes", icon: Users },
       { href: "/coordinadores", label: "Coordinadores", icon: User },
@@ -56,7 +58,6 @@ const sections = [
       { href: "/logistica-compras", label: "Efectividad de Shows", icon: BarChart3 },
       { href: "/settings/reglas-precios", label: "Reglas de Precios", icon: Tag },
       { href: "/reglas-liberados", label: "Liberados", icon: Gift },
-      { href: "/informes", label: "Informes Generales", icon: ClipboardList },
     ]
   },
   {
@@ -75,11 +76,24 @@ const sections = [
     icon: Warehouse,
     items: [
       { href: "/inventario/stock", label: "Control de Stock", icon: Boxes },
+      { href: "/inventario/trazabilidad", label: "Auditoría de Stock", icon: ClipboardList },
       { href: "/inventario/productos", label: "Productos e Insumos", icon: PackageSearch },
-      { href: "/inventario/ajustes", label: "Compras y Ajustes", icon: AlertTriangle },
+      { href: "/inventario/ajustes", label: "Ajustes de Inventario", icon: AlertTriangle },
+      { href: "/inventario/ordenes-compra", label: "Órdenes de Compra", icon: Truck },
       { href: "/inventario/familias", label: "Familias de Insumos", icon: Layers },
       { href: "/inventario/rubros-comida", label: "Categorías de Cocina", icon: ChefHat },
       { href: "/inventario/proveedores", label: "Proveedores", icon: Truck },
+    ]
+  },
+  {
+    title: "Informes",
+    icon: BarChart3,
+    items: [
+      { href: "/informes", label: "Central de Informes", icon: ClipboardList },
+      { href: "/informes/flujo-caja", label: "Análisis de Caja", icon: DollarSign },
+      { href: "/informes/proyectado-vs-ventas", label: "Proyectado vs Ventas", icon: BarChart3 },
+      { href: "/informes/rv-traslados", label: "Desempeño RV Traslados", icon: TrendingUp },
+      { href: "/informes/financieros", label: "Rentabilidad y Costos", icon: Layers },
     ]
   },
   {
@@ -94,7 +108,7 @@ const sections = [
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const [openSections, setOpenSections] = useState<string[]>([])
+  const [openSections, setOpenSections] = useState<string[]>(['Operación', 'Inventario', 'Informes'])
   const [role, setRole] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()

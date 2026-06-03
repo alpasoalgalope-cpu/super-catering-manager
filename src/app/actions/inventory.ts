@@ -12,7 +12,7 @@ export async function createProductAction(data: ProductFormData) {
       p_proveedor_id: data.proveedor_id,
       p_nombre: data.nombre,
       p_unidad_medida: data.unidad_medida,
-      p_factor_merma: data.factor_merma, // El RPC se encarga de normalizar si es necesario, o lo manejamos aquí
+      p_factor_merma: data.factor_merma / 100,
       p_gramos_por_unidad: data.gramos_por_unidad,
       p_iva_pct: data.iva_pct,
       p_precio_neto: data.precio_neto

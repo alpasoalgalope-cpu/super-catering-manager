@@ -82,3 +82,38 @@ export const productFormSchema = z.object({
 })
 
 export type ProductFormData = z.infer<typeof productFormSchema>
+
+export type PurchaseOrderStatus = 'PENDIENTE' | 'RECIBIDA' | 'CANCELADA'
+
+export interface PurchaseOrder {
+  id: string
+  proveedor_id: string
+  fecha_esperada: string
+  estado: PurchaseOrderStatus
+  costo_total: number
+  created_at: string
+  tipo_documento?: 'remito' | 'factura'
+  nro_comprobante?: string | null
+  percepcion_iva?: number
+  percepcion_iibb?: number
+  percepcion_ganancias?: number
+  impuestos_internos?: number
+  facturado?: boolean
+  afip_comprobante_id?: string | null
+  desvio_inflacion?: number
+  // Joins
+  proveedores?: { nombre: string }
+  purchase_order_items?: PurchaseOrderItem[]
+}
+
+export interface PurchaseOrderItem {
+  id: string
+  po_id: string
+  producto_id: string
+  cantidad: number
+  costo_unitario: number
+  created_at: string
+  // Joins
+  productos?: Producto
+}
+

@@ -5,7 +5,7 @@ import { getReportsDataAction, ReportRow } from "@/app/actions/reports"
 import { 
   Search, Loader2, ArrowUpDown, Download, TrendingUp, 
   BarChart3, ChevronRight, Trophy, DollarSign, PieChart,
-  ClipboardList, Activity
+  ClipboardList, Activity, Calculator, Smile
 } from "lucide-react"
 import Link from "next/link"
 
@@ -77,6 +77,10 @@ export default function InformesPage() {
         'Unidades Vendidas': r.unidades_vendidas,
         'Unidades Liberadas': r.unidades_liberadas,
         'Total Unidades': r.total_unidades,
+        'Tradicionales': r.trad_qty,
+        'Vegetarianos': r.veg_qty,
+        'Veganos': r.vegan_qty,
+        'Sin TACC': r.sintacc_qty,
         'Venta ($)': r.venta_total
       }))
       const ws = utils.json_to_sheet(exportData)
@@ -135,6 +139,19 @@ export default function InformesPage() {
               </div>
               <ChevronRight size={20} className="text-slate-300 group-hover:text-indigo-500 transform group-hover:translate-x-1 transition" />
             </Link>
+
+            <Link href="/informes/satisfaccion" className="group bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-xl hover:border-indigo-100 transition-all flex items-center justify-between">
+              <div className="flex items-center gap-5">
+                <div className="p-4 bg-amber-50 text-amber-600 rounded-2xl group-hover:bg-amber-600 group-hover:text-white transition">
+                  <Smile size={24} />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 uppercase italic">Historial de Satisfacción</h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Monitoreo de calidad y tasa de respuesta por show</p>
+                </div>
+              </div>
+              <ChevronRight size={20} className="text-slate-300 group-hover:text-indigo-500 transform group-hover:translate-x-1 transition" />
+            </Link>
           </div>
         </div>
 
@@ -148,6 +165,19 @@ export default function InformesPage() {
           </div>
 
           <div className="grid grid-cols-1 gap-4">
+            <Link href="/informes/flujo-caja" className="group bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-xl hover:border-emerald-100 transition-all flex items-center justify-between">
+              <div className="flex items-center gap-5">
+                <div className="p-4 bg-emerald-50 text-emerald-600 rounded-2xl group-hover:bg-emerald-600 group-hover:text-white transition">
+                  <DollarSign size={24} />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 uppercase italic">Análisis de Flujo de Caja</h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Evolución mensual, ingresos/egresos y rubros</p>
+                </div>
+              </div>
+              <ChevronRight size={20} className="text-slate-300 group-hover:text-emerald-500 transform group-hover:translate-x-1 transition" />
+            </Link>
+
             <Link href="/informes/financieros" className="group bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-xl hover:border-rose-100 transition-all flex items-center justify-between">
               <div className="flex items-center gap-5">
                 <div className="p-4 bg-rose-50 text-rose-600 rounded-2xl group-hover:bg-rose-600 group-hover:text-white transition">
@@ -159,6 +189,19 @@ export default function InformesPage() {
                 </div>
               </div>
               <ChevronRight size={20} className="text-slate-300 group-hover:text-rose-500 transform group-hover:translate-x-1 transition" />
+            </Link>
+
+            <Link href="/finanzas/iva" className="group bg-white p-6 rounded-[2rem] border border-slate-200 shadow-sm hover:shadow-xl hover:border-violet-100 transition-all flex items-center justify-between">
+              <div className="flex items-center gap-5">
+                <div className="p-4 bg-violet-50 text-violet-600 rounded-2xl group-hover:bg-violet-600 group-hover:text-white transition">
+                  <Calculator size={24} />
+                </div>
+                <div>
+                  <h3 className="font-black text-slate-800 uppercase italic">Gestión y Conciliación de IVA</h3>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">Mapeo de comprobantes AFIP y doble párrafo de IVA</p>
+                </div>
+              </div>
+              <ChevronRight size={20} className="text-slate-300 group-hover:text-violet-500 transform group-hover:translate-x-1 transition" />
             </Link>
           </div>
         </div>
