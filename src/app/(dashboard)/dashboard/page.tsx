@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
-import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight, Truck, Package } from "lucide-react"
+import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight, Truck, Package, FileText } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 
@@ -74,10 +74,10 @@ export default function DashboardPage() {
                costo_total,
                estado,
                proveedores (nombre),
-               purchase_order_items (
-                 cantidad,
-                 productos (nombre, unidad_medida)
-               )
+                purchase_order_items (
+                  cantidad,
+                  productos (nombre, unidad_medida, gramos_por_unidad)
+                )
             `)
             .eq('estado', 'PENDIENTE')
             .order('fecha_esperada', { ascending: true })
@@ -396,6 +396,72 @@ export default function DashboardPage() {
 
   const formatCurrency = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
+  const downloadPOText = () => {
+     if (incomingPOs.length === 0) return
+
+     // Sort POs by date
+     const sortedPOs = [...incomingPOs].sort((a, b) => {
+        if (!a.fecha_esperada) return 1
+        if (!b.fecha_esperada) return -1
+        return a.fecha_esperada.localeCompare(b.fecha_esperada)
+     })
+
+     let text = `📦 *ENTREGAS PENDIENTES - RECIBIR ESTA SEMANA*\n\n`
+
+     // Group POs by date
+     const groupedByDate: Record<string, any[]> = {}
+     sortedPOs.forEach(po => {
+        const dateStr = po.fecha_esperada || 'Sin Fecha'
+        if (!groupedByDate[dateStr]) groupedByDate[dateStr] = []
+        groupedByDate[dateStr].push(po)
+     })
+
+     Object.keys(groupedByDate).forEach(dateStr => {
+        const poDate = new Date(dateStr + 'T12:00:00')
+        const dateLabel = poDate.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'numeric' }).toUpperCase()
+        
+        text += `📅 *${dateLabel}*\n`
+        
+        groupedByDate[dateStr].forEach(po => {
+           const provName = po.proveedores?.nombre || 'Proveedor Desconocido'
+           text += `  • *${provName.toUpperCase()}*:\n`
+           
+           if (po.purchase_order_items && po.purchase_order_items.length > 0) {
+              po.purchase_order_items.forEach((item: any) => {
+                 const prodName = item.productos?.nombre || 'Producto'
+                 const qty = item.cantidad || 0
+                 const unit = item.productos?.unidad_medida || 'un'
+                 const unitsPerPkg = Number(item.productos?.gramos_por_unidad) || 1
+                  
+                  let line = `    - ${prodName}: `
+                  if (unitsPerPkg > 1) {
+                     const bultos = Math.round((qty / unitsPerPkg) * 100) / 100
+                     line += `${bultos} bultos x ${unitsPerPkg} = ${qty} ${unit}`
+                  } else {
+                     line += `${qty} ${unit}`
+                  }
+                  text += `${line}\n`
+              })
+           } else {
+              text += `    - Sin items detallados\n`
+           }
+        })
+        text += `\n`
+     })
+
+     text += `_Generado automáticamente desde Super Catering Manager_`
+
+     // Create and trigger download
+     const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' })
+     const url = URL.createObjectURL(blob)
+     const link = document.createElement('a')
+     link.href = url
+     link.setAttribute('download', `entregas_semana_${new Date().toISOString().split('T')[0]}.txt`)
+     document.body.appendChild(link)
+     link.click()
+     document.body.removeChild(link)
+  }
+
   return (
     <div className="space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
@@ -517,12 +583,24 @@ export default function DashboardPage() {
 
           {/* COLUMNA 3: MERCADERÍA A RECIBIR (1/3 de ancho) */}
           <div className="lg:col-span-1 bg-white rounded-[2.5rem] border border-slate-200 p-6 md:p-8 shadow-xl shadow-slate-200/50">
-            <div className="mb-6">
-              <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
-                <Truck className="text-indigo-600 animate-pulse" size={28} /> 
-                Recibir esta Semana
-              </h3>
-              <p className="text-xs text-slate-500 font-medium mt-1">Mercadería a recibir de proveedores.</p>
+            <div className="mb-6 flex justify-between items-start gap-4">
+              <div>
+                <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
+                  <Truck className="text-indigo-600 animate-pulse" size={28} /> 
+                  Recibir esta Semana
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mt-1">Mercadería a recibir de proveedores.</p>
+              </div>
+              {incomingPOs.length > 0 && (
+                <button
+                  onClick={downloadPOText}
+                  className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm shrink-0"
+                  title="Descargar lista para WhatsApp"
+                >
+                  <FileText size={14} />
+                  WhatsApp
+                </button>
+              )}
             </div>
             
             {/* Contenedor con scroll vertical limpio para entregas de mercadería */}
@@ -594,15 +672,24 @@ export default function DashboardPage() {
                               <div className="mt-3 pt-2.5 border-t border-slate-100">
                                  <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1.5 font-mono">Insumos Solicitados:</p>
                                  <ul className="space-y-1">
-                                    {po.purchase_order_items?.map((item: any, idx: number) => (
-                                       <li key={idx} className="text-[11px] font-semibold text-slate-600 flex items-center justify-between gap-1.5">
-                                          <span className="flex items-center gap-1.5 min-w-0">
-                                             <span className="w-1 h-1 rounded-full bg-indigo-500 shrink-0" />
-                                             <span className="truncate max-w-[130px] md:max-w-[150px]" title={item.productos?.nombre}>{item.productos?.nombre}</span>
-                                          </span>
-                                          <span className="font-black text-indigo-700 tabular-nums shrink-0">{item.cantidad} {item.productos?.unidad_medida || 'un'}</span>
-                                       </li>
-                                    ))}
+                                    {po.purchase_order_items?.map((item: any, idx: number) => {
+                                       const qty = item.cantidad || 0
+                                       const unit = item.productos?.unidad_medida || 'un'
+                                       const unitsPerPkg = Number(item.productos?.gramos_por_unidad) || 1
+                                       const bultos = Math.round((qty / unitsPerPkg) * 100) / 100
+                                       
+                                       return (
+                                          <li key={idx} className="text-[11px] font-semibold text-slate-600 flex items-center justify-between gap-1.5">
+                                             <span className="flex items-center gap-1.5 min-w-0">
+                                                <span className="w-1 h-1 rounded-full bg-indigo-500 shrink-0" />
+                                                <span className="truncate max-w-[130px] md:max-w-[150px]" title={item.productos?.nombre}>{item.productos?.nombre}</span>
+                                             </span>
+                                             <span className="font-black text-indigo-700 tabular-nums shrink-0">
+                                                {unitsPerPkg > 1 ? `${bultos} bult x ${unitsPerPkg} = ` : ''}{qty} {unit}
+                                             </span>
+                                          </li>
+                                       )
+                                    })}
                                  </ul>
                               </div>
                               
