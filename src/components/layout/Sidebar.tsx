@@ -32,7 +32,8 @@ import {
   PackageSearch,
   Layers,
   ChefHat,
-  LogOut
+  LogOut,
+  Wallet
 } from "lucide-react"
 
 const sections = [
@@ -43,6 +44,7 @@ const sections = [
       { href: "/", label: "Inicio", icon: Home },
       { href: "/finanzas", label: "Flujo de Caja", icon: DollarSign },
       { href: "/finanzas/iva", label: "Gestión de IVA", icon: Calculator },
+      { href: "/finanzas/tesoreria", label: "Tesorería", icon: Wallet },
       { href: "/crm", label: "CRM Comercial", icon: TrendingUp },
       { href: "/clients", label: "Clientes", icon: Users },
       { href: "/coordinadores", label: "Coordinadores", icon: User },
@@ -86,14 +88,11 @@ const sections = [
     ]
   },
   {
-    title: "Informes",
-    icon: BarChart3,
+    title: "Recursos Humanos",
+    icon: Users,
     items: [
-      { href: "/informes", label: "Central de Informes", icon: ClipboardList },
-      { href: "/informes/flujo-caja", label: "Análisis de Caja", icon: DollarSign },
-      { href: "/informes/proyectado-vs-ventas", label: "Proyectado vs Ventas", icon: BarChart3 },
-      { href: "/informes/rv-traslados", label: "Desempeño RV Traslados", icon: TrendingUp },
-      { href: "/informes/financieros", label: "Rentabilidad y Costos", icon: Layers },
+      { href: "/rrhh", label: "Panel Admin", icon: ClipboardList },
+      { href: "/rrhh/portal", label: "Mi Portal", icon: User },
     ]
   },
   {
@@ -149,19 +148,38 @@ export default function Sidebar() {
   }
 
   const filteredSections = sections.map((section: any) => {
+    if (role === 'admin') {
+      return section
+    }
+
     if (role === 'cocina') {
       const allowedItems = section.items.filter((item: any) => {
         const restricted = [
           '/crm', '/clients', '/coordinadores', '/buses', 
           '/settings/reglas-precios', '/reglas-liberados', '/informes',
-          '/settings', '/vehicle-defaults', '/inventario/recetas'
+          '/settings', '/vehicle-defaults', '/inventario/recetas',
+          '/rrhh', '/finanzas/tesoreria' // Restricción del panel de administración de RRHH y Tesorería
         ]
         return !restricted.includes(item.href)
       })
       if (allowedItems.length === 0) return null
       return { ...section, items: allowedItems }
     }
-    return section
+
+    if (role === 'empleado') {
+      const allowedItems = section.items.filter((item: any) => {
+        return item.href === '/rrhh/portal'
+      })
+      if (allowedItems.length === 0) return null
+      return { ...section, items: allowedItems }
+    }
+
+    // Por defecto, solo ver el portal
+    const allowedItems = section.items.filter((item: any) => {
+      return item.href === '/rrhh/portal'
+    })
+    if (allowedItems.length === 0) return null
+    return { ...section, items: allowedItems }
   }).filter(s => s !== null) as typeof sections
 
   return (

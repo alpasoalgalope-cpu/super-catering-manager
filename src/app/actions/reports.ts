@@ -1,5 +1,6 @@
 "use server"
 import { supabase } from "@/lib/supabase"
+import { createClient } from "@/lib/supabase/server"
 
 export interface ReportRow {
   id: string; // header id
@@ -116,7 +117,7 @@ export async function getReportsDataAction(): Promise<{ data?: ReportRow[], erro
         fecha: event.event_date || header.event_date,
         evento: event.show_name || header.show_name || 'S/D',
         venue: event.venues?.name || header.venue_name || header.venue || 'S/D',
-        empresa: header.company_name || header.company || 'S/D',
+        empresa: client?.name || header.company_name || header.company || 'S/D',
         pax_proyectado: (Number(header.pax_projected) || 0) * factor,
         unidades_vendidas: sold,
         unidades_liberadas: liberated,
@@ -291,11 +292,10 @@ export interface FinancialReportData {
 export async function getFinancialReportsAction(): Promise<{ data?: FinancialReportData[], error?: string }> {
   try {
     const oneMonthAgo = new Date();
-    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
+    oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 12);
     const dateLimit = oneMonthAgo.toISOString().split('T')[0];
 
-    // 1. Fetch Events Master (Initial fetch to get IDs) - LIMITED TO LAST 1 MONTH
-    // 1. Fetch Events Master (Initial fetch to get IDs) - LIMITED TO LAST 1 MONTH
+    // 1. Fetch Events Master (Initial fetch to get IDs) - LIMITED TO LAST 12 MONTHS
     const { data: events, error: eErr } = await supabase
       .from('events_master')
       .select('id, event_date, status, logistics_cost, extras_cost, commissions_cost')
@@ -307,12 +307,10 @@ export async function getFinancialReportsAction(): Promise<{ data?: FinancialRep
 
     const eventIds = events.map(e => e.id);
 
-    // 1b. Fetch Cash Movements for Estructura Expenses
-    const { data: cmEstructura, error: cmErr } = await supabase
+    // 1b. Fetch Cash Movements consolidated (no concept filter to ensure full cash matching)
+    const { data: cmMovements, error: cmErr } = await supabase
       .from('cash_movements')
-      .select('fecha, mes, conc_caja, importe')
-      .ilike('concepto', 'Estructura')
-      .lt('importe', 0)
+      .select('fecha, mes, concepto, conc_caja, importe')
       .gte('fecha', dateLimit);
 
     if (cmErr) {
@@ -322,96 +320,39 @@ export async function getFinancialReportsAction(): Promise<{ data?: FinancialRep
     const cashEstructuraByMonth: Record<string, number> = {};
     const cashLogisticaByMonth: Record<string, number> = {};
     const cashExtrasByMonth: Record<string, number> = {};
-
-    cmEstructura?.forEach(m => {
-      if (!m.mes) return;
-      const match = m.mes.match(/^(\d{2})\./);
-      if (match) {
-        const monthNum = match[1]; // "05"
-        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
-        const key = `${year}-${monthNum}`;
-        const amount = Math.abs(Number(m.importe) || 0);
-
-        cashEstructuraByMonth[key] = (cashEstructuraByMonth[key] || 0) + amount;
-
-        const concCaja = String(m.conc_caja).toLowerCase();
-        if (concCaja.includes('log') || concCaja === 'logística') {
-          cashLogisticaByMonth[key] = (cashLogisticaByMonth[key] || 0) + amount;
-        } else if (concCaja.includes('ext') || concCaja === 'extras') {
-          cashExtrasByMonth[key] = (cashExtrasByMonth[key] || 0) + amount;
-        }
-      }
-    });
-
-    // 1c. Fetch Cash Movements for Materia Prima
-    const { data: cmMateriaPrima, error: mpErr } = await supabase
-      .from('cash_movements')
-      .select('fecha, mes, importe')
-      .ilike('concepto', 'Materia Prima')
-      .lt('importe', 0)
-      .gte('fecha', dateLimit);
-
-    if (mpErr) {
-      console.error("Error fetching materia prima cash movements:", mpErr);
-    }
-
     const cashMateriaPrimaByMonth: Record<string, number> = {};
-    cmMateriaPrima?.forEach(m => {
-      if (!m.mes) return;
-      const match = m.mes.match(/^(\d{2})\./);
-      if (match) {
-        const monthNum = match[1];
-        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
-        const key = `${year}-${monthNum}`;
-        cashMateriaPrimaByMonth[key] = (cashMateriaPrimaByMonth[key] || 0) + Math.abs(Number(m.importe) || 0);
-      }
-    });
-
-    // 1d. Fetch Cash Movements for Ventas (Income)
-    const { data: cmVentas, error: vErr } = await supabase
-      .from('cash_movements')
-      .select('fecha, mes, importe')
-      .ilike('concepto', 'VENTAS')
-      .gt('importe', 0)
-      .gte('fecha', dateLimit);
-
-    if (vErr) {
-      console.error("Error fetching ventas cash movements:", vErr);
-    }
-
     const cashVentasByMonth: Record<string, number> = {};
-    cmVentas?.forEach(m => {
-      if (!m.mes) return;
-      const match = m.mes.match(/^(\d{2})\./);
-      if (match) {
-        const monthNum = match[1];
-        const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
-        const key = `${year}-${monthNum}`;
-        cashVentasByMonth[key] = (cashVentasByMonth[key] || 0) + Math.abs(Number(m.importe) || 0);
-      }
-    });
-
-    // 1e. Fetch Cash Movements for Egr. Varios (Expense)
-    const { data: cmEgrVarios, error: evErr } = await supabase
-      .from('cash_movements')
-      .select('fecha, mes, importe')
-      .ilike('concepto', 'EGR. Varios')
-      .lt('importe', 0)
-      .gte('fecha', dateLimit);
-
-    if (evErr) {
-      console.error("Error fetching egr varios cash movements:", evErr);
-    }
-
     const cashEgrVariosByMonth: Record<string, number> = {};
-    cmEgrVarios?.forEach(m => {
+
+    cmMovements?.forEach(m => {
       if (!m.mes) return;
       const match = m.mes.match(/^(\d{2})\./);
       if (match) {
         const monthNum = match[1];
         const year = m.fecha ? m.fecha.substring(0, 4) : "2026";
         const key = `${year}-${monthNum}`;
-        cashEgrVariosByMonth[key] = (cashEgrVariosByMonth[key] || 0) + Math.abs(Number(m.importe) || 0);
+        
+        if (m.importe > 0) {
+          cashVentasByMonth[key] = (cashVentasByMonth[key] || 0) + m.importe;
+        } else {
+          const amount = Math.abs(Number(m.importe) || 0);
+          const concepto = String(m.concepto || "").toLowerCase();
+          
+          if (concepto === 'materia prima') {
+            cashMateriaPrimaByMonth[key] = (cashMateriaPrimaByMonth[key] || 0) + amount;
+          } else if (['estructura', 'servicios', 'impuestos', 'administracion'].includes(concepto)) {
+            cashEstructuraByMonth[key] = (cashEstructuraByMonth[key] || 0) + amount;
+            
+            const concCaja = String(m.conc_caja || "").toLowerCase();
+            if (concCaja.includes('log') || concCaja === 'logística') {
+              cashLogisticaByMonth[key] = (cashLogisticaByMonth[key] || 0) + amount;
+            } else if (concCaja.includes('ext') || concCaja === 'extras') {
+              cashExtrasByMonth[key] = (cashExtrasByMonth[key] || 0) + amount;
+            }
+          } else {
+            cashEgrVariosByMonth[key] = (cashEgrVariosByMonth[key] || 0) + amount;
+          }
+        }
       }
     });
 
@@ -620,7 +561,7 @@ export async function getIngredientPriceEvolutionAction(month?: string): Promise
     let startDate: Date;
     let endDate: Date;
 
-    if (month) {
+    if (month && month !== 'all') {
       const [year, m] = month.split('-').map(Number);
       startDate = new Date(year, m - 1, 1);
       endDate = new Date(year, m, 0); // Last day of month
@@ -635,9 +576,11 @@ export async function getIngredientPriceEvolutionAction(month?: string): Promise
         endDate = new Date(currentYear, now.getMonth(), now.getDate());
       }
     } else {
+      // "all" or empty - fetch last 12 months (or current year)
+      const twelveMonthsAgo = new Date();
+      twelveMonthsAgo.setMonth(twelveMonthsAgo.getMonth() - 12);
+      startDate = twelveMonthsAgo;
       endDate = new Date();
-      startDate = new Date();
-      startDate.setDate(startDate.getDate() - 90);
     }
 
     const dateLimit = startDate.toISOString();
@@ -696,10 +639,14 @@ export async function getIngredientPriceEvolutionAction(month?: string): Promise
     }
 
     const result: Record<string, { productNames: string[], data: any[] }> = {};
+    const isMultiMonth = !month || month === 'all';
 
     Object.entries(familyData).forEach(([fName, fInfo]) => {
       const dailyResult = dates.map(d => {
-        const displayDate = d.split('-').slice(2)[0]; // Just the DAY (DD)
+        const dateParts = d.split('-'); // ["2026", "05", "13"]
+        const displayDate = isMultiMonth 
+          ? `${dateParts[2]}/${dateParts[1]}` // "13/05"
+          : `Día ${dateParts[2]}`; // "Día 13"
         
         if (fInfo.changesByDate[d]) {
           fInfo.changesByDate[d].forEach(e => {
@@ -712,8 +659,8 @@ export async function getIngredientPriceEvolutionAction(month?: string): Promise
         }
 
         return {
-          day: displayDate,
-          displayDate: `Día ${displayDate}`,
+          day: dateParts[2],
+          displayDate,
           ...fInfo.lastKnownPrices
         };
       });
@@ -1061,3 +1008,140 @@ export async function getEventSalesSummaryAction(): Promise<{ data?: EventSalesS
     return { error: err.message || "Error al obtener resumen de ventas por evento" };
   }
 }
+
+export async function getRVTrasladosShowsComparisonAction(selectedEventMasterIds?: string[]) {
+  try {
+    const supabaseClient = createClient()
+    
+    // 1. Fetch all headers for RV Traslados (ejecutado only)
+    const { data: headers, error: hErr } = await supabaseClient
+      .from('event_sales_headers')
+      .select(`
+        id,
+        total_amount,
+        event_master_id,
+        coordinator_name,
+        pax_projected,
+        events_master!event_master_id!inner (
+          id,
+          event_date,
+          show_name,
+          status
+        )
+      `)
+      .ilike('company_name', '%RV Traslados%')
+      .ilike('events_master.status', '%ejecutado%')
+
+    if (hErr) throw hErr;
+    if (!headers || headers.length === 0) return { success: true, shows: [], comparison: [] };
+
+    // Get unique list of shows for the selector
+    const showsMap: Record<string, { id: string, name: string, date: string }> = {}
+    headers.forEach(h => {
+      const em = h.events_master as any
+      if (em) {
+        showsMap[em.id] = {
+          id: em.id,
+          name: em.show_name,
+          date: em.event_date
+        }
+      }
+    })
+    const showsList = Object.values(showsMap).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+    const headerIds = headers.map(h => h.id)
+
+    // Fetch all units for these headers
+    const { data: units, error: uErr } = await supabaseClient
+      .from('event_sales_units')
+      .select('header_id, sold_qty, coordinators(name)')
+      .in('header_id', headerIds)
+
+    if (uErr) throw uErr
+
+    // Calculate total billing, units, and projected pax for ALL events grouped by coordinator
+    const coordinatorHistoricalStats: Record<string, { units: number, pax: number, sales: number }> = {}
+
+    headers.forEach(h => {
+      const hUnits = (units || []).filter(u => u.header_id === h.id)
+      const headerTotalPaxOriginal = Number(h.pax_projected) || 0
+      const headerTotalUnitsSold = hUnits.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0)
+
+      hUnits.forEach(u => {
+        const coordName = (u.coordinators as any)?.name || h.coordinator_name || 'S/D'
+        const sold = Number(u.sold_qty) || 0
+        const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0
+        const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0
+
+        if (!coordinatorHistoricalStats[coordName]) {
+          coordinatorHistoricalStats[coordName] = { units: 0, pax: 0, sales: 0 }
+        }
+        coordinatorHistoricalStats[coordName].units += sold
+        coordinatorHistoricalStats[coordName].pax += unitPax
+        coordinatorHistoricalStats[coordName].sales += unitBilling
+      })
+    })
+
+    // Now, if selectedEventMasterIds is provided and not empty, calculate performance for SELECTED shows
+    const comparison: any[] = []
+    let grandTotalSalesSelected = 0
+    
+    if (selectedEventMasterIds && selectedEventMasterIds.length > 0) {
+      const selectedHeaders = headers.filter(h => selectedEventMasterIds.includes(h.event_master_id))
+      const coordinatorSelectedStats: Record<string, { units: number, pax: number, sales: number }> = {}
+
+      selectedHeaders.forEach(h => {
+        const hUnits = (units || []).filter(u => u.header_id === h.id)
+        const headerTotalPaxOriginal = Number(h.pax_projected) || 0
+        const headerTotalUnitsSold = hUnits.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0)
+
+        hUnits.forEach(u => {
+          const coordName = (u.coordinators as any)?.name || h.coordinator_name || 'S/D'
+          const sold = Number(u.sold_qty) || 0
+          const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0
+          const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0
+
+          if (!coordinatorSelectedStats[coordName]) {
+            coordinatorSelectedStats[coordName] = { units: 0, pax: 0, sales: 0 }
+          }
+          coordinatorSelectedStats[coordName].units += sold
+          coordinatorSelectedStats[coordName].pax += unitPax
+          coordinatorSelectedStats[coordName].sales += unitBilling
+          grandTotalSalesSelected += unitBilling
+        })
+      })
+
+      // Build the comparison results
+      Object.keys(coordinatorHistoricalStats).forEach(coordName => {
+        const selected = coordinatorSelectedStats[coordName]
+        const historical = coordinatorHistoricalStats[coordName]
+
+        if (selected && selected.sales > 0) {
+          const convSelected = selected.pax > 0 ? (selected.units / selected.pax) * 100 : 0
+          const convHistorical = historical.pax > 0 ? (historical.units / historical.pax) * 100 : 0
+
+          comparison.push({
+            coordinador: coordName,
+            venta_seleccionada: selected.sales,
+            conv_seleccionada: convSelected,
+            conv_historica: convHistorical,
+            diferencia: convSelected - convHistorical
+          })
+        }
+      })
+
+      comparison.sort((a, b) => b.venta_seleccionada - a.venta_seleccionada)
+    }
+
+    return {
+      success: true,
+      shows: showsList,
+      comparison,
+      grandTotalSalesSelected
+    }
+  } catch (err: any) {
+    console.error("Error in getRVTrasladosShowsComparisonAction:", err)
+    return { success: false, error: err.message || "Error al obtener la comparación de shows" }
+  }
+}
+

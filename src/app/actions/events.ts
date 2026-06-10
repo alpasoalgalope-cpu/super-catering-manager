@@ -1,6 +1,7 @@
 "use server"
 
 import { supabase } from "@/lib/supabase"
+import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
 
 export async function getEventProfitability(eventId: string) {
@@ -369,6 +370,124 @@ export async function freezeEventCostsAction(eventId: string) {
     return { success: true }
   } catch (err: any) {
     console.error("Error freezing costs:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function getRVTrasladosSalesAction() {
+  try {
+    const supabaseClient = createClient()
+    const { data: headers, error: hErr } = await supabaseClient
+      .from('event_sales_headers')
+      .select('id, event_master_id, coordinator_name, total_amount, pax_projected, event_date, events_master!event_master_id(show_name, event_date)')
+      .eq('company_name', 'RV Traslados')
+      .order('event_date', { ascending: false })
+
+    if (hErr) throw hErr
+
+    // Fetch all coordinators of RV Traslados
+    const { data: coordinators, error: cErr } = await supabaseClient
+      .from('coordinators')
+      .select('id, name')
+      .eq('company', 'RV Traslados')
+      .order('name', { ascending: true })
+
+    if (cErr) throw cErr
+
+    // Fetch all sales units for these headers to find coordinator_id
+    const headerIds = headers.map(h => h.id)
+    let units: any[] = []
+    if (headerIds.length > 0) {
+      const { data: uRes, error: uErr } = await supabaseClient
+        .from('event_sales_units')
+        .select('header_id, coordinator_id')
+        .in('header_id', headerIds)
+      if (uErr) throw uErr
+      units = uRes || []
+    }
+
+    const salesList = headers.map((h: any) => {
+      const unit = units.find(u => u.header_id === h.id)
+      return {
+        id: h.id,
+        event_id: h.event_master_id,
+        event_name: h.events_master?.show_name || 'Evento S/D',
+        event_date: h.event_date || h.events_master?.event_date,
+        coordinator_name: h.coordinator_name,
+        coordinator_id: unit ? unit.coordinator_id : null,
+        pax_projected: h.pax_projected || 0,
+        total_amount: h.total_amount || 0
+      }
+    })
+
+    return { success: true, sales: salesList, coordinators }
+  } catch (err: any) {
+    console.error("Error in getRVTrasladosSalesAction:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function updateRVTrasladosCoordinatorAction(
+  headerId: string,
+  eventId: string,
+  coordinatorId: string | null,
+  coordinatorName: string | null
+) {
+  try {
+    const supabaseClient = createClient()
+    // 1. Update event_sales_headers
+    const { error: hErr } = await supabaseClient
+      .from('event_sales_headers')
+      .update({ coordinator_name: coordinatorName })
+      .eq('id', headerId)
+
+    if (hErr) throw hErr
+
+    // 2. Update event_sales_units
+    const { error: uErr } = await supabaseClient
+      .from('event_sales_units')
+      .update({ coordinator_id: coordinatorId })
+      .eq('header_id', headerId)
+
+    if (uErr) throw uErr
+
+    // 3. Update event_bus_assignments
+    // Find client ID of RV Traslados
+    const { data: client, error: clErr } = await supabaseClient
+      .from('clients')
+      .select('id')
+      .eq('name', 'RV Traslados')
+      .single()
+
+    if (clErr) throw clErr
+
+    if (client && eventId) {
+      // Clear old bus assignments for this event & client
+      await supabaseClient
+        .from('event_bus_assignments')
+        .delete()
+        .eq('event_id', eventId)
+        .eq('client_id', client.id)
+
+      // Insert new one if coordinator is selected
+      if (coordinatorId) {
+        const { error: busErr } = await supabaseClient
+          .from('event_bus_assignments')
+          .insert({
+            event_id: eventId,
+            client_id: client.id,
+            coordinator_id: coordinatorId,
+            crew_count: 0
+          })
+        if (busErr) throw busErr
+      }
+    }
+
+    revalidatePath("/ventas-evento/rv-coordinadores")
+    revalidatePath("/settings/eventos")
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error in updateRVTrasladosCoordinatorAction:", err)
     return { success: false, error: err.message }
   }
 }

@@ -48,7 +48,7 @@ export default function ProyectadoVsVentasPage() {
   const activeCompaniesList = useMemo(() => {
     const filtered = data.filter(row => {
       const d = new Date(row.fecha + 'T12:00:00')
-      return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth
+      return d.getFullYear() === selectedYear && (selectedMonth === -1 || d.getMonth() === selectedMonth)
     })
     return Array.from(new Set(filtered.map(row => row.empresa).filter(Boolean))).sort()
   }, [data, selectedYear, selectedMonth])
@@ -57,7 +57,7 @@ export default function ProyectadoVsVentasPage() {
   const companySummaryData = useMemo(() => {
     const filtered = data.filter(row => {
       const d = new Date(row.fecha + 'T12:00:00')
-      return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth
+      return d.getFullYear() === selectedYear && (selectedMonth === -1 || d.getMonth() === selectedMonth)
     })
 
     const summaries: Record<string, { empresa: string, proyectado: number, vendido: number, venta_total: number }> = {}
@@ -89,10 +89,42 @@ export default function ProyectadoVsVentasPage() {
     // Filter by year and month
     const filtered = data.filter(row => {
       const d = new Date(row.fecha + 'T12:00:00')
-      return d.getFullYear() === selectedYear && d.getMonth() === selectedMonth
+      return d.getFullYear() === selectedYear && (selectedMonth === -1 || d.getMonth() === selectedMonth)
     })
 
     if (viewMode === 'weekly') {
+      if (selectedMonth === -1) {
+        // Group by Month (12 months)
+        const monthsData = months.map((m, idx) => ({
+          name: m,
+          proyectado: 0,
+          vendido: 0,
+          proyectado_pesos: 0,
+          vendido_pesos: 0
+        }))
+
+        filtered.forEach(row => {
+          const d = new Date(row.fecha + 'T12:00:00')
+          const monthIdx = d.getMonth()
+          if (monthIdx >= 0 && monthIdx < 12) {
+            monthsData[monthIdx].proyectado += row.pax_proyectado || 0
+            monthsData[monthIdx].vendido += row.unidades_vendidas || 0
+            
+            const estProjPesos = (row.pax_proyectado || 0) * (row.unidades_vendidas > 0 ? row.venta_total / row.unidades_vendidas : 0)
+            monthsData[monthIdx].proyectado_pesos += estProjPesos
+            monthsData[monthIdx].vendido_pesos += row.venta_total || 0
+          }
+        })
+
+        return monthsData.map(m => ({
+          name: m.name.substring(0, 3) + ".", // "Ene.", "Feb." etc.
+          proyectado: Math.round(m.proyectado),
+          vendido: Math.round(m.vendido),
+          proyectado_pesos: Math.round(m.proyectado_pesos),
+          vendido_pesos: Math.round(m.vendido_pesos)
+        }))
+      }
+
       // Group by Week (Weeks 1 to 4+)
       const weeks = [
         { name: "Semana 1 (01-07)", proyectado: 0, vendido: 0, proyectado_pesos: 0, vendido_pesos: 0 },
@@ -195,6 +227,7 @@ export default function ProyectadoVsVentasPage() {
             onChange={(e) => setSelectedMonth(Number(e.target.value))}
             className="bg-transparent border-none font-bold text-slate-700 outline-none cursor-pointer"
           >
+            <option value={-1}>Todo el Año</option>
             {months.map((m, i) => <option key={i} value={i}>{m}</option>)}
           </select>
           <select 
@@ -294,21 +327,23 @@ export default function ProyectadoVsVentasPage() {
           <div className="flex flex-wrap items-center gap-4">
             
             {/* Week Zoom Filter */}
-            <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold text-slate-600">
-              <Calendar size={14} className="text-slate-400" />
-              <span>Zoom Semana:</span>
-              <select
-                value={selectedWeek}
-                onChange={(e) => setSelectedWeek(Number(e.target.value))}
-                className="bg-transparent border-none outline-none font-black text-slate-800 cursor-pointer"
-              >
-                <option value={0}>Todo el Mes</option>
-                <option value={1}>Semana 1 (Días 1-7)</option>
-                <option value={2}>Semana 2 (Días 8-14)</option>
-                <option value={3}>Semana 3 (Días 15-21)</option>
-                <option value={4}>Semana 4 (Días 22+)</option>
-              </select>
-            </div>
+            {selectedMonth !== -1 && (
+              <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold text-slate-600">
+                <Calendar size={14} className="text-slate-400" />
+                <span>Zoom Semana:</span>
+                <select
+                  value={selectedWeek}
+                  onChange={(e) => setSelectedWeek(Number(e.target.value))}
+                  className="bg-transparent border-none outline-none font-black text-slate-800 cursor-pointer"
+                >
+                  <option value={0}>Todo el Mes</option>
+                  <option value={1}>Semana 1 (Días 1-7)</option>
+                  <option value={2}>Semana 2 (Días 8-14)</option>
+                  <option value={3}>Semana 3 (Días 15-21)</option>
+                  <option value={4}>Semana 4 (Días 22+)</option>
+                </select>
+              </div>
+            )}
 
             {/* Company Focus Filter */}
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-2 rounded-xl text-xs font-bold text-slate-600">
@@ -333,7 +368,7 @@ export default function ProyectadoVsVentasPage() {
       {chartData.length === 0 ? (
         <div className="bg-white border-2 border-dashed border-slate-200 rounded-[2rem] p-20 text-center">
           <BarChart3 className="mx-auto text-slate-200 mb-4" size={64} />
-          <p className="text-slate-400 font-bold uppercase tracking-widest">Sin datos para {months[selectedMonth]} {selectedYear}</p>
+          <p className="text-slate-400 font-bold uppercase tracking-widest">Sin datos para {selectedMonth === -1 ? "Todo el Año" : months[selectedMonth]} {selectedYear}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-12">

@@ -540,7 +540,7 @@ export default function DashboardTestPage() {
                     incomingPOs.map((po, index) => {
                        const poDate = new Date(po.fecha_esperada + 'T12:00:00')
                        const isOverdue = poDate < todayDate
-                       const isPoToday = po.fecha_esperada === today.toISOString().split('T')[0]
+                       const isPoToday = po.fecha_esperada === today.toLocaleDateString('sv-SE')
                        
                        const weekday = poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
                        const dayNum = poDate.getDate()
@@ -878,7 +878,7 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
   const weekday = evDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
   const day = evDate.getDate()
   const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
-  const today = new Date().toISOString().split('T')[0]
+  const today = new Date().toLocaleDateString('sv-SE')
   const isToday = show.date === today
   
   const statusColors: any = {
@@ -921,12 +921,16 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
         </div>
       </div>
 
-      {/* Coordinadores (Hoy Solamente) */}
-      {isToday && show.coordinators && show.coordinators.length > 0 && (
-        <div className="mb-6 p-4 bg-emerald-50/50 rounded-[1.5rem] border border-emerald-100 space-y-2">
+      {/* Coordinadores */}
+      {show.coordinators && show.coordinators.length > 0 && (
+        <div className={`mb-6 p-4 rounded-[1.5rem] border space-y-2 ${
+           isToday 
+             ? 'bg-emerald-50/50 border-emerald-100' 
+             : 'bg-slate-50 border-slate-100'
+        }`}>
           {show.coordinators.map((c: any, idx: number) => (
             <div key={idx} className="flex items-center gap-2 text-xs">
-              <Users size={12} className="text-emerald-600 shrink-0" />
+              <Users size={12} className={isToday ? "text-emerald-600 shrink-0" : "text-indigo-500 shrink-0"} />
               <span className="font-bold text-slate-700">{c.name} ({c.company}):</span>
               <span className="text-slate-500 font-medium">{c.phone}</span>
             </div>

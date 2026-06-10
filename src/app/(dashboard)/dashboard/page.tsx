@@ -2,9 +2,10 @@
 
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
-import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight, Truck, Package, FileText } from "lucide-react"
+import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight, Truck, Package, FileText, CheckCircle2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
+import ReceivePOModal from "@/components/inventory/ReceivePOModal"
 
 interface EventData {
    id: string
@@ -53,6 +54,8 @@ export default function DashboardPage() {
   const [futureByVenue, setFutureByVenue] = useState<{name: string, projected: number}[]>([])
   const [futureByCompany, setFutureByCompany] = useState<{name: string, projected: number}[]>([])
   const [incomingPOs, setIncomingPOs] = useState<any[]>([])
+  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [selectedPOId, setSelectedPOId] = useState<string | null>(null)
 
   useEffect(() => {
      const bootstrapDashboard = async () => {
@@ -365,8 +368,8 @@ export default function DashboardPage() {
         setLoading(false)
      }
 
-     bootstrapDashboard()
-  }, [])
+      bootstrapDashboard()
+   }, [refreshTrigger])
 
   if (loading) {
      return (
@@ -615,7 +618,7 @@ export default function DashboardPage() {
                      incomingPOs.map((po, index) => {
                         const poDate = new Date(po.fecha_esperada + 'T12:00:00')
                         const isOverdue = poDate < todayDate
-                        const isPoToday = po.fecha_esperada === today.toISOString().split('T')[0]
+                        const isPoToday = po.fecha_esperada === today.toLocaleDateString('sv-SE')
                         
                         const weekday = poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
                         const dayNum = poDate.getDate()
@@ -693,9 +696,18 @@ export default function DashboardPage() {
                                  </ul>
                               </div>
                               
-                              <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-between items-center text-[10px]">
-                                 <span className="font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
-                                 <span className="font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
+                              <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-col gap-2">
+                                 <div className="flex justify-between items-center text-[10px]">
+                                    <span className="font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
+                                    <span className="font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
+                                 </div>
+                                 <button
+                                    onClick={() => setSelectedPOId(po.id)}
+                                    className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-1.5 mt-1 active:scale-95"
+                                 >
+                                    <CheckCircle2 size={12} className="text-emerald-600" />
+                                    Recepcionar
+                                 </button>
                               </div>
                            </div>
                         )
@@ -847,6 +859,17 @@ export default function DashboardPage() {
          </div>
 
       </div>
+
+      {selectedPOId && (
+        <ReceivePOModal
+          orderId={selectedPOId}
+          onClose={() => setSelectedPOId(null)}
+          onSuccess={() => {
+            setSelectedPOId(null)
+            setRefreshTrigger(prev => prev + 1)
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -964,7 +987,7 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
   const weekday = evDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
   const day = evDate.getDate()
   const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
-  const today = new Date().toISOString().split('T')[0]
+  const today = new Date().toLocaleDateString('sv-SE')
   const isToday = show.date === today
   
   const statusColors: any = {
@@ -1007,12 +1030,16 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
         </div>
       </div>
 
-      {/* Coordinadores (Hoy Solamente) */}
-      {isToday && show.coordinators && show.coordinators.length > 0 && (
-        <div className="mb-6 p-4 bg-emerald-50/50 rounded-[1.5rem] border border-emerald-100 space-y-2">
+      {/* Coordinadores */}
+      {show.coordinators && show.coordinators.length > 0 && (
+        <div className={`mb-6 p-4 rounded-[1.5rem] border space-y-2 ${
+           isToday 
+             ? 'bg-emerald-50/50 border-emerald-100' 
+             : 'bg-slate-50 border-slate-100'
+        }`}>
           {show.coordinators.map((c: any, idx: number) => (
             <div key={idx} className="flex items-center gap-2 text-xs">
-              <Users size={12} className="text-emerald-600 shrink-0" />
+              <Users size={12} className={isToday ? "text-emerald-600 shrink-0" : "text-indigo-500 shrink-0"} />
               <span className="font-bold text-slate-700">{c.name} ({c.company}):</span>
               <span className="text-slate-500 font-medium">{c.phone}</span>
             </div>

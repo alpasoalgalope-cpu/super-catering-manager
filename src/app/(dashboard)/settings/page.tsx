@@ -1,4 +1,5 @@
 import { Button, Input } from '@/components/ui/FormElements';
+import Link from 'next/link';
 
 export default function SettingsPage() {
   return (
@@ -26,6 +27,26 @@ export default function SettingsPage() {
           <Button className="mt-4">Guardar Cambios</Button>
         </div>
       </div>
+
+      <div className="p-6 bg-surface border border-surface-elevated rounded-xl space-y-4">
+        <h3 className="text-lg font-medium">Herramientas y Datos</h3>
+        <p className="text-sm text-foreground/50">Utilidades avanzadas de administración de datos.</p>
+          <div className="flex flex-wrap gap-3">
+            <Link 
+              href="/settings/importar-historicos" 
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-xl text-xs font-black uppercase tracking-widest border border-indigo-100 transition-all shadow-sm"
+            >
+              📂 Importar Eventos Históricos
+            </Link>
+            <Link 
+              href="/ventas-evento/rv-coordinadores" 
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-black uppercase tracking-widest border border-slate-200 transition-all shadow-sm"
+            >
+              👤 Consolidación RV Coordinadores
+            </Link>
+          </div>
+      </div>
     </div>
   );
 }
+

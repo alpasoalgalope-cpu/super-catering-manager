@@ -1,0 +1,191 @@
+﻿Diagnose log at 2026-06-03T19:53:26Z
+
+AppPath: C:\Program Files\Git\mingw64\bin\git-credential-manager.exe
+InstallDir: C:\Program Files\Git\mingw64\bin\
+Version: 2.7.3+5fa7116896c82164996a609accd1c5ad90fe730a
+
+------------
+Diagnostic: Environment
+Skipped: False
+Success: True
+Exception: None
+Log:
+OSType: Windows
+OSVersion: 10.0 (build 26200)
+Reading environment variables... OK
+ Variables:
+OneDriveConsumer=C:\Users\fersc\OneDrive
+ProgramFiles(x86)=C:\Program Files (x86)
+MSYSTEM=MINGW64
+AGY_BROWSER_ACTIVE_PORT_FILE=C:\Users\fersc\AppData\Roaming\Antigravity\DevToolsActivePort
+PROCESSOR_IDENTIFIER=Intel64 Family 6 Model 154 Stepping 4, GenuineIntel
+OnlineServices=Online Services
+PROCESSOR_ARCHITECTURE=AMD64
+EFC_18756_1592913036=1
+PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC;.CPL
+USERDOMAIN=FER
+PROCESSOR_REVISION=9a04
+ANTIGRAVITY_SOURCE_METADATA={"tool":{"conversationId":"64c04382-adbc-4afc-b50c-b36e42fbb434", "stepIndex":136, "toolCall":{"id":"dnqtl4my", "name":"run_command", "argumentsJson":"{\"CommandLine\":\"$env:PATH = [System.Environment]::GetEnvironmentVariable(\\\"Path\\\",\\\"Machine\\\") + \\\";\\\" + [System.Environment]::GetEnvironmentVariable(\\\"Path\\\",\\\"User\\\"); git credential-manager diagnose\",\"Cwd\":\"c:\\\\Users\\\\fersc\\\\.gemini\\\\antigravity\\\\scratch\\\\super-catering-manager\",\"WaitMsBeforeAsync\":3000,\"toolAction\":\"Diagnosing Git Credential Manager\",\"toolSummary\":\"git credential-manager diagnose\"}", "thinkingSignature":"Eo0RCooRAQw51sci9vZgV872a/76MMvEXMOStC3C/FUyjkoFVG5PPf4t64dtYPs7WSlMYyuLVCg9eA7A4qdm6t5mxIG3LIyFW5RNKKGLlFlksbDbpQKTHDGr93LV+CnQqGN8Dkrog0BDjSn9L3a6B6JO5oJk18SzU/xwoTx8qrIIINSSiuG7oWIysUyn+7zVmDQwzNfv32H/3z5RkxigN3JwuQeIeo5gAZnztF9+RyVlM2MCM1K3wk0AaszzfGyz+jylGTdYAR4LmbzXIexe1rlZRr31K8LMzOv/sdb2Tv+Vkvg0q1rrwobIm27kle5t9Db79q91EkB7RO3k6CbkOPADzW8ay9IHmGWbqHmSSc7mt7Mto1COek0sj+QrwXcaexWIId3fLFRUESm010zB/Ug+B0aRJ5HjvAFoO/FLUFGwY9IaVp3Y3L6QshNehZsBO/9khPSbzKYvaZThbing0UsOXjGku3LJnppK/KnVsoKdprner2L6dfrh2/MZ57p6rOOKzfwWeaSA3S6xSMsMeCsdBahfButB5aQzMtbSVyLOiXtVrbMrzKhpTpq++RH6wuJrCrH7r3DUXtAHAJIxEReE/0nBF/lHSt7V7NeKny1RkQwLUaPO0A4h9ipKxFJBJBagXbmu9O9z3G8w3LLYbfCn8tt8YqLlic3/CbPDZsTXOOctjPRVY5rpfjMmZUrXyO7Lf6Cu1DIz5NcGxrN1zxchHQjzvHNM6dsUL1pw/cJH8AhJWCOYtfIa0fNXjDBZf94FuQUy5r3aQNf10KcjuqNyhGVdW3+smZYvvur04pgSPKWjhvfQIR+l53dzYkmI+NEuYC3NUvjlYNTV6chz55xd/s+LjAtMF8zS3pGJkfZUJ2/DLSB88zKDUKURGZe2KmFtsUFNWdULV95t4QYDaTAVed069vkJ7L5DlyabybbbmNYVlzxAvcv74ipIXkfJRYgbSFMZXCrHD6GxN4PDfc8AoB/xby1wINyfUvAEVnjO6PxoSLma2uIkYHGRgTpjFgVg3I3Qg0S621SiBAD8YpbPEIvaL7YV7PUtvFlzEnUBhJjL1shsc0y1xN+4JOKNRBwkWfb54Pa8lcCVZXnzc61c3jfo1mW02mzj2Y9kt9alEWAss0gyY1Z8XcrILOIWojY7oDBv/+lvYw5Ikbz1eR83nFMWLV5jad0CON6zEkxHwrbcEowZIDAYNb/c5MrwB4EKC1PxLtqM6Kt50FUQC35akHmZrqx+5UTRVhQD5B8rWh4e7i/ARPRBO7zrqpsiEhYJabQ59I8pRigga4MoMyK5F/iMgRb1h5BS/30W5huGbpCQBuBH4FZgIv1o1TtaihrS9wjAdmxROiiNZBNi0tt/au5ZhBIYVxL9b8BqJkJ5Op6XnUn6uDes1ZOljHoZt4m/30D5YNyX4sK/T/b4b/5GMlLtAWg152WNa9Za7mzvtEMJMZGC6UvY/6dmHvqKGTBNPiPvGNo3rqYiY4Z+LK7XRFvkqQeZYNo9rjcxP8plz0W9PPzn83Ewv+/k0XnDy9bQ7/tYqd8vsMoK/9L5ja9S8fOA2LALXVEREw1noGFbOrdiqmdszlhrlrEeinfbxW5cHPKsg7uG8sGLdG89wxR42VjNQ1arjd3EubkxxLYNSmvyLlNjQEBxlqhTb5QXz8Cq7ymUsW3UcTWmGTerlyFJkaHsumbfvQto48jtPdny446+9J8B/MAMLCSuvdGDeqg+BHO2PTvYTph5TT2dYbhR5IyRwHLaP0/eDFPBt0lu2RxYFpN/PldBru7n5fQv9FQV/6XsZZ2m4TaxmLZb8ebASuPWvrzIckPEmth/mSJmcl3zqB3YwyT4ywQCRiKwQzAHO5N6JhOLo+FGYS1Y2jqnxUISCnINA0PY5ZdUUTPrKL0YHqbpwQqzBormjZ9aAH11n86URyNaFd3Zf4UlcL9SNBL/o/C5qak5V0vfuCxl34ZyT+qI4kNSZWzgEqnr8CT+FGJiTHlz5QtQvuSj+pSLWP9NWpUiw6FwzJ8voxVqSSeOkXgsX9NBtsM1/Cul/RijlDd+O/jRvIcB3mX6Dqw6Lj0vfh9d0wYJbEqiKU2cdlLTh4J/iJMJB50aTkuICcSM9d8C+ERmbGzpE78NXOP92KQ91SrDpfHy6PrQqJz3fTM1buujc8nBdH6YB5CJPoXnPnw8rUP7v5/SZSHpBW+tuvEm0AlrEl6k967Yg1UFS+bgTeQm5xCNaZj1OhG9vhpXLcTVqqA1uyTny/h/PnLEQNu7pZpKEo/IGNzJl3tUdGlTL9ytdk9VnzurZGZQMvfkOzlR1IPv4qeYK4iHUg0RFBETLs3jETeGJ7ExVsSn6/axc3SLY0XH4vNgThIEkwbELt3QK1iSuWxdddhilXdUTmIfgKxszWEoiFynN+Cf46HUatzDqGKgauNbsVZ50m2JJP9qXFL5IZPfZepkfErtdL8KgVc7JlCMp/MmfTcm2pcjFxvpUN08RH/Mp/zpD0BMNELEyDX4s+XrlB9l1QjAUYIAX03TI169twqHhBlBfkkhYbZadpTzpv7JczRIPrTjkl5sONxE06potvpJzwh5+pCZy2E0YFhOtKk7PzT24H2haSW7Mb4nSgsnMnnppF+RRlOi+WsdWHqAW2DZLGEIQYpqyyAOpHxEDwyKKam+DuKLFZnShiO3KZKIth+7EUID2OyKoOezgQeX066DcPk4UWnw4ac67b/rvG9ZCyqkQ58mCickbuLZY3eHmOhk8gdujpYeaRCXOjkj9gzso99UpaNVzyPmcw70vwGR1s0PCLy0PrCJMkqdEREzGrEXHrrmAGhq3JV+15v12TD/8Z7QdEgwR6kAoXVVcraAKvasm9R0wXAqW5TrJOSX7xxQKQ7L3ZMIHewoxWNBnDsRyU38Cju7/lNJOQL0E286y/g=", "originalName":"run_command"}}}
+TEMP=C:\Users\fersc\AppData\Local\Temp
+USERPROFILE=C:\Users\fersc
+ProgramW6432=C:\Program Files
+LOGONSERVER=\\FER
+TERM=xterm-256color
+USERNAME=fersc
+SystemRoot=C:\WINDOWS
+ProgramData=C:\ProgramData
+AGY_BROWSER_WS_URL=ws://127.0.0.1:65013/devtools/browser/f47f0f20-2605-4dd0-8c9d-fbf44342551d
+PLINK_PROTOCOL=ssh
+PATH=C:/Program Files/Git/mingw64/libexec/git-core;C:\Program Files\Git\mingw64\bin;C:\Program Files\Git\usr\bin;C:\Users\fersc\bin;C:\windows\system32;C:\windows;C:\windows\System32\Wbem;C:\windows\System32\WindowsPowerShell\v1.0\;C:\windows\System32\OpenSSH\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\nodejs\;C:\Program Files\Git\cmd;C:\Users\fersc\AppData\Local\Microsoft\WindowsApps;C:\Users\fersc\AppData\Roaming\npm
+OneDrive=C:\Users\fersc\OneDrive
+ALLUSERSPROFILE=C:\ProgramData
+CommonProgramFiles=C:\Program Files\Common Files
+ANTIGRAVITY_TRAJECTORY_ID=c33d935f-bcd7-4fa5-91df-d27a4fd3340d
+PROCESSOR_LEVEL=6
+EFC_18756_344590478=1
+platformcode=KV
+HOMEPATH=\Users\fersc
+EFC_18756_4126798990=1
+ANTIGRAVITY_AGENT=1
+CommonProgramW6432=C:\Program Files\Common Files
+TMP=C:\Users\fersc\AppData\Local\Temp
+GIT_EXEC_PATH=C:/Program Files/Git/mingw64/libexec/git-core
+EFC_18756_2946480783=1
+SESSIONNAME=Console
+DriverData=C:\Windows\System32\Drivers\DriverData
+HOMEDRIVE=C:
+windir=C:\WINDOWS
+GIT_TRACE2_PARENT_SID=026c8dd2-4c17-49f3-8996-94b0bef55cf8
+SystemDrive=C:
+NUMBER_OF_PROCESSORS=12
+OS=Windows_NT
+ZES_ENABLE_SYSMAN=1
+ProgramFiles=C:\Program Files
+ComSpec=C:\WINDOWS\system32\cmd.exe
+USERDOMAIN_ROAMINGPROFILE=FER
+CHROME_DEVTOOLS_MCP_JS=C:\Users\fersc\AppData\Local\Programs\antigravity\resources\app.asar.unpacked\node_modules\chrome-devtools-mcp\build\src\bin\chrome-devtools-mcp.js
+HOME=C:\Users\fersc
+PSModulePath=C:\Users\fersc\OneDrive\Documents\WindowsPowerShell\Modules;C:\Program Files\WindowsPowerShell\Modules;C:\WINDOWS\system32\WindowsPowerShell\v1.0\Modules
+ANTIGRAVITY_CSRF_TOKEN=760e4704-24b3-4566-85c3-7803ef8f99d9
+ANTIGRAVITY_LS_ADDRESS=localhost:65015
+TMPDIR=C:\Users\fersc\AppData\Local\Temp
+APPDATA=C:\Users\fersc\AppData\Roaming
+ANTIGRAVITY_PROJECT_ID=e929b67e-e6e8-4550-8aa6-ecc413302068
+COMPUTERNAME=FER
+LC_CTYPE=C.UTF-8
+LOCALAPPDATA=C:\Users\fersc\AppData\Local
+CommonProgramFiles(x86)=C:\Program Files (x86)\Common Files
+COLORTERM=truecolor
+RegionCode=NA
+PUBLIC=C:\Users\Public
+
+
+------------
+Diagnostic: File system
+Skipped: False
+Success: True
+Exception: None
+Log:
+Temporary directory is 'C:\Users\fersc\AppData\Local\Temp\'...
+Checking basic file I/O...
+Writing to temporary file 'C:\Users\fersc\AppData\Local\Temp\59f649e8b35d72cff76eb964'... OK
+Reading from temporary file 'C:\Users\fersc\AppData\Local\Temp\59f649e8b35d72cff76eb964'... OK
+Deleting temporary file 'C:\Users\fersc\AppData\Local\Temp\59f649e8b35d72cff76eb964'... OK
+Testing IFileSystem instance...
+UserHomePath: C:\Users\fersc
+UserDataDirectoryPath: C:\Users\fersc\.gcm
+GetCurrentDirectory(): C:\Users\fersc\.gemini\antigravity\scratch\super-catering-manager
+
+------------
+Diagnostic: Networking
+Skipped: False
+Success: True
+Exception: None
+Log:
+Checking networking and HTTP stack...
+Creating HTTP client... OK
+IsNetworkAvailable: True
+Sending HEAD request to http://example.com...Sending HEAD request to https://example.com... OK
+ OK
+Acquiring free TCP port... OK
+Testing local HTTP loopback connections...
+Creating new HTTP listener for http://localhost:53697/... OK
+Waiting for loopback connection... OK
+Writing response... OK
+Waiting for response data... OK
+Loopback connection data OK
+
+------------
+Diagnostic: Git
+Skipped: False
+Success: True
+Exception: None
+Log:
+Getting Git version... OK
+Git version is '2.54.0.windows.1'
+Locating current repository...Git repository at 'C:/Users/fersc/.gemini/antigravity/scratch/super-catering-manager/.git'
+ OK
+Listing all Git configuration... OK
+Git configuration:
+file:C:/Program Files/Git/etc/gitconfig	diff.astextplain.textconv=astextplain
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.clean=git-lfs clean -- %f
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.smudge=git-lfs smudge -- %f
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.process=git-lfs filter-process
+file:C:/Program Files/Git/etc/gitconfig	filter.lfs.required=true
+file:C:/Program Files/Git/etc/gitconfig	http.sslbackend=schannel
+file:C:/Program Files/Git/etc/gitconfig	core.autocrlf=true
+file:C:/Program Files/Git/etc/gitconfig	core.fscache=true
+file:C:/Program Files/Git/etc/gitconfig	core.symlinks=false
+file:C:/Program Files/Git/etc/gitconfig	pull.rebase=false
+file:C:/Program Files/Git/etc/gitconfig	credential.helper=manager
+file:C:/Program Files/Git/etc/gitconfig	credential.https://dev.azure.com.usehttppath=true
+file:C:/Program Files/Git/etc/gitconfig	init.defaultbranch=master
+file:.git/config	core.repositoryformatversion=0
+file:.git/config	core.filemode=false
+file:.git/config	core.bare=false
+file:.git/config	core.logallrefupdates=true
+file:.git/config	core.symlinks=false
+file:.git/config	core.ignorecase=true
+file:.git/config	remote.origin.url=https://github.com/alpasoalgalope-cpu/super-catering-manager.git
+file:.git/config	remote.origin.fetch=+refs/heads/*:refs/remotes/origin/*
+file:.git/config	branch.main.remote=origin
+file:.git/config	branch.main.merge=refs/heads/main
+file:.git/config	user.name=fersc
+file:.git/config	user.email=fersc@example.com
+
+
+------------
+Diagnostic: Credential storage
+Skipped: False
+Success: True
+Exception: None
+Log:
+ICredentialStore instance is of type: CredentialStore
+Writing test credential... OK
+Reading test credential... OK
+Deleting test credential... OK
+
+------------
+Diagnostic: Microsoft authentication (AAD/MSA)
+Skipped: False
+Success: True
+Exception: None
+Log:
+Broker is not enabled.
+Flow type is: Auto
+Gathering MSAL token cache data... OK
+CacheDirectory: C:\Users\fersc\AppData\Local\.IdentityService
+CacheFileName: msal.cache
+CacheFilePath: C:\Users\fersc\AppData\Local\.IdentityService\msal.cache
+Creating cache helper... OK
+Verifying MSAL token cache persistence... OK
+
+------------
+Diagnostic: GitHub API
+Skipped: False
+Success: True
+Exception: None
+Log:
+Using 'https://github.com/' as API target.
+Querying '/meta' endpoint... OK
+

@@ -75,9 +75,34 @@ export default function FinancialReportsPage() {
   )
 
   // Datos filtrados para las tarjetas KPI
-  const currentMonthData = data.find(m => m.month === selectedMonth) || { 
-    month: "", monthName: "", ventas: 0, materiaPrima: 0, logistica: 0, extras: 0, comisiones: 0, totalGastos: 0, utilidad: 0, gastosEstructuraReal: 0, materiaPrimaReal: 0, logisticaReal: 0, extrasReal: 0, ventasReal: 0, egrVariosReal: 0, totalGastosReal: 0, utilidadReal: 0
-  };
+  const currentMonthData = selectedMonth === "all"
+    ? data.reduce<FinancialReportData>((acc, m) => ({
+        month: "all",
+        monthName: "Todo el año",
+        ventas: acc.ventas + m.ventas,
+        materiaPrima: acc.materiaPrima + m.materiaPrima,
+        logistica: acc.logistica + m.logistica,
+        extras: acc.extras + m.extras,
+        comisiones: acc.comisiones + m.comisiones,
+        totalGastos: acc.totalGastos + m.totalGastos,
+        utilidad: acc.utilidad + m.utilidad,
+        ventasReal: acc.ventasReal + m.ventasReal,
+        materiaPrimaReal: acc.materiaPrimaReal + m.materiaPrimaReal,
+        logisticaReal: acc.logisticaReal + m.logisticaReal,
+        extrasReal: acc.extrasReal + m.extrasReal,
+        gastosEstructuraReal: acc.gastosEstructuraReal + m.gastosEstructuraReal,
+        egrVariosReal: acc.egrVariosReal + m.egrVariosReal,
+        totalGastosReal: acc.totalGastosReal + m.totalGastosReal,
+        utilidadReal: acc.utilidadReal + m.utilidadReal
+      }), {
+        month: "all",
+        monthName: "Todo el año",
+        ventas: 0, materiaPrima: 0, logistica: 0, extras: 0, comisiones: 0, totalGastos: 0, utilidad: 0,
+        ventasReal: 0, materiaPrimaReal: 0, logisticaReal: 0, extrasReal: 0, gastosEstructuraReal: 0, egrVariosReal: 0, totalGastosReal: 0, utilidadReal: 0
+      })
+    : data.find(m => m.month === selectedMonth) || { 
+        month: "", monthName: "", ventas: 0, materiaPrima: 0, logistica: 0, extras: 0, comisiones: 0, totalGastos: 0, utilidad: 0, gastosEstructuraReal: 0, materiaPrimaReal: 0, logisticaReal: 0, extrasReal: 0, ventasReal: 0, egrVariosReal: 0, totalGastosReal: 0, utilidadReal: 0
+      };
 
   const priceDataByFamily = priceData || {};
   const families = Object.keys(priceDataByFamily);
@@ -108,6 +133,7 @@ export default function FinancialReportsPage() {
              onChange={(e) => setSelectedMonth(e.target.value)}
              className="bg-slate-50 border-none outline-none font-black text-slate-900 text-xs uppercase p-2 rounded-xl cursor-pointer hover:bg-slate-100 transition"
            >
+             <option value="all">Todo el año</option>
              {data.map(m => (
                <option key={m.month} value={m.month}>{m.monthName}</option>
              ))}
