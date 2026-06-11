@@ -19,6 +19,7 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
   // Document states
   const [tipoDocumento, setTipoDocumento] = useState<'factura' | 'remito'>('factura')
   const [nroComprobante, setNroComprobante] = useState("")
+  const [fechaVencimientoPago, setFechaVencimientoPago] = useState(new Date().toISOString().split("T")[0])
   
   // Tax / Perception states
   const [percepcionIva, setPercepcionIva] = useState<number | "">(0)
@@ -232,7 +233,8 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
           percepcion_ganancias: tipoDocumento === 'factura' ? Number(percepcionGanancias) || 0 : 0,
           impuestos_internos: tipoDocumento === 'factura' ? Number(impuestosInternos) || 0 : 0,
           facturado: tipoDocumento === 'factura',
-          desvio_inflacion: 0
+          desvio_inflacion: 0,
+          fecha_vencimiento_pago: fechaVencimientoPago || null
         })
         .eq("id", orderId)
 
@@ -335,8 +337,21 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
                   />
                 </div>
 
+                <div>
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1.5">
+                    Fecha Vencimiento de Pago
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={fechaVencimientoPago}
+                    onChange={(e) => setFechaVencimientoPago(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-emerald-500"
+                  />
+                </div>
+
                 {tipoDocumento === 'remito' && (
-                  <div className="md:col-span-2 bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3 animate-in fade-in duration-300">
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-4 flex items-start gap-3 animate-in fade-in duration-300">
                     <AlertCircle className="text-emerald-600 shrink-0 mt-0.5" size={18} />
                     <div>
                       <p className="text-[10px] font-black text-emerald-900 uppercase tracking-wide">Desglose de IVA Activo</p>

@@ -25,7 +25,7 @@ export interface TreasurySummary {
 
 export interface CalendarEvent {
   id: string
-  tipo: 'oc' | 'venta' | 'servicio' | 'iva'
+  tipo: 'oc' | 'venta' | 'servicio' | 'iva' | 'impuesto'
   title: string
   date: string
   amount: number
@@ -86,13 +86,7 @@ export async function getTreasurySummaryAction(): Promise<{ success: boolean; da
       .in('estado_pago', ['pendiente', 'parcial'])
     if (poErr) throw poErr
 
-    let filteredPos = pos || []
-    if (cutoffDate) {
-      filteredPos = filteredPos.filter(po => {
-        const dateToCompare = po.fecha_vencimiento_pago || po.created_at?.split('T')[0]
-        return dateToCompare && dateToCompare >= cutoffDate
-      })
-    }
+    const filteredPos = pos || []
     const poDeuda = filteredPos.reduce((sum, po) => sum + (Number(po.costo_total) - Number(po.monto_pagado)), 0) || 0
 
     // C. Accounts Payable - Services
@@ -102,10 +96,7 @@ export async function getTreasurySummaryAction(): Promise<{ success: boolean; da
       .in('estado_pago', ['pendiente', 'vencido'])
     if (servErr) throw servErr
 
-    let filteredServs = servs || []
-    if (cutoffDate) {
-      filteredServs = filteredServs.filter(s => s.fecha_vencimiento >= cutoffDate)
-    }
+    const filteredServs = servs || []
     const servDeuda = filteredServs.reduce((sum, s) => sum + Number(s.monto), 0) || 0
 
     // D. Accounts Payable - Taxes (IVA)
@@ -116,11 +107,7 @@ export async function getTreasurySummaryAction(): Promise<{ success: boolean; da
       .eq('pagado', false)
     if (ivaErr) throw ivaErr
 
-    let filteredIvas = ivas || []
-    if (cutoffDate) {
-      const cutoffPeriod = cutoffDate.substring(0, 7) // 'YYYY-MM'
-      filteredIvas = filteredIvas.filter(i => i.periodo >= cutoffPeriod)
-    }
+    const filteredIvas = ivas || []
     const ivaDeuda = filteredIvas.reduce((sum, i) => sum + Number(i.saldo_a_pagar), 0) || 0
 
     const cuentasAPagar = poDeuda + servDeuda + ivaDeuda
@@ -271,35 +258,22 @@ export async function getTreasuryCalendarEventsAction(mesPeriodo: string): Promi
       }
     })
 
-    // D. IVA Liquidations (Estimated due date: 20th of the next month)
-    const periods = [
-      `${prevYear}-${String(prevMonth).padStart(2, '0')}`,
-      `${year}-${String(month).padStart(2, '0')}`,
-      `${nextYear}-${String(nextMonth).padStart(2, '0')}`
-    ]
-    const { data: ivas } = await supabase
-      .from('iva_liquidaciones')
-      .select('id, periodo, saldo_a_pagar, pagado, cerrado')
-      .in('periodo', periods)
+    // D. Generalized Taxes (vencimientos_impuestos)
+    const { data: taxBills } = await supabase
+      .from('vencimientos_impuestos')
+      .select('*, impuestos(nombre)')
+      .gte('fecha_vencimiento', startDateStr)
+      .lte('fecha_vencimiento', endDateStr)
 
-    ivas?.forEach(i => {
-      const [pYear, pMonth] = i.periodo.split('-').map(Number)
-      let dueMonth = pMonth + 1
-      let dueYear = pYear
-      if (dueMonth === 13) {
-        dueMonth = 1
-        dueYear++
-      }
-      const dueDate = `${dueYear}-${String(dueMonth).padStart(2, '0')}-20`
-      
+    taxBills?.forEach(t => {
       eventsList.push({
-        id: i.id,
-        tipo: 'iva',
-        title: `IVA: ${i.periodo}`,
-        date: dueDate,
-        amount: Number(i.saldo_a_pagar) || 0,
-        status: i.pagado ? 'pagado' : 'pendiente',
-        metadata: i
+        id: t.id,
+        tipo: 'impuesto',
+        title: `Imp: ${(t.impuestos as any)?.nombre || 'Impuesto'}`,
+        date: t.fecha_vencimiento,
+        amount: Number(t.monto) || 0,
+        status: t.estado_pago as any,
+        metadata: t
       })
     })
 
@@ -487,7 +461,7 @@ export async function revertirPagoServicioAction(
 
 // 9. Reconcile / Link an existing Cash Movement with a PO, Sale, or Service (Modalidad B)
 export async function vincularMovimientoExistenteAction(
-  tipoDoc: 'po' | 'venta' | 'servicio',
+  tipoDoc: 'po' | 'venta' | 'servicio' | 'impuesto',
   docId: string,
   movementId: string
 ) {
@@ -568,6 +542,37 @@ export async function vincularMovimientoExistenteAction(
         .update({ vencimiento_servicio_id: docId })
         .eq('id', movementId)
       if (linkErr) throw linkErr
+    } else if (tipoDoc === 'impuesto') {
+      // Link cash movement to tax bill
+      const { error: vtErr } = await supabase
+        .from('vencimientos_impuestos')
+        .update({ estado_pago: 'pagado', fecha_pago: mv.fecha, cash_movement_id: movementId })
+        .eq('id', docId)
+      if (vtErr) throw vtErr
+
+      // Link cash movement
+      const { error: linkErr } = await supabase
+        .from('cash_movements')
+        .update({ vencimiento_impuesto_id: docId })
+        .eq('id', movementId)
+      if (linkErr) throw linkErr
+
+      // Sincronizar automáticamente con iva_liquidaciones si el impuesto es "IVA"
+      const { data: vImp } = await supabase
+        .from('vencimientos_impuestos')
+        .select('*, impuestos(nombre)')
+        .eq('id', docId)
+        .single()
+
+      if (vImp && (vImp.impuestos?.nombre === 'IVA' || vImp.impuestos?.nombre?.toLowerCase() === 'iva')) {
+        const { error: ivaErr } = await supabase
+          .from('iva_liquidaciones')
+          .update({ pagado: true, fecha_pago: mv.fecha })
+          .eq('periodo', vImp.mes_periodo)
+        if (ivaErr) {
+          console.error("Error al sincronizar pago con iva_liquidaciones:", ivaErr)
+        }
+      }
     }
 
     revalidatePath('/finanzas/tesoreria')
@@ -648,14 +653,14 @@ export async function crearServicioAction(
   try {
     const supabase = createClient()
 
-    // Fetch concept_id of 'Servicios'
-    const { data: concept } = await supabase
-      .from('cash_concepts')
-      .select('id')
-      .eq('name', 'Servicios')
+    // Fetch concept_id of the chosen subconcept to support Administracion/Estructura/Servicios
+    const { data: subconcept } = await supabase
+      .from('cash_subconcepts')
+      .select('concept_id')
+      .eq('id', subconceptId)
       .single()
 
-    if (!concept) throw new Error("Concepto 'Servicios' no configurado en la base de datos.")
+    if (!subconcept) throw new Error("El subrubro seleccionado no existe.")
 
     const { data, error } = await supabase
       .from('servicios')
@@ -664,7 +669,7 @@ export async function crearServicioAction(
         proveedor,
         monto_estimado: montoEstimado,
         dia_vencimiento_habitual: diaVencimientoHabitual,
-        concept_id: concept.id,
+        concept_id: subconcept.concept_id,
         subconcept_id: subconceptId,
         activo: true
       })
@@ -711,7 +716,7 @@ export async function getVencimientosServiciosAction(mesPeriodo: string) {
     // 2. Fetch results
     const { data, error } = await supabase
       .from('vencimientos_servicios')
-      .select('*, servicios(*), cash_movements(*)')
+      .select('*, servicios(*, cash_concepts(name), cash_subconcepts(name)), cash_movements:cash_movements!vencimientos_servicios_cash_movement_id_fkey(*)')
       .eq('mes_periodo', mesPeriodo)
       .order('fecha_vencimiento', { ascending: true })
 
@@ -1053,4 +1058,480 @@ export async function marcarTodosPOsPagadosHistoricosAction(cutoffDate: string) 
   }
 }
 
+// 22. Update Purchase Order fields (vencimiento and status) directly
+export async function updatePurchaseOrderFieldsAction(
+  id: string,
+  fields: {
+    fecha_vencimiento_pago?: string;
+    estado_pago?: 'pendiente' | 'parcial' | 'pagado';
+    monto_pagado?: number;
+    created_at?: string;
+  }
+) {
+  try {
+    const supabase = createClient()
+    const updateData: any = { ...fields }
+    if (updateData.fecha_vencimiento_pago === "") {
+      updateData.fecha_vencimiento_pago = null
+    }
+    if (updateData.created_at === "") {
+      updateData.created_at = null
+    }
+    
+    if (fields.estado_pago === 'pagado') {
+      const { data: po } = await supabase
+        .from('purchase_orders')
+        .select('costo_total')
+        .eq('id', id)
+        .single()
+      if (po) {
+        updateData.monto_pagado = po.costo_total
+      }
+    } else if (fields.estado_pago === 'pendiente') {
+      updateData.monto_pagado = 0
+    }
+
+    const { data, error } = await supabase
+      .from('purchase_orders')
+      .update(updateData)
+      .eq('id', id)
+      .select()
+
+    if (error) throw error
+    revalidatePath('/finanzas/tesoreria')
+    revalidatePath('/inventario/ordenes-compra')
+    return { success: true, data }
+  } catch (err: any) {
+    console.error("Error in updatePurchaseOrderFieldsAction:", err)
+    return { success: false, error: err.message || "Error al actualizar orden de compra" }
+  }
+}
+
+// 23. Register Sale Collection split payment (atomic transactions)
+export async function registrarCobroVentaSplitAction(
+  headerId: string,
+  montoEfectivo: number,
+  montoMp: number,
+  montoGalicia: number,
+  fecha: string,
+  generarCaja: boolean,
+  detalle: string
+) {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase.rpc('registrar_cobro_venta_split', {
+      p_header_id: headerId,
+      p_monto_efectivo: montoEfectivo,
+      p_monto_mp: montoMp,
+      p_monto_galicia: montoGalicia,
+      p_fecha: fecha,
+      p_generar_caja: generarCaja,
+      p_detalle: detalle || null
+    })
+
+    if (error) throw error
+
+    revalidatePath('/finanzas/tesoreria')
+    revalidatePath('/ventas-evento')
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error in registrarCobroVentaSplitAction:", err)
+    return { success: false, error: err.message || "Error al registrar cobro dividido" }
+  }
+}
+
+// 24. Fetch Petty Cash Movements (egresos directos)
+export async function getPettyCashMovementsAction(mesPeriodo: string) {
+  try {
+    const supabase = createClient()
+    const [year, month] = mesPeriodo.split('-')
+    const startDate = `${mesPeriodo}-01`
+    const lastDay = new Date(Number(year), Number(month), 0).getDate()
+    const endDate = `${mesPeriodo}-${String(lastDay).padStart(2, '0')}`
+
+    const { data, error } = await supabase
+      .from('cash_movements')
+      .select('*, cash_concepts(name), cash_subconcepts(name)')
+      .lt('importe', 0)
+      .is('purchase_order_id', null)
+      .is('vencimiento_servicio_id', null)
+      .is('vencimiento_impuesto_id', null)
+      .gte('fecha', startDate)
+      .lte('fecha', endDate)
+      .order('fecha', { ascending: false })
+
+    if (error) throw error
+    return { success: true, data: data || [] }
+  } catch (err: any) {
+    console.error("Error in getPettyCashMovementsAction:", err)
+    return { success: false, data: [], error: err.message || "Error al obtener gastos de caja chica" }
+  }
+}
+
+// 25. Revert / Offset direct petty cash expense
+export async function anularGastoCajaChicaAction(
+  movementId: string,
+  fecha: string,
+  detalle: string
+) {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase.rpc('anular_gasto_caja_chica', {
+      p_movement_id: movementId,
+      p_fecha: fecha,
+      p_detalle: detalle || null
+    })
+
+    if (error) throw error
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error in anularGastoCajaChicaAction:", err)
+    return { success: false, error: err.message || "Error al anular gasto de caja chica" }
+  }
+}
+
+// 26. Get all Taxes templates
+export async function getImpuestosAction() {
+  try {
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('impuestos')
+      .select('*, cash_concepts(name), cash_subconcepts(name)')
+      .order('nombre', { ascending: true })
+
+    if (error) throw error
+    return { success: true, data: data || [] }
+  } catch (err: any) {
+    console.error("Error in getImpuestosAction:", err)
+    return { success: false, data: [], error: err.message || "Error al obtener impuestos" }
+  }
+}
+
+// 27. Create a new Tax template
+export async function crearImpuestoAction(
+  nombre: string,
+  enteRecaudador: string,
+  montoEstimado: number,
+  diaVencimientoHabitual: number,
+  subconceptId: string
+) {
+  try {
+    const supabase = createClient()
+
+    const { data: concept } = await supabase
+      .from('cash_concepts')
+      .select('id')
+      .eq('name', 'Impuestos')
+      .single()
+
+    if (!concept) throw new Error("Concepto 'Impuestos' no configurado en la base de datos.")
+
+    const { data, error } = await supabase
+      .from('impuestos')
+      .insert({
+        nombre,
+        ente_recaudador: enteRecaudador,
+        monto_estimado: montoEstimado,
+        dia_vencimiento_habitual: diaVencimientoHabitual,
+        concept_id: concept.id,
+        subconcept_id: subconceptId,
+        activo: true
+      })
+      .select()
+
+    if (error) throw error
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true, data: data?.[0] }
+  } catch (err: any) {
+    console.error("Error in crearImpuestoAction:", err)
+    return { success: false, error: err.message || "Error al crear impuesto" }
+  }
+}
+
+// 28. Toggle Tax template active status
+export async function toggleImpuestoActivoAction(id: string, activo: boolean) {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('impuestos')
+      .update({ activo })
+      .eq('id', id)
+
+    if (error) throw error
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error in toggleImpuestoActivoAction:", err)
+    return { success: false, error: err.message || "Error al actualizar estado del impuesto" }
+  }
+}
+
+// 29. Get tax monthly bills (uses RPC first)
+export async function getVencimientosImpuestosAction(mesPeriodo: string) {
+  try {
+    const supabase = createClient()
+
+    // Inicializar vencimientos de este mes
+    const { error: rpcErr } = await supabase.rpc('generar_vencimientos_impuestos', { p_periodo: mesPeriodo })
+    if (rpcErr) throw rpcErr
+
+    const { data, error } = await supabase
+      .from('vencimientos_impuestos')
+      .select('*, impuestos(*, cash_concepts(name), cash_subconcepts(name)), cash_movements:cash_movements!fk_vencimientos_impuestos_cash_movement(*)')
+      .eq('mes_periodo', mesPeriodo)
+      .order('fecha_vencimiento', { ascending: true })
+
+    if (error) throw error
+    return { success: true, data: data || [] }
+  } catch (err: any) {
+    console.error("Error in getVencimientosImpuestosAction:", err)
+    return { success: false, data: [], error: err.message || "Error al obtener vencimientos de impuestos" }
+  }
+}
+
+// 30. Register Payment for a Tax Bill
+export async function registrarPagoImpuestoAction(
+  vencimientoId: string,
+  fecha: string,
+  generarCaja: boolean,
+  detalle: string,
+  cuentaBancaria: string = 'efectivo'
+) {
+  try {
+    const supabase = createClient()
+    const { data, error } = await supabase.rpc('registrar_pago_impuesto', {
+      p_vencimiento_id: vencimientoId,
+      p_fecha: fecha,
+      p_generar_caja: generarCaja,
+      p_detalle: detalle || null,
+      p_cuenta_bancaria: cuentaBancaria
+    })
+
+    if (error) throw error
+
+    // Sincronizar automáticamente con iva_liquidaciones si el impuesto es "IVA"
+    const { data: vImp } = await supabase
+      .from('vencimientos_impuestos')
+      .select('*, impuestos(nombre)')
+      .eq('id', vencimientoId)
+      .single()
+
+    if (vImp && (vImp.impuestos?.nombre === 'IVA' || vImp.impuestos?.nombre?.toLowerCase() === 'iva')) {
+      const { error: ivaErr } = await supabase
+        .from('iva_liquidaciones')
+        .update({ pagado: true, fecha_pago: fecha })
+        .eq('periodo', vImp.mes_periodo)
+      if (ivaErr) {
+        console.error("Error al sincronizar pago con iva_liquidaciones:", ivaErr)
+      }
+    }
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true, movementId: data }
+  } catch (err: any) {
+    console.error("Error in registrarPagoImpuestoAction:", err)
+    return { success: false, error: err.message || "Error al registrar pago de impuesto" }
+  }
+}
+
+// 31. Revert Payment for a Tax Bill
+export async function revertirPagoImpuestoAction(
+  vencimientoId: string,
+  fecha: string,
+  detalle: string
+) {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase.rpc('revertir_pago_impuesto', {
+      p_vencimiento_id: vencimientoId,
+      p_fecha: fecha,
+      p_detalle: detalle || null
+    })
+
+    if (error) throw error
+
+    // Sincronizar automáticamente con iva_liquidaciones si el impuesto es "IVA"
+    const { data: vImp } = await supabase
+      .from('vencimientos_impuestos')
+      .select('*, impuestos(nombre)')
+      .eq('id', vencimientoId)
+      .single()
+
+    if (vImp && (vImp.impuestos?.nombre === 'IVA' || vImp.impuestos?.nombre?.toLowerCase() === 'iva')) {
+      const { error: ivaErr } = await supabase
+        .from('iva_liquidaciones')
+        .update({ pagado: false, fecha_pago: null })
+        .eq('periodo', vImp.mes_periodo)
+      if (ivaErr) {
+        console.error("Error al revertir pago con iva_liquidaciones:", ivaErr)
+      }
+    }
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error in revertirPagoImpuestoAction:", err)
+    return { success: false, error: err.message || "Error al revertir pago de impuesto" }
+  }
+}
+
+// 32. Update Cash Movement fields (e.g. cuenta_bancaria)
+export async function updateCashMovementFieldsAction(
+  id: string,
+  fields: {
+    cuenta_bancaria?: 'efectivo' | 'mercado pago' | 'banco galicia' | 'tarjeta de credito' | 'pago fer' | 'pago gaston';
+  }
+) {
+  try {
+    const supabase = createClient()
+    const { data, error } = await supabase
+      .from('cash_movements')
+      .update(fields)
+      .eq('id', id)
+      .select()
+
+    if (error) throw error
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true, data }
+  } catch (err: any) {
+    console.error("Error in updateCashMovementFieldsAction:", err)
+    return { success: false, error: err.message || "Error al actualizar movimiento de caja" }
+  }
+}
+
+export async function updateVencimientoFieldsAction(
+  type: 'servicio' | 'impuesto',
+  id: string,
+  fields: {
+    monto?: number;
+    fecha_vencimiento?: string;
+  }
+) {
+  try {
+    const supabase = createClient()
+    const table = type === 'servicio' ? 'vencimientos_servicios' : 'vencimientos_impuestos';
+    
+    const { data: bill, error: fetchError } = await supabase
+      .from(table)
+      .select('*')
+      .eq('id', id)
+      .single()
+
+    if (fetchError || !bill) {
+      return { success: false, error: "No se encontró el vencimiento a actualizar." }
+    }
+
+    const updatePayload: any = {}
+    if (fields.monto !== undefined) updatePayload.monto = fields.monto
+    if (fields.fecha_vencimiento !== undefined) updatePayload.fecha_vencimiento = fields.fecha_vencimiento
+
+    const { error: updateError } = await supabase
+      .from(table)
+      .update(updatePayload)
+      .eq('id', id)
+
+    if (updateError) throw updateError
+
+    if (bill.cash_movement_id && fields.monto !== undefined) {
+      const newImporte = -Math.abs(fields.monto)
+      const { error: mvError } = await supabase
+        .from('cash_movements')
+        .update({ importe: newImporte })
+        .eq('id', bill.cash_movement_id)
+
+      if (mvError) {
+        console.error("Error updating linked cash movement:", mvError)
+      }
+    }
+
+    revalidatePath('/finanzas/tesoreria')
+    revalidatePath('/finanzas')
+    return { success: true }
+  } catch (err: any) {
+    console.error("Error in updateVencimientoFieldsAction:", err)
+    return { success: false, error: err.message || "Error al actualizar vencimiento" }
+  }
+}
+
+// 34. Edit service template
+export async function editarServicioAction(
+  id: string,
+  nombre: string,
+  proveedor: string,
+  montoEstimado: number,
+  diaVencimientoHabitual: number,
+  subconceptId: string
+) {
+  try {
+    const supabase = createClient()
+
+    // Fetch concept_id of the chosen subconcept to support Administracion/Estructura/Servicios
+    const { data: subconcept } = await supabase
+      .from('cash_subconcepts')
+      .select('concept_id')
+      .eq('id', subconceptId)
+      .single()
+
+    if (!subconcept) throw new Error("El subrubro seleccionado no existe.")
+
+    const { data, error } = await supabase
+      .from('servicios')
+      .update({
+        nombre,
+        proveedor,
+        monto_estimado: montoEstimado,
+        dia_vencimiento_habitual: diaVencimientoHabitual,
+        concept_id: subconcept.concept_id,
+        subconcept_id: subconceptId
+      })
+      .eq('id', id)
+      .select()
+
+    if (error) throw error
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true, data: data?.[0] }
+  } catch (err: any) {
+    console.error("Error in editarServicioAction:", err)
+    return { success: false, error: err.message || "Error al editar servicio" }
+  }
+}
+
+// 35. Edit tax template
+export async function editarImpuestoAction(
+  id: string,
+  nombre: string,
+  enteRecaudador: string,
+  montoEstimado: number,
+  diaVencimientoHabitual: number,
+  subconceptId: string
+) {
+  try {
+    const supabase = createClient()
+
+    const { data, error } = await supabase
+      .from('impuestos')
+      .update({
+        nombre,
+        ente_recaudador: enteRecaudador,
+        monto_estimado: montoEstimado,
+        dia_vencimiento_habitual: diaVencimientoHabitual,
+        subconcept_id: subconceptId
+      })
+      .eq('id', id)
+      .select()
+
+    if (error) throw error
+
+    revalidatePath('/finanzas/tesoreria')
+    return { success: true, data: data?.[0] }
+  } catch (err: any) {
+    console.error("Error in editarImpuestoAction:", err)
+    return { success: false, error: err.message || "Error al editar impuesto" }
+  }
+}
 

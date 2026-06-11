@@ -27,7 +27,13 @@ export default function EventsPage() {
   const [rows, setRows] = useState<FormatRow[]>([])
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-  const today = new Date().toISOString().split('T')[0]
+  const today = (() => {
+    const d = new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  })()
 
   // Filters
   const [companyFilter, setCompanyFilter] = useState("")

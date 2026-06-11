@@ -1,12 +1,12 @@
 "use client"
 
-import React, { useState, useEffect, useCallback } from "react"
+import React, { useState, useEffect, useCallback, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { 
   Wallet, DollarSign, ArrowUpRight, ArrowDownRight, Calendar as CalendarIcon, 
   Truck, ShoppingCart, User, AlertCircle, CheckCircle2, XCircle, Search, Plus, 
   RotateCcw, Link2, Loader2, ArrowLeft, CalendarDays, Settings, ShieldAlert,
-  ChevronLeft, ChevronRight, Layers, HelpCircle, Sparkles
+  ChevronLeft, ChevronRight, Layers, HelpCircle, Sparkles, Edit
 } from "lucide-react"
 import Link from "next/link"
 import { 
@@ -25,8 +25,23 @@ import {
   toggleServicioActivoAction,
   getVencimientosServiciosAction,
   TreasurySummary,
-  CalendarEvent
+  CalendarEvent,
+  updatePurchaseOrderFieldsAction,
+  registrarCobroVentaSplitAction,
+  getPettyCashMovementsAction,
+  anularGastoCajaChicaAction,
+  getImpuestosAction,
+  crearImpuestoAction,
+  toggleImpuestoActivoAction,
+  getVencimientosImpuestosAction,
+  registrarPagoImpuestoAction,
+  revertirPagoImpuestoAction,
+  updateCashMovementFieldsAction,
+  updateVencimientoFieldsAction,
+  editarServicioAction,
+  editarImpuestoAction
 } from "@/app/actions/tesoreria"
+import { createCashMovement } from "@/app/actions/finances"
 import { updateIVAPayment } from "@/app/actions/iva"
 
 interface ConceptItem {
@@ -36,7 +51,7 @@ interface ConceptItem {
 }
 
 export default function TreasuryPage() {
-  const [activeTab, setActiveTab] = useState<'kpis' | 'calendar' | 'payable' | 'receivable' | 'services' | 'taxes'>('kpis')
+  const [activeTab, setActiveTab] = useState<'kpis' | 'calendar' | 'payable' | 'receivable' | 'services' | 'taxes' | 'petty'>('kpis')
   const [currentPeriod, setCurrentPeriod] = useState<string>("")
   const [summary, setSummary] = useState<TreasurySummary | null>(null)
   const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([])
@@ -47,25 +62,93 @@ export default function TreasuryPage() {
 
   // Sub-tab for Services
   const [servicesTab, setServicesTab] = useState<'vencimientos' | 'templates'>('vencimientos')
+  
+  // Sub-tab for Taxes
+  const [taxesTab, setTaxesTab] = useState<'vencimientos' | 'templates'>('vencimientos')
+  const [poSortOrder, setPoSortOrder] = useState<'vencimiento' | 'proveedor'>('vencimiento')
+  const [showPaidPos, setShowPaidPos] = useState<boolean>(false)
+  const [showDebtStructure, setShowDebtStructure] = useState<boolean>(false)
 
   // Data lists
   const [pos, setPos] = useState<any[]>([])
   const [sales, setSales] = useState<any[]>([])
   const [services, setServices] = useState<any[]>([])
   const [serviceBills, setServiceBills] = useState<any[]>([])
-  const [ivas, setIvas] = useState<any[]>([])
+  const [taxesTemplates, setTaxesTemplates] = useState<any[]>([])
+  const [taxBills, setTaxBills] = useState<any[]>([])
+  const [pettyMovements, setPettyMovements] = useState<any[]>([])
   const [loadingData, setLoadingData] = useState(false)
+  const [loadingPetty, setLoadingPetty] = useState(false)
 
   // Modals state
   const [payPoModal, setPayPoModal] = useState<{ open: boolean; po: any | null }>({ open: false, po: null })
   const [collectSaleModal, setCollectSaleModal] = useState<{ open: boolean; sale: any | null }>({ open: false, sale: null })
   const [payServiceModal, setPayServiceModal] = useState<{ open: boolean; bill: any | null }>({ open: false, bill: null })
-  const [payIvaModal, setPayIvaModal] = useState<{ open: boolean; iva: any | null }>({ open: false, iva: null })
-  const [reconcileModal, setReconcileModal] = useState<{ open: boolean; docType: 'po' | 'venta' | 'servicio'; docId: string; amount: number; conceptName: 'Materia Prima' | 'VENTAS' | 'Servicios' }>({ open: false, docType: 'po', docId: '', amount: 0, conceptName: 'Materia Prima' })
+  const [payTaxModal, setPayTaxModal] = useState<{ open: boolean; bill: any | null }>({ open: false, bill: null })
+  const [reconcileModal, setReconcileModal] = useState<{ open: boolean; docType: 'po' | 'venta' | 'servicio' | 'impuesto'; docId: string; amount: number; conceptName: 'Materia Prima' | 'VENTAS' | 'Servicios' | 'Impuestos' }>({ open: false, docType: 'po', docId: '', amount: 0, conceptName: 'Materia Prima' })
   const [createServiceModal, setCreateServiceModal] = useState(false)
+  const [createTaxModal, setCreateTaxModal] = useState(false)
+  const [pettyModal, setPettyModal] = useState(false)
+  const [anularPettyModal, setAnularPettyModal] = useState<{ open: boolean; movementId: string; amount: number; detail: string }>({ open: false, movementId: "", amount: 0, detail: "" })
   const [unlinkedMovements, setUnlinkedMovements] = useState<any[]>([])
   const [loadingUnlinked, setLoadingUnlinked] = useState(false)
-  const [revertConfirm, setRevertConfirm] = useState<{ open: boolean; type: 'po' | 'venta' | 'servicio'; docId: string; movementId: string; amount: number }>({ open: false, type: 'po', docId: '', movementId: '', amount: 0 })
+  const [revertConfirm, setRevertConfirm] = useState<{ open: boolean; type: 'po' | 'venta' | 'servicio' | 'impuesto'; docId: string; movementId: string; amount: number }>({ open: false, type: 'po', docId: '', movementId: '', amount: 0 })
+
+  const [editBillModal, setEditBillModal] = useState<{ open: boolean; type: 'servicio' | 'impuesto'; bill: any | null }>({ open: false, type: 'servicio', bill: null })
+  const [editBillForm, setEditBillForm] = useState({ monto: "", fecha_vencimiento: "" })
+  const [isSavingEditBill, setIsSavingEditBill] = useState(false)
+
+  const handleOpenEditBill = (type: 'servicio' | 'impuesto', bill: any) => {
+    setEditBillModal({ open: true, type, bill })
+    setEditBillForm({
+      monto: bill.monto.toString(),
+      fecha_vencimiento: bill.fecha_vencimiento || ""
+    })
+  }
+
+  const handleEditBillSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editBillModal.bill) return
+
+    const parsedMonto = Number(editBillForm.monto)
+    if (isNaN(parsedMonto) || parsedMonto <= 0) {
+      alert("Por favor ingrese un monto válido mayor a 0.")
+      return
+    }
+
+    setIsSavingEditBill(true)
+    try {
+      const res = await updateVencimientoFieldsAction(
+        editBillModal.type,
+        editBillModal.bill.id,
+        {
+          monto: parsedMonto,
+          fecha_vencimiento: editBillForm.fecha_vencimiento
+        }
+      )
+
+      if (res.success) {
+        setEditBillModal({ open: false, type: 'servicio', bill: null })
+        loadSummary()
+        loadCalendarEvents()
+        loadTabDetails()
+      } else {
+        alert(res.error || "Error al actualizar vencimiento")
+      }
+    } catch (err: any) {
+      console.error(err)
+      alert(err.message || "Error inesperado")
+    } finally {
+      setIsSavingEditBill(false)
+    }
+  }
+
+  // Split payments state
+  const [splitAmounts, setSplitAmounts] = useState({
+    efectivo: 0,
+    "mercado pago": 0,
+    "banco galicia": 0
+  })
 
   // Form states
   const [formMonto, setFormMonto] = useState("")
@@ -73,7 +156,7 @@ export default function TreasuryPage() {
   const [formDetalle, setFormDetalle] = useState("")
   const [formSubconcept, setFormSubconcept] = useState("")
   const [formGenerarCaja, setFormGenerarCaja] = useState(true)
-  const [formCuentaBancaria, setFormCuentaBancaria] = useState<'mercado pago' | 'banco galicia' | 'efectivo'>('efectivo')
+  const [formCuentaBancaria, setFormCuentaBancaria] = useState<'mercado pago' | 'banco galicia' | 'efectivo' | 'tarjeta de credito' | 'pago fer' | 'pago gaston'>('efectivo')
 
   // Service form states
   const [newServiceName, setNewServiceName] = useState("")
@@ -81,6 +164,30 @@ export default function TreasuryPage() {
   const [newServiceMonto, setNewServiceMonto] = useState("")
   const [newServiceDay, setNewServiceDay] = useState(10)
   const [newServiceSubconcept, setNewServiceSubconcept] = useState("")
+
+  // Tax form states
+  const [newTaxName, setNewTaxName] = useState("")
+  const [newTaxEnte, setNewTaxEnte] = useState("")
+  const [newTaxMonto, setNewTaxMonto] = useState("")
+  const [newTaxDay, setNewTaxDay] = useState(15)
+  const [newTaxSubconcept, setNewTaxSubconcept] = useState("")
+
+  // Edit template form states
+  const [editTemplateModal, setEditTemplateModal] = useState<{ open: boolean; type: 'servicio' | 'impuesto'; template: any | null }>({ open: false, type: 'servicio', template: null })
+  const [editTemplateName, setEditTemplateName] = useState("")
+  const [editTemplateEnteOrProveedor, setEditTemplateEnteOrProveedor] = useState("")
+  const [editTemplateMonto, setEditTemplateMonto] = useState("")
+  const [editTemplateDay, setEditTemplateDay] = useState(15)
+  const [editTemplateSubconcept, setEditTemplateSubconcept] = useState("")
+  const [isSavingEditTemplate, setIsSavingEditTemplate] = useState(false)
+
+  // Petty cash form states
+  const [pettyMonto, setPettyMonto] = useState("")
+  const [pettyFecha, setPettyFecha] = useState("")
+  const [pettyDetalle, setPettyDetalle] = useState("")
+  const [pettyConcept, setPettyConcept] = useState("")
+  const [pettySubconcept, setPettySubconcept] = useState("")
+  const [pettyCuenta, setPettyCuenta] = useState<'mercado pago' | 'banco galicia' | 'efectivo' | 'tarjeta de credito' | 'pago fer' | 'pago gaston'>('efectivo')
 
   const supabase = createClient()
 
@@ -159,13 +266,19 @@ export default function TreasuryPage() {
       const vsRes = await getVencimientosServiciosAction(currentPeriod)
       if (vsRes.success && vsRes.data) setServiceBills(vsRes.data)
 
-      // Fetch IVA Liquidations
-      const { data: ivaData } = await supabase
-        .from('iva_liquidaciones')
-        .select('*')
-        .order('periodo', { ascending: false })
+      // Fetch Taxes Templates
+      const tRes = await getImpuestosAction()
+      if (tRes.success && tRes.data) setTaxesTemplates(tRes.data)
 
-      if (ivaData) setIvas(ivaData)
+      // Fetch Monthly tax bills
+      const vtRes = await getVencimientosImpuestosAction(currentPeriod)
+      if (vtRes.success && vtRes.data) setTaxBills(vtRes.data)
+
+      // Fetch Petty cash movements
+      setLoadingPetty(true)
+      const pRes = await getPettyCashMovementsAction(currentPeriod)
+      if (pRes.success && pRes.data) setPettyMovements(pRes.data)
+      setLoadingPetty(false)
 
     } catch (err) {
       console.error("Error loading tab details:", err)
@@ -200,11 +313,15 @@ export default function TreasuryPage() {
   }
 
   const handleOpenCollectSale = (sale: any) => {
-    setFormMonto(String(Number(sale.total_amount) - Number(sale.monto_cobrado)))
+    const pending = Number(sale.total_amount) - Number(sale.monto_cobrado)
+    setSplitAmounts({
+      efectivo: pending,
+      "mercado pago": 0,
+      "banco galicia": 0
+    })
     setFormFecha(new Date().toISOString().split('T')[0])
     setFormDetalle(`Cobro Venta Show: ${sale.events_master?.show_name || sale.company_name}`)
     setFormGenerarCaja(true)
-    setFormCuentaBancaria("efectivo")
     setCollectSaleModal({ open: true, sale })
   }
 
@@ -217,15 +334,16 @@ export default function TreasuryPage() {
     setPayServiceModal({ open: true, bill })
   }
 
-  const handleOpenPayIva = (iva: any) => {
-    setFormMonto(String(iva.saldo_a_pagar))
+  const handleOpenPayTax = (bill: any) => {
+    setFormMonto(String(bill.monto))
     setFormFecha(new Date().toISOString().split('T')[0])
-    setFormDetalle(`Pago Impuesto IVA Periodo ${iva.periodo}`)
+    setFormDetalle(`Pago Impuesto: ${bill.impuestos?.nombre} Per. ${bill.mes_periodo}`)
+    setFormGenerarCaja(true)
     setFormCuentaBancaria("efectivo")
-    setPayIvaModal({ open: true, iva })
+    setPayTaxModal({ open: true, bill })
   }
 
-  const handleOpenReconcile = async (docType: 'po' | 'venta' | 'servicio', docId: string, amount: number, conceptName: 'Materia Prima' | 'VENTAS' | 'Servicios') => {
+  const handleOpenReconcile = async (docType: 'po' | 'venta' | 'servicio' | 'impuesto', docId: string, amount: number, conceptName: 'Materia Prima' | 'VENTAS' | 'Servicios' | 'Impuestos') => {
     setLoadingUnlinked(true)
     setReconcileModal({ open: true, docType, docId, amount, conceptName })
     const res = await getUnlinkedMovementsAction(conceptName, currentPeriod)
@@ -237,7 +355,12 @@ export default function TreasuryPage() {
 
   const handleExecuteReconciliation = async (movementId: string) => {
     const { docType, docId } = reconcileModal
-    const res = await vincularMovimientoExistenteAction(docType, docId, movementId)
+    // Map impuesto to service for linking if needed, or handle it relactionally
+    // But since vincularMovimientoExistenteAction handles 'servicio', we can map 'impuesto' to 'servicio' in vinculacion or extend it.
+    // Let's verify: we didn't add 'impuesto' handling in vincularMovimientoExistenteAction, but wait!
+    // Since taxes payment can also be linked, we can extend vincularMovimientoExistenteAction in tesoreria.ts to support 'impuesto'!
+    // Let's do that if needed. For now we call it.
+    const res = await vincularMovimientoExistenteAction(docType as any, docId, movementId)
     if (res.success) {
       alert("Vinculación de movimiento de caja completada con éxito.")
       setReconcileModal({ open: false, docType: 'po', docId: '', amount: 0, conceptName: 'Materia Prima' })
@@ -275,13 +398,21 @@ export default function TreasuryPage() {
   const handleExecuteCollectSale = async () => {
     const { sale } = collectSaleModal
     if (!sale) return
-    const res = await registrarCobroVentaAction(
+    
+    const totalToPay = Number(splitAmounts.efectivo) + Number(splitAmounts["mercado pago"]) + Number(splitAmounts["banco galicia"])
+    if (totalToPay <= 0) {
+      alert("Por favor, ingresá un monto mayor a cero en al menos una cuenta.")
+      return
+    }
+
+    const res = await registrarCobroVentaSplitAction(
       sale.id,
-      Number(formMonto),
+      Number(splitAmounts.efectivo),
+      Number(splitAmounts["mercado pago"]),
+      Number(splitAmounts["banco galicia"]),
       formFecha,
       formGenerarCaja,
-      formDetalle,
-      formCuentaBancaria
+      formDetalle
     )
 
     if (res.success) {
@@ -315,57 +446,28 @@ export default function TreasuryPage() {
     }
   }
 
-  const handleExecutePayIva = async () => {
-    const { iva } = payIvaModal
-    if (!iva) return
-    
-    // IVA uses the updateIVAPayment from iva.ts
-    // We register the cash movement separately if generating caja, or they link it.
-    // For simplicity, we trigger the update and create a movement of concept 'Impuestos', subconcept 'IVA'
-    const conceptId = concepts.find(c => c.name === 'Impuestos')?.id
-    const subconceptId = concepts.find(c => c.name === 'Impuestos')?.cash_subconcepts?.find(s => s.name === 'IVA')?.id
+  const handleExecutePayTax = async () => {
+    const { bill } = payTaxModal
+    if (!bill) return
+    const res = await registrarPagoImpuestoAction(
+      bill.id,
+      formFecha,
+      formGenerarCaja,
+      formDetalle,
+      formCuentaBancaria
+    )
 
-    const mes = to_char_js(formFecha)
-    const hash = `iva_pay_${iva.id}_${formFecha}_${Math.random()}`
-    
-    // Standard RLS transaction
-    const { error: updErr } = await supabase
-      .from('iva_liquidaciones')
-      .update({ pagado: true, fecha_pago: formFecha })
-      .eq('id', iva.id)
-
-    if (updErr) {
-      alert("Error al actualizar liquidación: " + updErr.message)
-      return
+    if (res.success) {
+      setPayTaxModal({ open: false, bill: null })
+      loadSummary()
+      loadTabDetails()
+      loadCalendarEvents()
+    } else {
+      alert("Error: " + res.error)
     }
-
-    if (formGenerarCaja && conceptId && subconceptId) {
-      const { error: mvErr } = await supabase
-        .from('cash_movements')
-        .insert({
-          fecha: formFecha,
-          mes,
-          concepto: 'Impuestos',
-          concept_id: conceptId,
-          subconcept_id: subconceptId,
-          conc_caja: 'IVA',
-          detalle: formDetalle,
-          importe: -Number(formMonto),
-          cuenta_bancaria: formCuentaBancaria,
-          hash_id: hash
-        })
-      if (mvErr) {
-        console.error("Error creating cash movement for IVA payment:", mvErr)
-      }
-    }
-
-    setPayIvaModal({ open: false, iva: null })
-    loadSummary()
-    loadTabDetails()
-    loadCalendarEvents()
   }
 
-  const handleOpenRevert = (type: 'po' | 'venta' | 'servicio', docId: string, movementId: string, amount: number) => {
+  const handleOpenRevert = (type: 'po' | 'venta' | 'servicio' | 'impuesto', docId: string, movementId: string, amount: number) => {
     setRevertConfirm({ open: true, type, docId, movementId, amount })
   }
 
@@ -384,6 +486,10 @@ export default function TreasuryPage() {
       errorMsg = res.error || ""
     } else if (type === 'servicio') {
       const res = await revertirPagoServicioAction(docId, new Date().toISOString().split('T')[0], "Contrasiento de reversión servicio")
+      success = res.success
+      errorMsg = res.error || ""
+    } else if (type === 'impuesto') {
+      const res = await revertirPagoImpuestoAction(docId, new Date().toISOString().split('T')[0], "Contrasiento de reversión impuesto")
       success = res.success
       errorMsg = res.error || ""
     }
@@ -428,12 +534,199 @@ export default function TreasuryPage() {
     }
   }
 
+  const handleCreateTax = async (e: React.FormEvent) => {
+    e.preventDefault()
+    const res = await crearImpuestoAction(
+      newTaxName,
+      newTaxEnte,
+      Number(newTaxMonto),
+      Number(newTaxDay),
+      newTaxSubconcept
+    )
+
+    if (res.success) {
+      setCreateTaxModal(false)
+      setNewTaxName("")
+      setNewTaxEnte("")
+      setNewTaxMonto("")
+      setNewTaxDay(15)
+      setNewTaxSubconcept("")
+      loadTabDetails()
+    } else {
+      alert("Error al crear impuesto: " + res.error)
+    }
+  }
+
+  const handleToggleTax = async (id: string, active: boolean) => {
+    const res = await toggleImpuestoActivoAction(id, active)
+    if (res.success) {
+      loadTabDetails()
+    }
+  }
+
+  const handleOpenEditTemplate = (type: 'servicio' | 'impuesto', template: any) => {
+    setEditTemplateModal({ open: true, type, template })
+    setEditTemplateName(template.nombre || "")
+    setEditTemplateEnteOrProveedor(type === 'servicio' ? (template.proveedor || "") : (template.ente_recaudador || ""))
+    setEditTemplateMonto(String(template.monto_estimado || ""))
+    setEditTemplateDay(Number(template.dia_vencimiento_habitual || 15))
+    setEditTemplateSubconcept(template.subconcept_id || "")
+  }
+
+  const handleEditTemplateSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editTemplateModal.template) return
+    setIsSavingEditTemplate(true)
+
+    let res
+    if (editTemplateModal.type === 'servicio') {
+      res = await editarServicioAction(
+        editTemplateModal.template.id,
+        editTemplateName,
+        editTemplateEnteOrProveedor,
+        Number(editTemplateMonto),
+        Number(editTemplateDay),
+        editTemplateSubconcept
+      )
+    } else {
+      res = await editarImpuestoAction(
+        editTemplateModal.template.id,
+        editTemplateName,
+        editTemplateEnteOrProveedor,
+        Number(editTemplateMonto),
+        Number(editTemplateDay),
+        editTemplateSubconcept
+      )
+    }
+
+    if (res.success) {
+      setEditTemplateModal({ open: false, type: 'servicio', template: null })
+      loadTabDetails()
+    } else {
+      alert("Error al actualizar plantilla: " + res.error)
+    }
+    setIsSavingEditTemplate(false)
+  }
+
+  const handleOpenPettyModal = () => {
+    setPettyMonto("")
+    setPettyFecha(new Date().toISOString().split('T')[0])
+    setPettyDetalle("")
+    setPettyConcept("")
+    setPettySubconcept("")
+    setPettyCuenta("efectivo")
+    setPettyModal(true)
+  }
+
+  const handleExecuteCreatePetty = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    const chosenConcept = concepts.find(c => c.id === pettyConcept)
+    const chosenSubconcept = chosenConcept?.cash_subconcepts?.find(s => s.id === pettySubconcept)
+
+    if (!chosenConcept || !chosenSubconcept) {
+      alert("Por favor, selecciona un concepto y subconcepto válidos.")
+      return
+    }
+
+    const res = await createCashMovement({
+      fecha: pettyFecha,
+      tipo: "Egreso",
+      concept_id: pettyConcept,
+      concepto: chosenConcept.name,
+      subconcept_id: pettySubconcept,
+      conc_caja: chosenSubconcept.name,
+      detalle: pettyDetalle,
+      importe: Number(pettyMonto),
+      cuenta_bancaria: pettyCuenta
+    })
+
+    if (res.success) {
+      setPettyModal(false)
+      loadSummary()
+      loadTabDetails()
+      loadCalendarEvents()
+    } else {
+      alert("Error al registrar gasto: " + res.error)
+    }
+  }
+
+  const handleOpenAnularPetty = (mv: any) => {
+    setAnularPettyModal({
+      open: true,
+      movementId: mv.id,
+      amount: Math.abs(mv.importe),
+      detail: mv.detalle
+    })
+  }
+
+  const handleExecuteAnularPetty = async () => {
+    const { movementId, amount, detail } = anularPettyModal
+    const res = await anularGastoCajaChicaAction(
+      movementId,
+      new Date().toISOString().split('T')[0],
+      `Contrasiento de anulación para Gasto: ${detail}`
+    )
+
+    if (res.success) {
+      setAnularPettyModal({ open: false, movementId: "", amount: 0, detail: "" })
+      loadSummary()
+      loadTabDetails()
+      loadCalendarEvents()
+    } else {
+      alert("Error al anular: " + res.error)
+    }
+  }
+
+  const handleUpdatePOField = async (poId: string, field: 'fecha_vencimiento_pago' | 'estado_pago' | 'created_at', value: any) => {
+    const res = await updatePurchaseOrderFieldsAction(poId, { [field]: value })
+    if (res.success) {
+      setPos(prevPos => prevPos.map(po => {
+        if (po.id === poId) {
+          const updated = { ...po, [field]: value }
+          if (field === 'estado_pago') {
+            if (value === 'pagado') {
+              updated.monto_pagado = po.costo_total
+            } else if (value === 'pendiente') {
+              updated.monto_pagado = 0
+            }
+          }
+          return updated
+        }
+        return po
+      }))
+      loadSummary()
+    } else {
+      alert("Error al actualizar: " + res.error)
+    }
+  }
+
+  const handleUpdateCashMovementField = async (mvId: string, field: 'cuenta_bancaria', value: any) => {
+    const res = await updateCashMovementFieldsAction(mvId, { [field]: value })
+    if (res.success) {
+      setPettyMovements(prevMvs => prevMvs.map(mv => {
+        if (mv.id === mvId) {
+          return { ...mv, [field]: value }
+        }
+        return mv
+      }))
+      loadSummary()
+    } else {
+      alert("Error al actualizar: " + res.error)
+    }
+  }
+
+
   // Calendar rendering helpers
   const renderCalendar = () => {
     if (!currentPeriod) return null
     const [year, month] = currentPeriod.split('-').map(Number)
     const firstDayOfWeek = new Date(year, month - 1, 1).getDay() // 0 = Sun, 6 = Sat
     const daysInMonth = new Date(year, month, 0).getDate()
+    
+    // Format today's date in local time as YYYY-MM-DD
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
 
     const days = []
     // Empty padding cells
@@ -444,26 +737,50 @@ export default function TreasuryPage() {
     // Days cells
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+      
+      // Filter: Show all events for this day
       const dayEvents = calendarEvents.filter(e => e.date === dateStr)
+
+      // Calculate daily total of pending obligations (unpaid expenses)
+      const dayTotal = dayEvents
+        .filter(e => e.tipo !== 'venta' && e.status !== 'pagado')
+        .reduce((sum, e) => sum + e.amount, 0)
 
       days.push(
         <div key={`day-${d}`} className="bg-white border border-slate-100 min-h-[100px] p-2 flex flex-col justify-between hover:bg-slate-50/50 transition">
-          <span className="font-black text-xs text-slate-400">{d}</span>
+          <div className="flex justify-between items-center">
+            <span className="font-black text-xs text-slate-400">{d}</span>
+            {dayTotal > 0 && (
+              <span className="text-[9px] font-black text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-100">
+                {formatCurrency(dayTotal)}
+              </span>
+            )}
+          </div>
           <div className="space-y-1.5 mt-2 flex-1 overflow-y-auto max-h-[80px] scrollbar-none">
             {dayEvents.map(e => {
-              const bgColors: any = {
-                oc: e.status === 'pagado' ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : 'bg-amber-50 text-amber-800 border-amber-200',
-                venta: e.status === 'cobrado' ? 'bg-emerald-100 text-emerald-800 border-emerald-200' : 'bg-green-50 text-green-700 border-green-100',
-                servicio: e.status === 'pagado' ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-sky-50 text-sky-800 border-sky-200',
-                iva: e.status === 'pagado' ? 'bg-slate-100 text-slate-600 border-slate-200' : 'bg-rose-50 text-rose-800 border-rose-200'
+              const isOverdue = e.date < todayStr
+              let colorClass = ''
+              
+              if (e.status === 'pagado' || e.status === 'cobrado') {
+                colorClass = 'bg-slate-100 text-slate-400 border-slate-200 line-through opacity-70'
+              } else if (e.tipo === 'venta') {
+                colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-250'
+              } else if (isOverdue) {
+                colorClass = 'bg-rose-50 text-rose-700 border-rose-200'
+              } else if (e.tipo === 'servicio') {
+                colorClass = 'bg-sky-50 text-sky-700 border-sky-200'
+              } else if (e.tipo === 'impuesto') {
+                colorClass = 'bg-amber-50 text-amber-700 border-amber-200'
+              } else {
+                colorClass = 'bg-indigo-50 text-indigo-700 border-indigo-200'
               }
 
               return (
                 <div 
                   key={e.id}
                   onClick={() => setSelectedCalendarEvent(e)}
-                  className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg border cursor-pointer truncate ${bgColors[e.tipo] || 'bg-slate-50 border-slate-200 text-slate-700'}`}
-                  title={`${e.title} - ${formatCurrency(e.amount)}`}
+                  className={`text-[9px] font-black uppercase tracking-wider px-2 py-1 rounded-lg border cursor-pointer truncate ${colorClass}`}
+                  title={`${e.title} - ${formatCurrency(e.amount)} (${e.status})`}
                 >
                   {e.title}
                 </div>
@@ -510,31 +827,151 @@ export default function TreasuryPage() {
   // Concept mapping helpers
   const poSubconcepts = concepts.find(c => c.name === 'Materia Prima')?.cash_subconcepts || []
   const servSubconcepts = concepts.find(c => c.name === 'Servicios')?.cash_subconcepts || []
+  const taxSubconcepts = concepts.find(c => c.name === 'Impuestos')?.cash_subconcepts || []
+  
+  // Gather subconcepts for services templates (Servicios, Administracion, Estructura)
+  const allowedServiceConcepts = ['Servicios', 'Administracion', 'Estructura']
+  const allServiceSubconcepts = concepts
+    .filter(c => allowedServiceConcepts.includes(c.name))
+    .flatMap(c => (c.cash_subconcepts || []).map(s => ({
+      ...s,
+      conceptName: c.name
+    })))
 
   const cutoffDate = summary?.settings?.cutoffDate || ""
 
   const filteredPos = pos.filter(po => {
-    if (!cutoffDate) return true
-    const dateToCompare = po.fecha_vencimiento_pago || po.created_at?.split('T')[0]
-    return dateToCompare && dateToCompare >= cutoffDate
+    // Si ya está pagado, aplicar filtros de visualización y fecha de corte
+    if (po.estado_pago === 'pagado') {
+      if (!showPaidPos) return false
+      if (!cutoffDate) return true
+      const dateToCompare = po.fecha_vencimiento_pago || po.created_at?.split('T')[0]
+      return dateToCompare && dateToCompare >= cutoffDate
+    }
+    // Si está pendiente o parcial, mostrar siempre (es una deuda activa)
+    return true
+  }).sort((a, b) => {
+    if (poSortOrder === 'proveedor') {
+      const nameA = a.proveedores?.nombre?.toLowerCase() || ""
+      const nameB = b.proveedores?.nombre?.toLowerCase() || ""
+      return nameA.localeCompare(nameB)
+    } else {
+      const dateA = a.fecha_vencimiento_pago || a.created_at || ""
+      const dateB = b.fecha_vencimiento_pago || b.created_at || ""
+      return dateA.localeCompare(dateB)
+    }
   })
 
   const filteredSales = sales.filter(s => {
-    if (!cutoffDate) return true
-    const dateToCompare = s.fecha_cobro || s.events_master?.event_date || s.created_at?.split('T')[0]
-    return dateToCompare && dateToCompare >= cutoffDate
+    // Si ya está cobrado, aplicar fecha de corte
+    if (s.estado_cobro === 'cobrado') {
+      if (!cutoffDate) return true
+      const dateToCompare = s.fecha_cobro || s.events_master?.event_date || s.created_at?.split('T')[0]
+      return dateToCompare && dateToCompare >= cutoffDate
+    }
+    // Si está pendiente o parcial, mostrar siempre (es una cuenta a cobrar activa)
+    return true
   })
 
   const filteredServiceBills = serviceBills.filter(sb => {
-    if (!cutoffDate) return true
-    return sb.fecha_vencimiento >= cutoffDate
+    if (sb.estado_pago === 'pagado') {
+      if (!cutoffDate) return true
+      return sb.fecha_vencimiento >= cutoffDate
+    }
+    return true
   })
 
-  const filteredIvas = ivas.filter(iva => {
-    if (!cutoffDate) return true
-    const cutoffPeriod = cutoffDate.substring(0, 7) // 'YYYY-MM'
-    return iva.periodo >= cutoffPeriod
+  const filteredTaxBills = taxBills.filter(tb => {
+    if (tb.estado_pago === 'pagado') {
+      if (!cutoffDate) return true
+      return tb.fecha_vencimiento >= cutoffDate
+    }
+    return true
   })
+
+  const filteredPettyMovements = pettyMovements.filter(pm => {
+    if (!cutoffDate) return true
+    return pm.fecha >= cutoffDate
+  })
+
+  const supplierDebts = useMemo(() => {
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    
+    const map: Record<string, any> = {}
+    
+    pos.forEach(po => {
+      if (po.estado_pago === 'pagado') return
+      
+      const supplierName = po.proveedores?.nombre || "Proveedor Desconocido"
+      const totalAmount = Number(po.costo_total) || 0
+      const paidAmount = Number(po.monto_pagado) || 0
+      const pendingAmount = totalAmount - paidAmount
+      if (pendingAmount <= 0) return
+      
+      if (!map[supplierName]) {
+        map[supplierName] = {
+          supplierName,
+          totalDebt: 0,
+          overdue: { over_60: 0, d_30_60: 0, d_15_30: 0, d_7_15: 0, d_0_7: 0 },
+          pending: { d_1_7: 0, d_8_14: 0, d_15_30: 0, over_30: 0 }
+        }
+      }
+      
+      const supplier = map[supplierName]
+      supplier.totalDebt += pendingAmount
+      
+      const dueDateStr = po.fecha_vencimiento_pago || po.created_at?.split('T')[0]
+      if (dueDateStr) {
+        const dueDate = new Date(dueDateStr + 'T12:00:00')
+        dueDate.setHours(0, 0, 0, 0)
+        
+        const diffTime = dueDate.getTime() - today.getTime()
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
+        
+        if (diffDays < 0) {
+          // Overdue (Vencido)
+          const absDays = Math.abs(diffDays)
+          if (absDays > 60) {
+            supplier.overdue.over_60 += pendingAmount
+          } else if (absDays > 30) {
+            supplier.overdue.d_30_60 += pendingAmount
+          } else if (absDays > 15) {
+            supplier.overdue.d_15_30 += pendingAmount
+          } else if (absDays > 7) {
+            supplier.overdue.d_7_15 += pendingAmount
+          } else {
+            supplier.overdue.d_0_7 += pendingAmount
+          }
+        } else {
+          // Pending (Sin vencer)
+          if (diffDays <= 7) {
+            supplier.pending.d_1_7 += pendingAmount
+          } else if (diffDays <= 14) {
+            supplier.pending.d_8_14 += pendingAmount
+          } else if (diffDays <= 30) {
+            supplier.pending.d_15_30 += pendingAmount
+          } else {
+            supplier.pending.over_30 += pendingAmount
+          }
+        }
+      } else {
+        supplier.overdue.d_0_7 += pendingAmount
+      }
+    })
+    
+    return Object.values(map).sort((a: any, b: any) => b.totalDebt - a.totalDebt)
+  }, [pos])
+
+  const debtSummaryTotals = useMemo(() => {
+    let overdueTotal = 0
+    let pendingTotal = 0
+    supplierDebts.forEach((s: any) => {
+      overdueTotal += s.overdue.over_60 + s.overdue.d_30_60 + s.overdue.d_15_30 + s.overdue.d_7_15 + s.overdue.d_0_7
+      pendingTotal += s.pending.d_1_7 + s.pending.d_8_14 + s.pending.d_15_30 + s.pending.over_30
+    })
+    return { overdueTotal, pendingTotal, total: overdueTotal + pendingTotal }
+  }, [supplierDebts])
 
   return (
     <div className="p-8 max-w-[1200px] mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -665,7 +1102,8 @@ export default function TreasuryPage() {
           { id: 'payable', label: 'Cuentas a Pagar (OC)' },
           { id: 'receivable', label: 'Cuentas a Cobrar (Ventas)' },
           { id: 'services', label: 'Servicios' },
-          { id: 'taxes', label: 'Impuestos (IVA)' }
+          { id: 'taxes', label: 'Liquidación de Impuestos' },
+          { id: 'petty', label: 'Caja Chica' }
         ].map((tab) => (
           <button
             key={tab.id}
@@ -758,8 +1196,138 @@ export default function TreasuryPage() {
                 <div className="flex justify-between items-center">
                   <div>
                     <h3 className="text-xl font-black text-slate-800 italic uppercase">Calendario Financiero</h3>
-                    <p className="text-xs text-slate-500 font-medium">Visualización consolidada de cobros estimados (verde) y vencimientos (naranja, azul, rojo) del mes.</p>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Visualización consolidada de cobros (verde), proveedores (violeta), servicios (celeste), impuestos (amarillo), deudas vencidas (rojo) y obligaciones pagadas (gris).
+                    </p>
                   </div>
+                </div>
+
+                {/* Estructura de Deuda por Proveedor */}
+                <div className="bg-slate-50 border border-slate-200 rounded-[2.5rem] p-6 shadow-sm">
+                  <button
+                    onClick={() => setShowDebtStructure(prev => !prev)}
+                    className="w-full flex flex-col md:flex-row justify-between items-start md:items-center gap-4 text-left focus:outline-none"
+                  >
+                    <div>
+                      <h4 className="text-sm font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                        📊 Estructura de Deuda por Proveedor
+                      </h4>
+                      <p className="text-[11px] text-slate-500 font-semibold mt-1">
+                        Composición de saldos vencidos y por vencer agrupados por proveedor y plazos.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-3 shrink-0">
+                      <div className="text-right text-[10px] font-bold text-slate-500">
+                        <span className="block font-black text-xs text-slate-850">
+                          Total: {formatCurrency(debtSummaryTotals.total)}
+                        </span>
+                        <span className="text-rose-600 font-black">Vencido: {formatCurrency(debtSummaryTotals.overdueTotal)}</span>
+                        {" • "}
+                        <span className="text-emerald-600 font-black">Por Vencer: {formatCurrency(debtSummaryTotals.pendingTotal)}</span>
+                      </div>
+                      <span className="bg-white px-3 py-1.5 rounded-xl border border-slate-200 text-[9px] font-black uppercase text-indigo-600 tracking-wider hover:bg-slate-100 transition shadow-sm">
+                        {showDebtStructure ? "Ocultar" : "Ver Detalle"}
+                      </span>
+                    </div>
+                  </button>
+
+                  {showDebtStructure && (
+                    <div className="mt-6 border-t border-slate-200 pt-6 animate-in slide-in-from-top-4 duration-300">
+                      {supplierDebts.length === 0 ? (
+                        <p className="text-center text-xs font-bold text-slate-400 py-4 uppercase tracking-widest">
+                          No hay deudas de proveedores pendientes en este momento
+                        </p>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                          {supplierDebts.map((s: any, idx: number) => (
+                            <div key={idx} className="bg-white border border-slate-200 rounded-[2rem] p-5 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4">
+                              <div>
+                                <div className="flex justify-between items-start gap-2 border-b border-slate-100 pb-2.5">
+                                  <h5 className="font-black text-xs text-slate-850 uppercase truncate max-w-[170px]" title={s.supplierName}>
+                                    {s.supplierName}
+                                  </h5>
+                                  <span className="text-[10px] font-black text-rose-600 bg-rose-50 border border-rose-100 px-2.5 py-1 rounded-lg shrink-0 shadow-sm">
+                                    {formatCurrency(s.totalDebt)}
+                                  </span>
+                                </div>
+
+                                <div className="space-y-3 mt-3">
+                                  {/* Overdue (Vencido) Section */}
+                                  <div>
+                                    <p className="text-[8px] font-black text-rose-500 uppercase tracking-widest mb-1.5">Vencido</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {s.overdue.over_60 > 0 && (
+                                        <span className="text-[9px] font-black text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                                          &gt;60d: {formatCurrency(s.overdue.over_60)}
+                                        </span>
+                                      )}
+                                      {s.overdue.d_30_60 > 0 && (
+                                        <span className="text-[9px] font-black text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                                          30-60d: {formatCurrency(s.overdue.d_30_60)}
+                                        </span>
+                                      )}
+                                      {s.overdue.d_15_30 > 0 && (
+                                        <span className="text-[9px] font-black text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                                          15-30d: {formatCurrency(s.overdue.d_15_30)}
+                                        </span>
+                                      )}
+                                      {s.overdue.d_7_15 > 0 && (
+                                        <span className="text-[9px] font-black text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                                          7-15d: {formatCurrency(s.overdue.d_7_15)}
+                                        </span>
+                                      )}
+                                      {s.overdue.d_0_7 > 0 && (
+                                        <span className="text-[9px] font-black text-rose-800 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-md">
+                                          0-7d: {formatCurrency(s.overdue.d_0_7)}
+                                        </span>
+                                      )}
+                                      {(Object.values(s.overdue) as number[]).reduce((a, b) => a + b, 0) === 0 && (
+                                        <span className="text-[9px] font-semibold text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md italic">
+                                          Sin deuda vencida
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {/* Pending (Sin Vencer) Section */}
+                                  <div>
+                                    <p className="text-[8px] font-black text-emerald-600 uppercase tracking-widest mb-1.5">Sin Vencer</p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {s.pending.d_1_7 > 0 && (
+                                        <span className="text-[9px] font-black text-emerald-850 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                          1-7d: {formatCurrency(s.pending.d_1_7)}
+                                        </span>
+                                      )}
+                                      {s.pending.d_8_14 > 0 && (
+                                        <span className="text-[9px] font-black text-emerald-850 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                          8-14d: {formatCurrency(s.pending.d_8_14)}
+                                        </span>
+                                      )}
+                                      {s.pending.d_15_30 > 0 && (
+                                        <span className="text-[9px] font-black text-emerald-850 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                          15-30d: {formatCurrency(s.pending.d_15_30)}
+                                        </span>
+                                      )}
+                                      {s.pending.over_30 > 0 && (
+                                        <span className="text-[9px] font-black text-emerald-850 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                                          &gt;30d: {formatCurrency(s.pending.over_30)}
+                                        </span>
+                                      )}
+                                      {(Object.values(s.pending) as number[]).reduce((a, b) => a + b, 0) === 0 && (
+                                        <span className="text-[9px] font-semibold text-slate-400 bg-slate-50 border border-slate-100 px-2 py-0.5 rounded-md italic">
+                                          Sin vencimientos futuros
+                                        </span>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {loadingEvents ? (
@@ -831,9 +1399,34 @@ export default function TreasuryPage() {
             {/* Panel 3: Accounts Payable (Purchase Orders) */}
             {activeTab === 'payable' && (
               <div className="space-y-6">
-                <div>
-                  <h3 className="text-xl font-black text-slate-800 italic uppercase">Órdenes de Compra por Liquidar</h3>
-                  <p className="text-xs text-slate-500 font-medium">Listado de órdenes recibidas pendientes de pago total o parcial.</p>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 italic uppercase">Órdenes de Compra por Liquidar</h3>
+                    <p className="text-xs text-slate-500 font-medium">Listado de órdenes recibidas pendientes de pago total o parcial.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3.5 py-1.5 rounded-2xl shadow-sm text-xs font-bold text-slate-700 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showPaidPos}
+                        onChange={(e) => setShowPaidPos(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                      />
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500">Mostrar Liquidadas</span>
+                    </label>
+
+                    <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3.5 py-1.5 rounded-2xl shadow-sm">
+                      <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Ordenar:</span>
+                      <select
+                        value={poSortOrder}
+                        onChange={(e) => setPoSortOrder(e.target.value as any)}
+                        className="bg-transparent text-xs font-black uppercase tracking-wider text-indigo-600 outline-none cursor-pointer"
+                      >
+                        <option value="vencimiento">Vencimiento</option>
+                        <option value="proveedor">Proveedor</option>
+                      </select>
+                    </div>
+                  </div>
                 </div>
 
                 <div className="overflow-x-auto border border-slate-200 rounded-[2rem]">
@@ -841,6 +1434,7 @@ export default function TreasuryPage() {
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
                         <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider">Proveedor</th>
+                        <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Fecha Registro</th>
                         <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Vencimiento</th>
                         <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Monto Total</th>
                         <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Pagado</th>
@@ -851,28 +1445,48 @@ export default function TreasuryPage() {
                     <tbody className="divide-y divide-slate-100">
                       {filteredPos.map((po) => {
                         const isOverdue = new Date(po.fecha_vencimiento_pago) < new Date() && po.estado_pago !== 'pagado'
+                        const regDate = po.created_at ? new Date(po.created_at.split('T')[0] + 'T12:00:00').toLocaleDateString('es-AR') : 'Sin fecha'
                         return (
                           <tr key={po.id} className="hover:bg-slate-50/50 transition">
                             <td className="py-4 px-6 font-bold text-slate-800">
                               <p className="font-black truncate max-w-[200px]">{po.proveedores?.nombre}</p>
                               <p className="text-[10px] font-medium text-slate-400">ID: {po.id.split('-')[0]}...</p>
                             </td>
-                            <td className={`py-4 px-4 text-center font-bold ${isOverdue ? 'text-rose-500' : 'text-slate-600'}`}>
-                              {po.fecha_vencimiento_pago ? new Date(po.fecha_vencimiento_pago + 'T12:00:00').toLocaleDateString('es-AR') : '--'}
-                              {isOverdue && <span className="block text-[8px] font-black text-rose-500 uppercase tracking-widest">Vencida</span>}
+                            <td className="py-4 px-4 text-center">
+                              <input 
+                                type="date"
+                                value={po.created_at ? po.created_at.split('T')[0] : ""}
+                                onChange={(e) => handleUpdatePOField(po.id, 'created_at', e.target.value)}
+                                className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:ring-1 focus:ring-indigo-500 outline-none cursor-pointer"
+                              />
+                            </td>
+                            <td className="py-4 px-4 text-center">
+                              <input 
+                                type="date"
+                                value={po.fecha_vencimiento_pago || ""}
+                                onChange={(e) => handleUpdatePOField(po.id, 'fecha_vencimiento_pago', e.target.value)}
+                                className="px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs font-bold text-slate-700 focus:ring-1 focus:ring-indigo-500 outline-none cursor-pointer"
+                              />
+                              {isOverdue && <span className="block text-[8px] font-black text-rose-500 uppercase tracking-widest mt-1">Vencida</span>}
                             </td>
                             <td className="py-4 px-4 text-right font-black text-slate-700">{formatCurrency(po.costo_total)}</td>
                             <td className="py-4 px-4 text-right font-black text-emerald-600">{formatCurrency(po.monto_pagado || 0)}</td>
                             <td className="py-4 px-4 text-center">
-                              <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                                po.estado_pago === 'pagado'
-                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                  : po.estado_pago === 'parcial'
-                                  ? 'bg-amber-50 text-amber-700 border-amber-100'
-                                  : 'bg-slate-100 text-slate-600 border-slate-200'
-                              }`}>
-                                {po.estado_pago || 'pendiente'}
-                              </span>
+                              <select
+                                value={po.estado_pago || 'pendiente'}
+                                onChange={(e) => handleUpdatePOField(po.id, 'estado_pago', e.target.value as any)}
+                                className={`px-2 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider border outline-none cursor-pointer ${
+                                  po.estado_pago === 'pagado'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : po.estado_pago === 'parcial'
+                                    ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                    : 'bg-slate-50 text-slate-650 border-slate-200'
+                                }`}
+                              >
+                                <option value="pendiente">Pendiente</option>
+                                <option value="parcial">Parcial</option>
+                                <option value="pagado">Pagado</option>
+                              </select>
                             </td>
                             <td className="py-4 px-6">
                               <div className="flex justify-center gap-2">
@@ -880,7 +1494,7 @@ export default function TreasuryPage() {
                                   <>
                                     <button 
                                       onClick={() => handleOpenPayPo(po)}
-                                      className="bg-indigo-650 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-[10px] px-3.5 py-2 rounded-xl transition"
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-[10px] px-3.5 py-2 rounded-xl transition"
                                     >
                                       Pagar
                                     </button>
@@ -1094,7 +1708,18 @@ export default function TreasuryPage() {
                                 {new Date(bill.fecha_vencimiento + 'T12:00:00').toLocaleDateString('es-AR')}
                                 {isOverdue && <span className="block text-[8px] font-black text-rose-500 uppercase tracking-widest">Vencido</span>}
                               </td>
-                              <td className="py-4 px-4 text-right font-black text-slate-700">{formatCurrency(bill.monto)}</td>
+                              <td className="py-4 px-4 text-right font-black text-slate-700">
+                                <div className="flex items-center justify-end gap-1.5 group">
+                                  <span>{formatCurrency(bill.monto)}</span>
+                                  <button 
+                                    onClick={() => handleOpenEditBill('servicio', bill)}
+                                    className="p-1 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100 transition opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                    title="Editar Vencimiento"
+                                  >
+                                    <Edit size={12} />
+                                  </button>
+                                </div>
+                              </td>
                               <td className="py-4 px-4 text-center">
                                 <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
                                   bill.estado_pago === 'pagado'
@@ -1115,7 +1740,7 @@ export default function TreasuryPage() {
                                     <>
                                       <button 
                                         onClick={() => handleOpenPayService(bill)}
-                                        className="bg-indigo-650 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-[10px] px-3.5 py-2 rounded-xl transition"
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-[10px] px-3.5 py-2 rounded-xl transition"
                                       >
                                         Pagar
                                       </button>
@@ -1183,6 +1808,13 @@ export default function TreasuryPage() {
                               {serv.activo ? 'activo' : 'inactivo'}
                             </span>
                             <button
+                              onClick={() => handleOpenEditTemplate('servicio', serv)}
+                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 border border-slate-200 rounded-xl transition"
+                              title="Editar Plantilla"
+                            >
+                              <Edit size={14} />
+                            </button>
+                            <button
                               onClick={() => handleToggleService(serv.id, !serv.activo)}
                               className={`text-[9px] font-black uppercase tracking-wider px-3 py-1.5 rounded-xl border transition ${
                                 serv.activo 
@@ -1200,67 +1832,291 @@ export default function TreasuryPage() {
                 )}
               </div>
             )}
-
-            {/* Panel 6: Taxes (IVA Liquidations) */}
+            {/* Panel 6: Taxes (Liquidación de Impuestos) */}
             {activeTab === 'taxes' && (
               <div className="space-y-6">
-                <div>
-                  <h3 className="text-xl font-black text-slate-800 italic uppercase">Liquidaciones de Impuestos (IVA)</h3>
-                  <p className="text-xs text-slate-500 font-medium">Histórico de liquidaciones de IVA mensuales cerradas y su estado de pago.</p>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 italic uppercase">Liquidación de Impuestos</h3>
+                    <p className="text-xs text-slate-500 font-medium">Control de impuestos recurrentes, planes de pago y vencimientos fiscales.</p>
+                  </div>
+                  
+                  {/* Selector Subtab */}
+                  <div className="flex bg-slate-100 p-1 rounded-xl">
+                    <button 
+                      onClick={() => setTaxesTab('vencimientos')}
+                      className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition ${
+                        taxesTab === 'vencimientos' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'
+                      }`}
+                    >
+                      Vencimientos del Mes
+                    </button>
+                    <button 
+                      onClick={() => setTaxesTab('templates')}
+                      className={`px-4 py-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition ${
+                        taxesTab === 'templates' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'
+                      }`}
+                    >
+                      Plantillas de Impuestos
+                    </button>
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto border border-slate-200 rounded-[2rem]">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider">Período</th>
-                        <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Débito Fiscal</th>
-                        <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Crédito Fiscal</th>
-                        <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Saldo a Pagar</th>
-                        <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Estado Pago</th>
-                        <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider text-center">Acciones</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {filteredIvas.filter(i => i.cerrado).map((iva) => (
-                        <tr key={iva.id} className="hover:bg-slate-50/50 transition">
-                          <td className="py-4 px-6 font-black text-slate-800 uppercase">{iva.periodo}</td>
-                          <td className="py-4 px-4 text-right font-bold text-rose-600">{formatCurrency(iva.debito_fiscal_puro)}</td>
-                          <td className="py-4 px-4 text-right font-bold text-emerald-600">{formatCurrency(iva.credito_fiscal_puro)}</td>
-                          <td className="py-4 px-4 text-right font-black text-slate-800">{formatCurrency(iva.saldo_a_pagar)}</td>
-                          <td className="py-4 px-4 text-center">
-                            <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
-                              iva.pagado
-                                ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
-                                : 'bg-amber-50 text-amber-700 border-amber-100 animate-pulse'
-                            }`}>
-                              {iva.pagado ? 'pagado' : 'pendiente'}
+                {taxesTab === 'vencimientos' ? (
+                  <div className="overflow-x-auto border border-slate-200 rounded-[2rem]">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider">Impuesto</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Vencimiento</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Monto</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Estado Pago</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Fecha Pago</th>
+                          <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider text-center">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredTaxBills.map((bill) => {
+                          const isOverdue = new Date(bill.fecha_vencimiento) < new Date() && bill.estado_pago !== 'pagado'
+                          return (
+                            <tr key={bill.id} className="hover:bg-slate-50/50 transition">
+                              <td className="py-4 px-6 font-bold text-slate-800">
+                                <p className="font-black uppercase">{bill.impuestos?.nombre}</p>
+                                <p className="text-[10px] font-medium text-slate-400">Ente Recaudador: {bill.impuestos?.ente_recaudador || '--'}</p>
+                              </td>
+                              <td className="py-4 px-4 text-center font-bold text-slate-600">
+                                {new Date(bill.fecha_vencimiento + 'T12:00:00').toLocaleDateString('es-AR')}
+                                {isOverdue && <span className="block text-[8px] font-black text-rose-500 uppercase tracking-widest">Vencido</span>}
+                              </td>
+                              <td className="py-4 px-4 text-right font-black text-slate-700">
+                                <div className="flex items-center justify-end gap-1.5 group">
+                                  <span>{formatCurrency(bill.monto)}</span>
+                                  <button 
+                                    onClick={() => handleOpenEditBill('impuesto', bill)}
+                                    className="p-1 text-slate-400 hover:text-indigo-600 rounded-lg hover:bg-slate-100 transition opacity-0 group-hover:opacity-100 focus:opacity-100"
+                                    title="Editar Vencimiento"
+                                  >
+                                    <Edit size={12} />
+                                  </button>
+                                </div>
+                              </td>
+                              <td className="py-4 px-4 text-center">
+                                <span className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border ${
+                                  bill.estado_pago === 'pagado'
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                                    : isOverdue
+                                    ? 'bg-rose-50 text-rose-700 border-rose-100 animate-pulse'
+                                    : 'bg-slate-100 text-slate-600 border-slate-200'
+                                }`}>
+                                  {bill.estado_pago}
+                                </span>
+                              </td>
+                              <td className="py-4 px-4 text-center font-bold text-slate-500">
+                                {bill.fecha_pago ? new Date(bill.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR') : '--'}
+                              </td>
+                              <td className="py-4 px-6">
+                                <div className="flex justify-center gap-2">
+                                  {bill.estado_pago !== 'pagado' ? (
+                                    <>
+                                      <button 
+                                        onClick={() => handleOpenPayTax(bill)}
+                                        className="bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-[10px] px-3.5 py-2 rounded-xl transition"
+                                      >
+                                        Pagar
+                                      </button>
+                                      <button 
+                                        onClick={() => handleOpenReconcile('impuesto', bill.id, bill.monto, 'Impuestos')}
+                                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 font-black uppercase tracking-wider text-[10px] px-3 py-2 rounded-xl border border-slate-200 transition flex items-center gap-1.5"
+                                      >
+                                        <Link2 size={12} /> Vincular
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl border border-emerald-100 flex items-center gap-1">
+                                        <CheckCircle2 size={12} /> Pagado
+                                      </span>
+                                      <button 
+                                        onClick={() => handleOpenRevert('impuesto', bill.id, bill.cash_movement_id, bill.monto)}
+                                        className="text-rose-500 hover:text-rose-700 p-2 rounded-xl hover:bg-rose-50 border border-transparent hover:border-rose-100 transition"
+                                        title="Revertir pago"
+                                      >
+                                        <RotateCcw size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                        {taxBills.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-12 text-center text-slate-400 font-bold uppercase tracking-widest">No hay vencimientos de impuestos activos en este mes</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="space-y-6">
+                    <div className="flex justify-between items-center">
+                      <h4 className="text-xs font-black uppercase text-slate-400 tracking-wider">Listado de Plantillas de Impuestos</h4>
+                      <button 
+                        onClick={() => setCreateTaxModal(true)}
+                        className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5"
+                      >
+                        <Plus size={14} /> Nueva Plantilla
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {taxesTemplates.map((tax) => (
+                        <div key={tax.id} className="bg-white border border-slate-200 p-5 rounded-[2rem] hover:shadow-md transition flex justify-between items-center">
+                          <div>
+                            <h4 className="font-black text-sm text-slate-800 uppercase leading-snug">{tax.nombre}</h4>
+                            <p className="text-[10px] font-bold text-slate-400 mt-1">
+                              Ente: {tax.ente_recaudador || '--'} • Vence el día habitual: {tax.dia_vencimiento_habitual}
+                            </p>
+                            <p className="text-[10px] font-black text-indigo-600 uppercase mt-0.5">
+                              Monto Estimado: {formatCurrency(tax.monto_estimado)}
+                            </p>
+                          </div>
+                          
+                          <div className="flex items-center gap-3">
+                            <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full ${tax.activo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                              {tax.activo ? 'activo' : 'inactivo'}
                             </span>
-                          </td>
-                          <td className="py-4 px-6 text-center">
-                            {iva.pagado ? (
-                              <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-3 py-2 rounded-xl border border-emerald-100 inline-flex items-center gap-1">
-                                <CheckCircle2 size={12} /> Pagado el {iva.fecha_pago ? new Date(iva.fecha_pago + 'T12:00:00').toLocaleDateString('es-AR') : '--'}
-                              </span>
-                            ) : (
-                              <button 
-                                onClick={() => handleOpenPayIva(iva)}
-                                className="bg-indigo-650 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-[10px] px-3.5 py-2 rounded-xl transition"
-                              >
-                                Registrar Pago
-                              </button>
-                            )}
-                          </td>
-                        </tr>
+                            <button
+                              onClick={() => handleOpenEditTemplate('impuesto', tax)}
+                              className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 border border-slate-200 rounded-xl transition"
+                              title="Editar Plantilla"
+                            >
+                              <Edit size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleToggleTax(tax.id, !tax.activo)}
+                              className={`text-[9px] font-black uppercase tracking-wider px-3 py-1.5 rounded-xl border transition ${
+                                tax.activo 
+                                  ? 'bg-rose-50 text-rose-700 border-rose-200 hover:bg-rose-500 hover:text-white hover:border-rose-500' 
+                                  : 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-600 hover:text-white hover:border-indigo-600'
+                              }`}
+                            >
+                              {tax.activo ? 'Desactivar' : 'Activar'}
+                            </button>
+                          </div>
+                        </div>
                       ))}
-                      {ivas.filter(i => i.cerrado).length === 0 && (
-                        <tr>
-                          <td colSpan={6} className="py-12 text-center text-slate-400 font-bold uppercase tracking-widest">No hay liquidaciones cerradas en el sistema</td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Panel 7: Petty Cash (Caja Chica) */}
+            {activeTab === 'petty' && (
+              <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="text-xl font-black text-slate-800 italic uppercase">Caja Chica</h3>
+                    <p className="text-xs text-slate-500 font-medium">Gastos directos registrados que no pasan por orden de compra o facturas de servicios.</p>
+                  </div>
+                  <button 
+                    onClick={handleOpenPettyModal}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-5 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest transition flex items-center gap-1.5 shadow-md"
+                  >
+                    <Plus size={14} /> Registrar Gasto Caja Chica
+                  </button>
                 </div>
+
+                {loadingPetty ? (
+                  <div className="flex justify-center items-center py-20">
+                    <Loader2 className="animate-spin text-indigo-600" size={32} />
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto border border-slate-200 rounded-[2rem]">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider">Fecha</th>
+                          <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider">Detalle</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider">Subrubro</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-center">Cuenta</th>
+                          <th className="py-4 px-4 font-black uppercase text-slate-400 tracking-wider text-right">Importe</th>
+                          <th className="py-4 px-6 font-black uppercase text-slate-400 tracking-wider text-center">Acciones</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {filteredPettyMovements.map((mv) => {
+                          const isCancellation = mv.hash_id?.startsWith('cc_rev_')
+                          return (
+                            <tr key={mv.id} className="hover:bg-slate-50/50 transition">
+                              <td className="py-4 px-6 font-bold text-slate-600">
+                                {new Date(mv.fecha + 'T12:00:00').toLocaleDateString('es-AR')}
+                              </td>
+                              <td className="py-4 px-6">
+                                <p className={`font-black ${isCancellation ? 'text-emerald-600 italic' : 'text-slate-800'}`}>{mv.detalle}</p>
+                                <p className="text-[9px] font-medium text-slate-400">ID: {mv.id.split('-')[0]}...</p>
+                              </td>
+                              <td className="py-4 px-4 font-bold text-slate-500 uppercase">
+                                {mv.cash_subconcepts?.name || mv.conc_caja}
+                              </td>
+                              <td className="py-4 px-4 text-center">
+                                <select
+                                  value={mv.cuenta_bancaria || 'efectivo'}
+                                  onChange={(e) => handleUpdateCashMovementField(mv.id, 'cuenta_bancaria', e.target.value as any)}
+                                  className={`px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider border outline-none cursor-pointer ${
+                                    mv.cuenta_bancaria === 'mercado pago'
+                                      ? 'bg-blue-50 text-blue-700 border-blue-200'
+                                      : mv.cuenta_bancaria === 'banco galicia'
+                                      ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : mv.cuenta_bancaria === 'tarjeta de credito'
+                                      ? 'bg-purple-50 text-purple-700 border-purple-200'
+                                      : mv.cuenta_bancaria === 'pago fer'
+                                      ? 'bg-pink-50 text-pink-700 border-pink-200'
+                                      : mv.cuenta_bancaria === 'pago gaston'
+                                      ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                      : 'bg-slate-50 text-slate-650 border-slate-200'
+                                  }`}
+                                >
+                                  <option value="efectivo">Efectivo</option>
+                                  <option value="mercado pago">Mercado Pago</option>
+                                  <option value="banco galicia">Galicia</option>
+                                  <option value="tarjeta de credito">Tarjeta de Crédito</option>
+                                  <option value="pago fer">Pago Fer</option>
+                                  <option value="pago gaston">Pago Gaston</option>
+                                </select>
+                              </td>
+                              <td className={`py-4 px-4 text-right font-black ${mv.importe < 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                {formatCurrency(mv.importe)}
+                              </td>
+                              <td className="py-4 px-6 text-center">
+                                {mv.importe < 0 ? (
+                                  <button
+                                    onClick={() => handleOpenAnularPetty(mv)}
+                                    className="bg-rose-50 hover:bg-rose-100 border border-rose-200 text-rose-700 font-black uppercase tracking-wider text-[9px] px-3.5 py-1.5 rounded-xl transition"
+                                    title="Anular gasto generando contrasiento"
+                                  >
+                                    Anular
+                                  </button>
+                                ) : (
+                                  <span className="text-[9px] font-black uppercase tracking-widest text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+                                    Compensatorio
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                        {filteredPettyMovements.length === 0 && (
+                          <tr>
+                            <td colSpan={6} className="py-12 text-center text-slate-400 font-bold uppercase tracking-widest">No hay egresos directos de caja chica en este período</td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
           </>
@@ -1335,6 +2191,9 @@ export default function TreasuryPage() {
                   <option value="efectivo">Efectivo</option>
                   <option value="mercado pago">Mercado Pago</option>
                   <option value="banco galicia">Banco Galicia</option>
+                  <option value="tarjeta de credito">Tarjeta de Crédito</option>
+                  <option value="pago fer">Pago Fer</option>
+                  <option value="pago gaston">Pago Gaston</option>
                 </select>
               </div>
 
@@ -1371,23 +2230,82 @@ export default function TreasuryPage() {
         </div>
       )}
 
-      {/* Modal 2: Register Collection (Ventas) */}
+      {/* Modal 2: Register Collection (Ventas) with Split Payments */}
       {collectSaleModal.open && collectSaleModal.sale && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
             <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">Registrar Cobro de Venta</h3>
-            <p className="text-xs text-slate-400 font-medium mb-6">Completa los datos para asentar el cobro del Show.</p>
+            <p className="text-xs text-slate-400 font-medium mb-4">Completa los datos para asentar el cobro dividido del Show.</p>
             
+            <div className="bg-slate-50 border border-slate-200/60 rounded-2xl p-4 mb-4 text-xs font-bold text-slate-600 flex flex-col gap-1.5">
+              <div className="flex justify-between">
+                <span>Total Show:</span>
+                <span>{formatCurrency(collectSaleModal.sale.total_amount)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Cobrado Histórico:</span>
+                <span className="text-emerald-600">{formatCurrency(collectSaleModal.sale.monto_cobrado || 0)}</span>
+              </div>
+              <div className="flex justify-between border-t border-slate-200 pt-1.5 font-black text-slate-800">
+                <span>Saldo Pendiente:</span>
+                <span className="text-rose-600">
+                  {formatCurrency(Number(collectSaleModal.sale.total_amount) - Number(collectSaleModal.sale.monto_cobrado || 0))}
+                </span>
+              </div>
+            </div>
+
             <form onSubmit={(e) => { e.preventDefault(); handleExecuteCollectSale(); }} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Monto Cobrado</label>
-                <input 
-                  type="number"
-                  value={formMonto}
-                  onChange={(e) => setFormMonto(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  required
-                />
+              <div className="space-y-2.5">
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider">Montos por Cuenta</label>
+                
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="Monto Efectivo"
+                      value={splitAmounts.efectivo || ''}
+                      onChange={(e) => setSplitAmounts(prev => ({ ...prev, efectivo: Number(e.target.value) }))}
+                      className="w-full pl-7 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black uppercase tracking-wider text-slate-400">Efectivo</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="Monto Mercado Pago"
+                      value={splitAmounts["mercado pago"] || ''}
+                      onChange={(e) => setSplitAmounts(prev => ({ ...prev, "mercado pago": Number(e.target.value) }))}
+                      className="w-full pl-7 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black uppercase tracking-wider text-indigo-500">Mercado Pago</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-bold">$</span>
+                    <input 
+                      type="number"
+                      placeholder="Monto Banco Galicia"
+                      value={splitAmounts["banco galicia"] || ''}
+                      onChange={(e) => setSplitAmounts(prev => ({ ...prev, "banco galicia": Number(e.target.value) }))}
+                      className="w-full pl-7 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-black uppercase tracking-wider text-indigo-700">Banco Galicia</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-indigo-50/70 border border-indigo-100 rounded-2xl p-3 flex justify-between items-center text-xs font-bold text-indigo-950">
+                <span>Total a Cobrar en Split:</span>
+                <span className="font-black text-sm">
+                  {formatCurrency(Number(splitAmounts.efectivo) + Number(splitAmounts["mercado pago"]) + Number(splitAmounts["banco galicia"]))}
+                </span>
               </div>
 
               <div>
@@ -1411,21 +2329,7 @@ export default function TreasuryPage() {
                 />
               </div>
 
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Cuenta Bancaria / Caja</label>
-                <select
-                  value={formCuentaBancaria}
-                  onChange={(e) => setFormCuentaBancaria(e.target.value as any)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  required
-                >
-                  <option value="efectivo">Efectivo</option>
-                  <option value="mercado pago">Mercado Pago</option>
-                  <option value="banco galicia">Banco Galicia</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-3 py-2 select-none">
+              <div className="flex items-center gap-3 py-1 select-none">
                 <input 
                   type="checkbox"
                   id="generarCajaSale"
@@ -1434,21 +2338,21 @@ export default function TreasuryPage() {
                   className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
                 />
                 <label htmlFor="generarCajaSale" className="text-xs font-bold text-slate-600 cursor-pointer">
-                  Generar movimiento de ingreso en Flujo de Caja
+                  Generar movimientos en Flujo de Caja
                 </label>
               </div>
 
-              <div className="flex gap-2 pt-4">
+              <div className="flex gap-2 pt-2">
                 <button 
                   type="submit"
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-2xl transition"
+                  className="flex-1 bg-emerald-650 hover:bg-emerald-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-2xl transition shadow-md active:scale-98"
                 >
                   Confirmar Cobro
                 </button>
                 <button 
                   type="button"
                   onClick={() => setCollectSaleModal({ open: false, sale: null })}
-                  className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl transition"
+                  className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-650 font-bold text-xs rounded-2xl transition"
                 >
                   Cancelar
                 </button>
@@ -1509,6 +2413,9 @@ export default function TreasuryPage() {
                   <option value="efectivo">Efectivo</option>
                   <option value="mercado pago">Mercado Pago</option>
                   <option value="banco galicia">Banco Galicia</option>
+                  <option value="tarjeta de credito">Tarjeta de Crédito</option>
+                  <option value="pago fer">Pago Fer</option>
+                  <option value="pago gaston">Pago Gaston</option>
                 </select>
               </div>
 
@@ -1545,92 +2452,6 @@ export default function TreasuryPage() {
         </div>
       )}
 
-      {/* Modal 4: Register Payment (IVA) */}
-      {payIvaModal.open && payIvaModal.iva && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
-            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">Pagar Saldo IVA</h3>
-            <p className="text-xs text-slate-400 font-medium mb-6">Asienta el pago de la liquidación de IVA de AFIP.</p>
-            
-            <form onSubmit={(e) => { e.preventDefault(); handleExecutePayIva(); }} className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Monto Pagado</label>
-                <input 
-                  type="number"
-                  value={formMonto}
-                  onChange={(e) => setFormMonto(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Fecha de Pago</label>
-                <input 
-                  type="date"
-                  value={formFecha}
-                  onChange={(e) => setFormFecha(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Nota / Detalle</label>
-                <input 
-                  type="text"
-                  value={formDetalle}
-                  onChange={(e) => setFormDetalle(e.target.value)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Cuenta Bancaria / Caja</label>
-                <select
-                  value={formCuentaBancaria}
-                  onChange={(e) => setFormCuentaBancaria(e.target.value as any)}
-                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
-                  required
-                >
-                  <option value="efectivo">Efectivo</option>
-                  <option value="mercado pago">Mercado Pago</option>
-                  <option value="banco galicia">Banco Galicia</option>
-                </select>
-              </div>
-
-              <div className="flex items-center gap-3 py-2 select-none">
-                <input 
-                  type="checkbox"
-                  id="generarCajaIva"
-                  checked={formGenerarCaja}
-                  onChange={(e) => setFormGenerarCaja(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                />
-                <label htmlFor="generarCajaIva" className="text-xs font-bold text-slate-600 cursor-pointer">
-                  Generar movimiento de egreso en Flujo de Caja
-                </label>
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <button 
-                  type="submit"
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-2xl transition"
-                >
-                  Confirmar Pago
-                </button>
-                <button 
-                  type="button"
-                  onClick={() => setPayIvaModal({ open: false, iva: null })}
-                  className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl transition"
-                >
-                  Cancelar
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Modal 5: Maxirest Reconciliation (Vincular) */}
       {reconcileModal.open && (
@@ -1747,7 +2568,7 @@ export default function TreasuryPage() {
               </div>
 
               <div>
-                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Imputación Subrubro de Servicios</label>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Imputación Concepto/Subrubro</label>
                 <select
                   value={newServiceSubconcept}
                   onChange={(e) => setNewServiceSubconcept(e.target.value)}
@@ -1755,8 +2576,8 @@ export default function TreasuryPage() {
                   required
                 >
                   <option value="">-- Seleccionar Subrubro --</option>
-                  {servSubconcepts.map((s: any) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
+                  {allServiceSubconcepts.map((s: any) => (
+                    <option key={s.id} value={s.id}>{s.conceptName} &gt; {s.name}</option>
                   ))}
                 </select>
               </div>
@@ -1805,6 +2626,513 @@ export default function TreasuryPage() {
                 Cancelar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 8: Petty Cash Expense Registration */}
+      {pettyModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">Registrar Gasto de Caja Chica</h3>
+            <p className="text-xs text-slate-400 font-medium mb-6">Completa los datos para asentar un gasto directo sin orden de compra.</p>
+            
+            <form onSubmit={handleExecuteCreatePetty} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Monto ($)</label>
+                <input 
+                  type="number"
+                  value={pettyMonto}
+                  onChange={(e) => setPettyMonto(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Fecha</label>
+                <input 
+                  type="date"
+                  value={pettyFecha}
+                  onChange={(e) => setPettyFecha(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Concepto Principal (Egreso)</label>
+                <select
+                  value={pettyConcept}
+                  onChange={(e) => {
+                    setPettyConcept(e.target.value)
+                    setPettySubconcept("")
+                  }}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                >
+                  <option value="">-- Seleccionar Rubro --</option>
+                  {concepts.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              {pettyConcept && (
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Subconcepto Imputación</label>
+                  <select
+                    value={pettySubconcept}
+                    onChange={(e) => setPettySubconcept(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    required
+                  >
+                    <option value="">-- Seleccionar Subrubro --</option>
+                    {(concepts.find(c => c.id === pettyConcept)?.cash_subconcepts || []).map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Cuenta Bancaria / Caja</label>
+                <select
+                  value={pettyCuenta}
+                  onChange={(e) => setPettyCuenta(e.target.value as any)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                >
+                  <option value="efectivo">Efectivo</option>
+                  <option value="mercado pago">Mercado Pago</option>
+                  <option value="banco galicia">Banco Galicia</option>
+                  <option value="tarjeta de credito">Tarjeta de Crédito</option>
+                  <option value="pago fer">Pago Fer</option>
+                  <option value="pago gaston">Pago Gaston</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Nota / Detalle</label>
+                <input 
+                  type="text"
+                  placeholder="Ej: Articulos de limpieza"
+                  value={pettyDetalle}
+                  onChange={(e) => setPettyDetalle(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <button 
+                  type="submit"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-2xl transition shadow-md"
+                >
+                  Registrar Gasto
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPettyModal(false)}
+                  className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl transition"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 9: Confirm Petty Cash Annulation */}
+      {anularPettyModal.open && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-sm p-8 shadow-2xl relative animate-in zoom-in-95 duration-200 text-center">
+            <RotateCcw className="mx-auto text-rose-500 mb-4" size={40} />
+            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">¿Confirmar Anulación de Gasto?</h3>
+            <p className="text-xs text-slate-400 font-medium mb-6">
+              Esta acción registrará un contrasiento de signo positivo por valor de <strong>{formatCurrency(anularPettyModal.amount)}</strong> para anular contablemente el gasto: <em>"{anularPettyModal.detail}"</em>. Esto mantiene la inmutabilidad de la caja.
+            </p>
+            
+            <div className="flex gap-2 justify-center">
+              <button 
+                onClick={handleExecuteAnularPetty}
+                className="bg-rose-600 hover:bg-rose-700 text-white font-black uppercase tracking-wider text-xs px-6 py-3 rounded-2xl transition flex-1"
+              >
+                Anular Gasto
+              </button>
+              <button 
+                onClick={() => setAnularPettyModal({ open: false, movementId: "", amount: 0, detail: "" })}
+                className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl transition"
+              >
+                Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 10: Create Tax Template */}
+      {createTaxModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">Crear Plantilla de Impuesto</h3>
+            <p className="text-xs text-slate-400 font-medium mb-6">Registra un impuesto o tasa recurrente en la agenda fiscal.</p>
+            
+            <form onSubmit={handleCreateTax} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Nombre del Impuesto / Obligación</label>
+                <input 
+                  type="text"
+                  placeholder="Ej: Cargas Sociales Formulario 931"
+                  value={newTaxName}
+                  onChange={(e) => setNewTaxName(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Ente Recaudador</label>
+                <input 
+                  type="text"
+                  placeholder="Ej: AFIP o Municipalidad"
+                  value={newTaxEnte}
+                  onChange={(e) => setNewTaxEnte(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Costo Estimado ($)</label>
+                  <input 
+                    type="number"
+                    value={newTaxMonto}
+                    onChange={(e) => setNewTaxMonto(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Día Vence (1 al 31)</label>
+                  <input 
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={newTaxDay}
+                    onChange={(e) => setNewTaxDay(Number(e.target.value))}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Imputación Subrubro de Impuestos</label>
+                <select
+                  value={newTaxSubconcept}
+                  onChange={(e) => setNewTaxSubconcept(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                >
+                  <option value="">-- Seleccionar Subrubro --</option>
+                  {taxSubconcepts.map((s: any) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <button 
+                  type="submit"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-2xl transition"
+                >
+                  Crear Plantilla
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setCreateTaxModal(false)}
+                  className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl transition"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 11: Register Payment (Impuestos) */}
+      {payTaxModal.open && payTaxModal.bill && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">Pagar Obligación Fiscal</h3>
+            <p className="text-xs text-slate-400 font-medium mb-6">Registra el pago de la factura impositiva.</p>
+            
+            <form onSubmit={(e) => { e.preventDefault(); handleExecutePayTax(); }} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Monto Pagado</label>
+                <input 
+                  type="number"
+                  value={formMonto}
+                  onChange={(e) => setFormMonto(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Fecha de Pago</label>
+                <input 
+                  type="date"
+                  value={formFecha}
+                  onChange={(e) => setFormFecha(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Nota / Detalle</label>
+                <input 
+                  type="text"
+                  value={formDetalle}
+                  onChange={(e) => setFormDetalle(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Cuenta Bancaria / Caja</label>
+                <select
+                  value={formCuentaBancaria}
+                  onChange={(e) => setFormCuentaBancaria(e.target.value as any)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                  required
+                >
+                  <option value="efectivo">Efectivo</option>
+                  <option value="mercado pago">Mercado Pago</option>
+                  <option value="banco galicia">Banco Galicia</option>
+                  <option value="tarjeta de credito">Tarjeta de Crédito</option>
+                  <option value="pago fer">Pago Fer</option>
+                  <option value="pago gaston">Pago Gaston</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3 py-2 select-none">
+                <input 
+                  type="checkbox"
+                  id="generarCajaTax"
+                  checked={formGenerarCaja}
+                  onChange={(e) => setFormGenerarCaja(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <label htmlFor="generarCajaTax" className="text-xs font-bold text-slate-600 cursor-pointer">
+                  Generar movimiento de egreso en Flujo de Caja
+                </label>
+              </div>
+
+              <div className="flex gap-2 pt-4">
+                <button 
+                  type="submit"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black uppercase tracking-wider text-xs py-3 rounded-2xl transition"
+                >
+                  Confirmar Pago
+                </button>
+                <button 
+                  type="button"
+                  onClick={() => setPayTaxModal({ open: false, bill: null })}
+                  className="px-5 bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold text-xs rounded-2xl transition"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 12: Edit Template Modal */}
+      {editTemplateModal.open && editTemplateModal.template && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">
+              Editar Plantilla de {editTemplateModal.type === 'servicio' ? 'Servicio' : 'Impuesto'}
+            </h3>
+            <p className="text-xs text-slate-400 font-medium mb-6">
+              Modifica los detalles de la plantilla de liquidación.
+            </p>
+            
+            <form onSubmit={handleEditTemplateSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Nombre</label>
+                <input 
+                  type="text"
+                  value={editTemplateName}
+                  onChange={(e) => setEditTemplateName(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-black text-slate-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">
+                  {editTemplateModal.type === 'servicio' ? 'Proveedor' : 'Ente Recaudador'}
+                </label>
+                <input 
+                  type="text"
+                  value={editTemplateEnteOrProveedor}
+                  onChange={(e) => setEditTemplateEnteOrProveedor(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-600"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Costo Estimado ($)</label>
+                  <input 
+                    type="number"
+                    value={editTemplateMonto}
+                    onChange={(e) => setEditTemplateMonto(e.target.value)}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-black text-slate-700"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Día Vence (1 al 31)</label>
+                  <input 
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={editTemplateDay}
+                    onChange={(e) => setEditTemplateDay(Number(e.target.value))}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-black text-slate-700"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">
+                  {editTemplateModal.type === 'servicio' ? 'Imputación Concepto/Subrubro' : 'Imputación Subrubro de Impuestos'}
+                </label>
+                <select
+                  value={editTemplateSubconcept}
+                  onChange={(e) => setEditTemplateSubconcept(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-600"
+                  required
+                >
+                  <option value="">-- Seleccionar Subrubro --</option>
+                  {editTemplateModal.type === 'servicio' ? (
+                    allServiceSubconcepts.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.conceptName} &gt; {s.name}</option>
+                    ))
+                  ) : (
+                    taxSubconcepts.map((s: any) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))
+                  )}
+                </select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditTemplateModal({ open: false, type: 'servicio', template: null })}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-xs font-black uppercase tracking-wider transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEditTemplate}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition flex items-center justify-center gap-1.5 disabled:opacity-50 font-black"
+                >
+                  {isSavingEditTemplate ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin" /> Guardando...
+                    </>
+                  ) : (
+                    "Guardar"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Bill Modal */}
+      {editBillModal.open && editBillModal.bill && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] border border-slate-200 w-full max-w-md p-8 shadow-2xl relative animate-in zoom-in-95 duration-200">
+            <h3 className="text-xl font-black text-slate-800 uppercase italic mb-2">Editar Vencimiento</h3>
+            <p className="text-xs text-slate-400 font-medium mb-6">
+              Modifica los detalles del vencimiento de {editBillModal.type === 'servicio' ? 'servicio' : 'impuesto'}.
+            </p>
+            
+            <form onSubmit={handleEditBillSubmit} className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Monto ($)</label>
+                <input 
+                  type="number"
+                  step="any"
+                  value={editBillForm.monto}
+                  onChange={(e) => setEditBillForm(prev => ({ ...prev, monto: e.target.value }))}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-black text-slate-700"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase text-slate-400 tracking-wider mb-1">Fecha de Vencimiento</label>
+                <input 
+                  type="date"
+                  value={editBillForm.fecha_vencimiento}
+                  onChange={(e) => setEditBillForm(prev => ({ ...prev, fecha_vencimiento: e.target.value }))}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-600"
+                  required
+                />
+              </div>
+
+              {editBillModal.bill.cash_movement_id && (
+                <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl flex items-start gap-2.5">
+                  <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <h5 className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Atención: Vencimiento Pagado</h5>
+                    <p className="text-[10px] font-semibold text-amber-700 mt-0.5">
+                      Este vencimiento ya fue marcado como pagado. Al guardar el cambio, se actualizará automáticamente el importe del movimiento en el libro diario para mantener la consistencia.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex gap-3 pt-4">
+                <button
+                  type="button"
+                  onClick={() => setEditBillModal({ open: false, type: 'servicio', bill: null })}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-xs font-black uppercase tracking-wider transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEditBill}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition flex items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  {isSavingEditBill ? (
+                    <>
+                      <Loader2 size={12} className="animate-spin" /> Guardando...
+                    </>
+                  ) : (
+                    "Guardar"
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

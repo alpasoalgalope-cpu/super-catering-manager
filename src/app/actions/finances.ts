@@ -434,16 +434,17 @@ export async function createCashMovement(payload: {
   detalle: string;
   importe: number;
   turno?: string;
+  cuenta_bancaria?: string;
 }) {
   try {
-    const { fecha, tipo, concept_id, concepto, subconcept_id, conc_caja, detalle, importe, turno } = payload;
+    const { fecha, tipo, concept_id, concepto, subconcept_id, conc_caja, detalle, importe, turno, cuenta_bancaria } = payload;
     
     if (!fecha || !tipo || !concept_id || !concepto || !subconcept_id || !conc_caja || !importe) {
       return { success: false, error: "Todos los campos obligatorios deben estar completos." };
     }
 
     const mes = getMonthNameFormatted(fecha);
-    const semana = getWeekNumber(fecha);
+    const weekNum = getWeekNumber(fecha);
     
     // Si es un egreso, el importe debe ser negativo
     const finalImporte = tipo === "Egreso" ? -Math.abs(importe) : Math.abs(importe);
@@ -457,7 +458,7 @@ export async function createCashMovement(payload: {
         sucursal: "Galope Bustamante",
         mes,
         fecha,
-        semana,
+        semana: weekNum,
         turno: turno || "Sin Turno",
         tipo,
         concepto,
@@ -469,6 +470,7 @@ export async function createCashMovement(payload: {
         esrecu: "manual",
         oculta: "no",
         rubro: concepto,
+        cuenta_bancaria: cuenta_bancaria || "efectivo",
         hash_id
       })
       .select()
@@ -496,6 +498,7 @@ export async function createBulkCashMovements(payloads: {
   detalle: string;
   importe: number;
   turno?: string;
+  cuenta_bancaria?: string;
 }[]) {
   try {
     if (!payloads || payloads.length === 0) {
@@ -505,14 +508,14 @@ export async function createBulkCashMovements(payloads: {
     const movementsToInsert = []
     
     for (const p of payloads) {
-      const { fecha, tipo, concept_id, concepto, subconcept_id, conc_caja, detalle, importe, turno } = p;
+      const { fecha, tipo, concept_id, concepto, subconcept_id, conc_caja, detalle, importe, turno, cuenta_bancaria } = p;
       
       if (!fecha || !tipo || !concept_id || !concepto || !subconcept_id || !conc_caja || !importe) {
         return { success: false, error: "Faltan campos obligatorios en uno o más movimientos." };
       }
 
       const mes = getMonthNameFormatted(fecha);
-      const semana = getWeekNumber(fecha);
+      const weekNum = getWeekNumber(fecha);
       
       const finalImporte = tipo === "Egreso" ? -Math.abs(importe) : Math.abs(importe);
       
@@ -523,7 +526,7 @@ export async function createBulkCashMovements(payloads: {
         sucursal: "Galope Bustamante",
         mes,
         fecha,
-        semana,
+        semana: weekNum,
         turno: turno || "Sin Turno",
         tipo,
         concepto,
@@ -535,6 +538,7 @@ export async function createBulkCashMovements(payloads: {
         esrecu: "manual",
         oculta: "no",
         rubro: concepto,
+        cuenta_bancaria: cuenta_bancaria || "efectivo",
         hash_id
       });
     }
@@ -551,6 +555,307 @@ export async function createBulkCashMovements(payloads: {
 
     revalidatePath('/finanzas');
     return { success: true, message: `${movementsToInsert.length} movimientos registrados correctamente.` };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function updateCashMovementAction(
+  id: string,
+  payload: {
+    fecha: string;
+    tipo: string;
+    concept_id: string;
+    concepto: string;
+    subconcept_id: string;
+    conc_caja: string;
+    detalle: string;
+    importe: number;
+    turno?: string;
+    cuenta_bancaria?: string;
+  }
+) {
+  try {
+    const { fecha, tipo, concept_id, concepto, subconcept_id, conc_caja, detalle, importe, turno, cuenta_bancaria } = payload;
+    
+    if (!id || !fecha || !tipo || !concept_id || !concepto || !subconcept_id || !conc_caja || !importe) {
+      return { success: false, error: "Todos los campos obligatorios deben estar completos." };
+    }
+
+    const mes = getMonthNameFormatted(fecha);
+    const weekNum = getWeekNumber(fecha);
+    
+    const finalImporte = tipo === "Egreso" ? -Math.abs(importe) : Math.abs(importe);
+
+    const { data: existingMov, error: fetchError } = await supabase
+      .from('cash_movements')
+      .select('purchase_order_id, event_sales_header_id, vencimiento_servicio_id, vencimiento_impuesto_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingMov) {
+      return { success: false, error: "No se encontró el movimiento a editar." };
+    }
+
+    const { error: updateError } = await supabase
+      .from('cash_movements')
+      .update({
+        mes,
+        fecha,
+        semana: weekNum,
+        turno: turno || "Sin Turno",
+        tipo,
+        concepto,
+        concept_id,
+        subconcept_id,
+        conc_caja,
+        detalle,
+        importe: finalImporte,
+        rubro: concepto,
+        cuenta_bancaria: cuenta_bancaria || "efectivo"
+      })
+      .eq('id', id);
+
+    if (updateError) {
+      console.error("Error updating cash movement:", updateError);
+      return { success: false, error: updateError.message };
+    }
+
+    if (existingMov.purchase_order_id) {
+      const { data: allMovs } = await supabase
+        .from('cash_movements')
+        .select('importe')
+        .eq('purchase_order_id', existingMov.purchase_order_id);
+
+      const totalPagado = (allMovs || []).reduce((sum, m) => sum + Math.abs(m.importe), 0);
+
+      const { data: po } = await supabase
+        .from('purchase_orders')
+        .select('costo_total')
+        .eq('id', existingMov.purchase_order_id)
+        .single();
+
+      if (po) {
+        const estadoPago = totalPagado >= po.costo_total
+          ? 'pagado'
+          : totalPagado > 0
+            ? 'parcial'
+            : 'pendiente';
+
+        await supabase
+          .from('purchase_orders')
+          .update({
+            monto_pagado: totalPagado,
+            estado_pago: estadoPago
+          })
+          .eq('id', existingMov.purchase_order_id);
+      }
+    }
+
+    if (existingMov.event_sales_header_id) {
+      const { data: allMovs } = await supabase
+        .from('cash_movements')
+        .select('importe')
+        .eq('event_sales_header_id', existingMov.event_sales_header_id);
+
+      const totalCobrado = (allMovs || []).reduce((sum, m) => sum + Math.abs(m.importe), 0);
+
+      const { data: sale } = await supabase
+        .from('event_sales_headers')
+        .select('total_amount')
+        .eq('id', existingMov.event_sales_header_id)
+        .single();
+
+      if (sale) {
+        const estadoCobro = totalCobrado >= sale.total_amount
+          ? 'cobrado'
+          : totalCobrado > 0
+            ? 'parcial'
+            : 'pendiente';
+
+        await supabase
+          .from('event_sales_headers')
+          .update({
+            monto_cobrado: totalCobrado,
+            estado_cobro: estadoCobro
+          })
+          .eq('id', existingMov.event_sales_header_id);
+      }
+    }
+
+    if (existingMov.vencimiento_servicio_id) {
+      await supabase
+        .from('vencimientos_servicios')
+        .update({
+          monto: Math.abs(finalImporte),
+          fecha_pago: fecha
+        })
+        .eq('id', existingMov.vencimiento_servicio_id);
+    }
+
+    if (existingMov.vencimiento_impuesto_id) {
+      await supabase
+        .from('vencimientos_impuestos')
+        .update({
+          monto: Math.abs(finalImporte),
+          fecha_pago: fecha
+        })
+        .eq('id', existingMov.vencimiento_impuesto_id);
+
+      const { data: vImp } = await supabase
+        .from('vencimientos_impuestos')
+        .select('*, impuestos(nombre)')
+        .eq('id', existingMov.vencimiento_impuesto_id)
+        .single();
+
+      if (vImp && (vImp.impuestos?.nombre === 'IVA' || vImp.impuestos?.nombre?.toLowerCase() === 'iva')) {
+        await supabase
+          .from('iva_liquidaciones')
+          .update({ fecha_pago: fecha })
+          .eq('periodo', vImp.mes_periodo);
+      }
+    }
+
+    revalidatePath('/finanzas');
+    revalidatePath('/finanzas/tesoreria');
+    revalidatePath('/inventario/ordenes-compra');
+    revalidatePath('/ventas-evento');
+    return { success: true, message: "Movimiento actualizado correctamente." };
+  } catch (e: any) {
+    console.error(e);
+    return { success: false, error: e.message };
+  }
+}
+
+export async function deleteCashMovementAction(id: string) {
+  try {
+    if (!id) {
+      return { success: false, error: "ID del movimiento no especificado." };
+    }
+
+    const { data: existingMov, error: fetchError } = await supabase
+      .from('cash_movements')
+      .select('purchase_order_id, event_sales_header_id, vencimiento_servicio_id, vencimiento_impuesto_id')
+      .eq('id', id)
+      .single();
+
+    if (fetchError || !existingMov) {
+      return { success: false, error: "No se encontró el movimiento a eliminar." };
+    }
+
+    const { error: deleteError } = await supabase
+      .from('cash_movements')
+      .delete()
+      .eq('id', id);
+
+    if (deleteError) {
+      console.error("Error deleting cash movement:", deleteError);
+      return { success: false, error: deleteError.message };
+    }
+
+    if (existingMov.purchase_order_id) {
+      const { data: allMovs } = await supabase
+        .from('cash_movements')
+        .select('importe')
+        .eq('purchase_order_id', existingMov.purchase_order_id);
+
+      const totalPagado = (allMovs || []).reduce((sum, m) => sum + Math.abs(m.importe), 0);
+
+      const { data: po } = await supabase
+        .from('purchase_orders')
+        .select('costo_total')
+        .eq('id', existingMov.purchase_order_id)
+        .single();
+
+      if (po) {
+        const estadoPago = totalPagado >= po.costo_total
+          ? 'pagado'
+          : totalPagado > 0
+            ? 'parcial'
+            : 'pendiente';
+
+        await supabase
+          .from('purchase_orders')
+          .update({
+            monto_pagado: totalPagado,
+            estado_pago: estadoPago
+          })
+          .eq('id', existingMov.purchase_order_id);
+      }
+    }
+
+    if (existingMov.event_sales_header_id) {
+      const { data: allMovs } = await supabase
+        .from('cash_movements')
+        .select('importe')
+        .eq('event_sales_header_id', existingMov.event_sales_header_id);
+
+      const totalCobrado = (allMovs || []).reduce((sum, m) => sum + Math.abs(m.importe), 0);
+
+      const { data: sale } = await supabase
+        .from('event_sales_headers')
+        .select('total_amount')
+        .eq('id', existingMov.event_sales_header_id)
+        .single();
+
+      if (sale) {
+        const estadoCobro = totalCobrado >= sale.total_amount
+          ? 'cobrado'
+          : totalCobrado > 0
+            ? 'parcial'
+            : 'pendiente';
+
+        await supabase
+          .from('event_sales_headers')
+          .update({
+            monto_cobrado: totalCobrado,
+            estado_cobro: estadoCobro
+          })
+          .eq('id', existingMov.event_sales_header_id);
+      }
+    }
+
+    if (existingMov.vencimiento_servicio_id) {
+      await supabase
+        .from('vencimientos_servicios')
+        .update({
+          estado_pago: 'pendiente',
+          fecha_pago: null,
+          cash_movement_id: null
+        })
+        .eq('id', existingMov.vencimiento_servicio_id);
+    }
+
+    if (existingMov.vencimiento_impuesto_id) {
+      const { data: vImp } = await supabase
+        .from('vencimientos_impuestos')
+        .select('*, impuestos(nombre)')
+        .eq('id', existingMov.vencimiento_impuesto_id)
+        .single();
+
+      await supabase
+        .from('vencimientos_impuestos')
+        .update({
+          estado_pago: 'pendiente',
+          fecha_pago: null,
+          cash_movement_id: null
+        })
+        .eq('id', existingMov.vencimiento_impuesto_id);
+
+      if (vImp && (vImp.impuestos?.nombre === 'IVA' || vImp.impuestos?.nombre?.toLowerCase() === 'iva')) {
+        await supabase
+          .from('iva_liquidaciones')
+          .update({ pagado: false, fecha_pago: null })
+          .eq('periodo', vImp.mes_periodo);
+      }
+    }
+
+    revalidatePath('/finanzas');
+    revalidatePath('/finanzas/tesoreria');
+    revalidatePath('/inventario/ordenes-compra');
+    revalidatePath('/ventas-evento');
+    return { success: true, message: "Movimiento eliminado correctamente." };
   } catch (e: any) {
     console.error(e);
     return { success: false, error: e.message };

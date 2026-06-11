@@ -1,9 +1,9 @@
 "use client"
 
 import React, { useState, useRef, useEffect } from "react"
-import { UploadCloud, CheckCircle2, AlertCircle, Loader2, DollarSign, RefreshCw, FileSpreadsheet, Plus, X, Trash2 } from "lucide-react"
+import { UploadCloud, CheckCircle2, AlertCircle, Loader2, DollarSign, RefreshCw, FileSpreadsheet, Plus, X, Trash2, Edit } from "lucide-react"
 import * as XLSX from "xlsx"
-import { importCashMovements, createCashMovement, createBulkCashMovements } from "@/app/actions/finances"
+import { importCashMovements, createCashMovement, createBulkCashMovements, updateCashMovementAction, deleteCashMovementAction } from "@/app/actions/finances"
 import { useRouter } from "next/navigation"
 
 export default function CashFlowLedger({ 
@@ -20,6 +20,117 @@ export default function CashFlowLedger({
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editingMovement, setEditingMovement] = useState<any>(null)
+  const [isSavingEdit, setIsSavingEdit] = useState(false)
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
+  const [deletingMovement, setDeletingMovement] = useState<any>(null)
+  const [isSavingDelete, setIsSavingDelete] = useState(false)
+
+  const [editForm, setEditForm] = useState({
+    fecha: "",
+    tipo: "Egreso",
+    concept_id: "",
+    subconcept_id: "",
+    detalle: "",
+    importe: "",
+    turno: "Sin Turno",
+    cuenta_bancaria: "efectivo"
+  })
+
+  const openEditModal = (mov: any) => {
+    setEditingMovement(mov)
+    setEditForm({
+      fecha: mov.fecha || "",
+      tipo: mov.tipo || "Egreso",
+      concept_id: mov.concept_id || "",
+      subconcept_id: mov.subconcept_id || "",
+      detalle: mov.detalle || "",
+      importe: Math.abs(Number(mov.importe)).toString(),
+      turno: mov.turno || "Sin Turno",
+      cuenta_bancaria: mov.cuenta_bancaria || "efectivo"
+    })
+    setIsEditModalOpen(true)
+  }
+
+  const handleEditConceptChange = (value: string) => {
+    const selectedConcept = concepts.find(c => c.id === value);
+    setEditForm(prev => ({
+      ...prev,
+      concept_id: value,
+      subconcept_id: "",
+      tipo: selectedConcept ? selectedConcept.tipo : prev.tipo
+    }));
+  }
+
+  const handleEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editingMovement) return
+
+    if (!editForm.fecha || !editForm.concept_id || !editForm.subconcept_id || !editForm.importe || Number(editForm.importe) <= 0) {
+      alert("Por favor, completá todos los campos obligatorios (*) con valores válidos.")
+      return
+    }
+
+    setIsSavingEdit(true)
+    try {
+      const selectedConcept = concepts.find(c => c.id === editForm.concept_id)
+      const selectedSubconcept = subconcepts.find(s => s.id === editForm.subconcept_id)
+
+      const payload = {
+        fecha: editForm.fecha,
+        tipo: editForm.tipo,
+        concept_id: editForm.concept_id,
+        concepto: selectedConcept?.name || "",
+        subconcept_id: editForm.subconcept_id,
+        conc_caja: selectedSubconcept?.name || "",
+        detalle: editForm.detalle,
+        importe: Number(editForm.importe),
+        turno: editForm.turno,
+        cuenta_bancaria: editForm.cuenta_bancaria
+      }
+
+      const res = await updateCashMovementAction(editingMovement.id, payload)
+      if (res.success) {
+        setIsEditModalOpen(false)
+        setEditingMovement(null)
+        router.refresh()
+      } else {
+        alert(res.error || "Error al actualizar el movimiento")
+      }
+    } catch (err: any) {
+      console.error(err)
+      alert(err.message || "Error inesperado")
+    } finally {
+      setIsSavingEdit(false)
+    }
+  }
+
+  const openDeleteModal = (mov: any) => {
+    setDeletingMovement(mov)
+    setIsDeleteModalOpen(true)
+  }
+
+  const handleDeleteConfirm = async () => {
+    if (!deletingMovement) return
+    setIsSavingDelete(true)
+    try {
+      const res = await deleteCashMovementAction(deletingMovement.id)
+      if (res.success) {
+        setIsDeleteModalOpen(false)
+        setDeletingMovement(null)
+        router.refresh()
+      } else {
+        alert(res.error || "Error al eliminar el movimiento")
+      }
+    } catch (err: any) {
+      console.error(err)
+      alert(err.message || "Error inesperado")
+    } finally {
+      setIsSavingDelete(false)
+    }
+  }
 
   interface DraftRow {
     key: string;
@@ -385,6 +496,7 @@ export default function CashFlowLedger({
                 <th className="px-3 py-3">Conc. Caja</th>
                 <th className="px-3 py-3">Detalle</th>
                 <th className="px-3 py-3 text-right">Importe</th>
+                <th className="px-3 py-3 text-center">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
@@ -440,12 +552,30 @@ export default function CashFlowLedger({
                         {isPos ? '+' : ''}${Number(mov.importe).toLocaleString('es-AR')}
                       </div>
                     </td>
+                    <td className="px-3 py-3 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        <button
+                          onClick={() => openEditModal(mov)}
+                          className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition"
+                          title="Editar"
+                        >
+                          <Edit size={14} />
+                        </button>
+                        <button
+                          onClick={() => openDeleteModal(mov)}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition"
+                          title="Eliminar"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 )
               })}
               {filteredMovements.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="py-20 text-center">
+                  <td colSpan={8} className="py-20 text-center">
                     <DollarSign size={48} className="mx-auto text-slate-200 mb-4" />
                     <p className="text-slate-400 font-bold uppercase tracking-widest text-xs">No hay movimientos importados</p>
                   </td>
@@ -648,6 +778,262 @@ export default function CashFlowLedger({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Movement Modal */}
+      {isEditModalOpen && editingMovement && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 w-full max-w-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 flex items-center gap-2">
+                  <Edit size={22} className="text-indigo-500" /> Editar Movimiento
+                </h3>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Modificá los detalles del registro seleccionado</p>
+              </div>
+              <button 
+                onClick={() => { setIsEditModalOpen(false); setEditingMovement(null); }}
+                className="p-2.5 bg-white border border-slate-100 hover:bg-slate-50 text-slate-400 hover:text-slate-600 rounded-full transition shadow-xs"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <form onSubmit={handleEditSubmit} className="p-8 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Fecha */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Fecha *</label>
+                  <input 
+                    type="date"
+                    required
+                    value={editForm.fecha}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, fecha: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                
+                {/* Turno */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Turno</label>
+                  <select
+                    value={editForm.turno}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, turno: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="Sin Turno">Sin Turno</option>
+                    <option value="Mañana">Mañana</option>
+                    <option value="Tarde">Tarde</option>
+                    <option value="Noche">Noche</option>
+                    <option value="Completo">Completo</option>
+                  </select>
+                </div>
+
+                {/* Tipo */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Tipo</label>
+                  <span className={`inline-block text-[10px] font-black uppercase px-3 py-1.5 rounded-full ${
+                    editForm.tipo === 'Ingreso' 
+                      ? 'bg-emerald-50 text-emerald-700 border border-emerald-100' 
+                      : 'bg-rose-50 text-rose-700 border border-rose-100'
+                  }`}>
+                    {editForm.tipo}
+                  </span>
+                </div>
+
+                {/* Cuenta Bancaria */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Cuenta Bancaria</label>
+                  <select
+                    value={editForm.cuenta_bancaria}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, cuenta_bancaria: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="efectivo">💵 EFECTIVO</option>
+                    <option value="mercado pago">📱 MERCADO PAGO</option>
+                    <option value="banco galicia">🏦 BANCO GALICIA</option>
+                    <option value="tarjeta de credito">💳 TARJETA DE CREDITO</option>
+                    <option value="pago fer">👤 PAGO FER</option>
+                    <option value="pago gaston">👤 PAGO GASTON</option>
+                  </select>
+                </div>
+
+                {/* Concepto */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Rubro / Concepto *</label>
+                  <select
+                    required
+                    value={editForm.concept_id}
+                    onChange={(e) => handleEditConceptChange(e.target.value)}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  >
+                    <option value="">-- Seleccionar Rubro --</option>
+                    {concepts.map(c => (
+                      <option key={c.id} value={c.id}>{c.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Subconcepto */}
+                <div>
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Conc. Caja / Subconcepto *</label>
+                  <select
+                    required
+                    disabled={!editForm.concept_id}
+                    value={editForm.subconcept_id}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, subconcept_id: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <option value="">-- Seleccionar Caja --</option>
+                    {subconcepts.filter(s => s.concept_id === editForm.concept_id).map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Detalle */}
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Detalle / Comentario</label>
+                  <input 
+                    type="text"
+                    placeholder="Ej: Pago prov. carnes"
+                    value={editForm.detalle}
+                    onChange={(e) => setEditForm(prev => ({ ...prev, detalle: e.target.value }))}
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-semibold text-slate-600 outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+
+                {/* Importe */}
+                <div className="md:col-span-2">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">Importe ($) *</label>
+                  <div className="relative">
+                    <span className="absolute left-4 top-3 text-xs font-black text-slate-400">$</span>
+                    <input 
+                      type="number"
+                      required
+                      min="0.01"
+                      step="any"
+                      placeholder="0"
+                      value={editForm.importe}
+                      onChange={(e) => setEditForm(prev => ({ ...prev, importe: e.target.value }))}
+                      className="w-full pl-8 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Warnings if linked */}
+              {(editingMovement.purchase_order_id || editingMovement.vencimiento_servicio_id || editingMovement.vencimiento_impuesto_id || editingMovement.event_sales_header_id) && (
+                <div className="p-4 bg-amber-50 border border-amber-100 rounded-2xl flex items-start gap-2.5">
+                  <AlertCircle className="text-amber-600 shrink-0 mt-0.5" size={16} />
+                  <div>
+                    <h5 className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Atención: Registro Vinculado</h5>
+                    <p className="text-[10px] font-semibold text-amber-700 mt-0.5">
+                      Este movimiento está vinculado a una {editingMovement.purchase_order_id ? 'Orden de Compra' : editingMovement.event_sales_header_id ? 'Cobro de Venta' : editingMovement.vencimiento_servicio_id ? 'Factura de Servicio' : 'Obligación Impositiva'}. Al guardar los cambios, se actualizará automáticamente el total pagado y estado del registro correspondiente para evitar discrepancias.
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Botones Enviar */}
+              <div className="flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => { setIsEditModalOpen(false); setEditingMovement(null); }}
+                  className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-xs font-black uppercase tracking-wider transition shadow-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="flex-1 px-4 py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSavingEdit ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" /> Guardando...
+                    </>
+                  ) : (
+                    "Guardar Cambios"
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Movement Modal */}
+      {isDeleteModalOpen && deletingMovement && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl border border-slate-100 w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-8 border-b border-slate-50 flex justify-between items-center bg-slate-50/50">
+              <div>
+                <h3 className="text-xl font-black uppercase tracking-tight text-slate-800 flex items-center gap-2">
+                  <Trash2 size={22} className="text-rose-500" /> Eliminar Movimiento
+                </h3>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mt-1">Confirmá la eliminación del registro</p>
+              </div>
+              <button 
+                onClick={() => { setIsDeleteModalOpen(false); setDeletingMovement(null); }}
+                className="p-2.5 bg-white border border-slate-100 hover:bg-slate-50 text-slate-400 hover:text-slate-600 rounded-full transition shadow-xs"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            
+            <div className="p-8 space-y-6">
+              <div className="space-y-3">
+                <p className="text-sm font-semibold text-slate-600">
+                  ¿Estás seguro de que deseas eliminar permanentemente este movimiento de caja?
+                </p>
+                
+                <div className="p-4 bg-slate-50 rounded-2xl text-xs space-y-1 text-slate-600 font-bold">
+                  <div><span className="text-slate-400 uppercase font-black tracking-wider text-[9px]">Fecha:</span> {new Date(deletingMovement.fecha + 'T12:00:00').toLocaleDateString()}</div>
+                  <div><span className="text-slate-400 uppercase font-black tracking-wider text-[9px]">Concepto:</span> {deletingMovement.concepto} - {deletingMovement.conc_caja}</div>
+                  {deletingMovement.detalle && <div><span className="text-slate-400 uppercase font-black tracking-wider text-[9px]">Detalle:</span> {deletingMovement.detalle}</div>}
+                  <div><span className="text-slate-400 uppercase font-black tracking-wider text-[9px]">Importe:</span> <span className={Number(deletingMovement.importe) > 0 ? 'text-emerald-600' : 'text-rose-600'}>${Number(deletingMovement.importe).toLocaleString('es-AR')}</span></div>
+                </div>
+
+                {(deletingMovement.purchase_order_id || deletingMovement.vencimiento_servicio_id || deletingMovement.vencimiento_impuesto_id || deletingMovement.event_sales_header_id) && (
+                  <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-start gap-2.5">
+                    <AlertCircle className="text-rose-600 shrink-0 mt-0.5" size={16} />
+                    <div>
+                      <h5 className="text-[10px] font-black uppercase text-rose-800 tracking-wider">Advertencia: Registro Vinculado</h5>
+                      <p className="text-[10px] font-semibold text-rose-700 mt-0.5">
+                        Este movimiento está vinculado a una {deletingMovement.purchase_order_id ? 'Orden de Compra' : deletingMovement.event_sales_header_id ? 'Cobro de Venta' : deletingMovement.vencimiento_servicio_id ? 'Factura de Servicio' : 'Obligación Impositiva'}. Al eliminarlo, se actualizará el total pagado y el estado de la obligación (por ejemplo, revirtiendo a estado "Pendiente" o recalculando el saldo de la OC).
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botones */}
+              <div className="flex gap-4">
+                <button
+                  type="button"
+                  onClick={() => { setIsDeleteModalOpen(false); setDeletingMovement(null); }}
+                  className="flex-1 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-2xl text-xs font-black uppercase tracking-wider transition shadow-sm"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  disabled={isSavingDelete}
+                  className="flex-1 px-4 py-3 bg-rose-600 hover:bg-rose-700 text-white rounded-2xl text-xs font-black uppercase tracking-wider transition shadow-sm flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSavingDelete ? (
+                    <>
+                      <Loader2 size={14} className="animate-spin" /> Eliminando...
+                    </>
+                  ) : (
+                    "Confirmar Eliminación"
+                  )}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

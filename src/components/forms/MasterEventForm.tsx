@@ -22,18 +22,13 @@ function EventProfitabilityBadge({ eventId, status, refreshKey }: { eventId: str
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    if (status?.toLowerCase() !== 'ejecutado') {
-      setLoading(false)
-      return
-    }
     setLoading(true)
     getEventProfitability(eventId).then(res => {
       if (res.success) setData(res.data)
       setLoading(false)
     })
-  }, [eventId, status, refreshKey])
+  }, [eventId, refreshKey])
 
-  if (status?.toLowerCase() !== 'ejecutado') return null
   if (loading) return <div className="text-[10px] text-slate-400 font-bold flex items-center gap-1 mt-1"><Loader2 size={12} className="animate-spin" /> Calculando...</div>
   if (!data) return null
 
@@ -117,7 +112,13 @@ export default function MasterEventForm() {
   const [companyFilter, setCompanyFilter] = useState("")
   const [venueFilter, setVenueFilter] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
-  const today = new Date().toISOString().split('T')[0]
+  const today = (() => {
+    const d = new Date()
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  })()
 
   // --- New Event Draft ---
   interface DraftEvent {
@@ -208,16 +209,15 @@ export default function MasterEventForm() {
         setExpandedIds(new Set([eventIdFromUrl]))
         const ev = processedEvents.find((e: any) => e.id === eventIdFromUrl)
         if (ev) {
-          if (ev.event_date < new Date().toISOString().split('T')[0]) {
+          if (ev.event_date < today) {
             setView("all")
           }
           setSearchTerm(ev.show_name || "")
         }
       } else {
         // Auto-expand only the first 5 UPCOMING events (to match default view)
-        const now = new Date().toISOString().split('T')[0]
         const upcomingIds = processedEvents
-          .filter(e => e.event_date >= now)
+          .filter(e => e.event_date >= today)
           .slice(0, 5)
           .map(e => e.id)
         setExpandedIds(new Set(upcomingIds))
@@ -1066,10 +1066,8 @@ export default function MasterEventForm() {
                     })
                     return null
                   })()}
-                  {(index < 10 || isExpanded) ? (
+                  {state.event_date === today && (
                     <EventProfitabilityBadge eventId={ev.id} status={state.status} refreshKey={refreshCounter} />
-                  ) : (
-                    <div className="text-[9px] text-slate-400 italic mt-2 text-center opacity-60">Expandir para ver rentabilidad</div>
                   )}
                 </div>
 
