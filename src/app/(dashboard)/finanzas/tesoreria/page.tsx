@@ -39,7 +39,9 @@ import {
   updateCashMovementFieldsAction,
   updateVencimientoFieldsAction,
   editarServicioAction,
-  editarImpuestoAction
+  editarImpuestoAction,
+  generarVencimientoServicioManualAction,
+  generarVencimientoImpuestoManualAction
 } from "@/app/actions/tesoreria"
 import { createCashMovement } from "@/app/actions/finances"
 import { updateIVAPayment } from "@/app/actions/iva"
@@ -59,6 +61,10 @@ export default function TreasuryPage() {
   const [loadingEvents, setLoadingEvents] = useState(false)
   const [concepts, setConcepts] = useState<ConceptItem[]>([])
   const [selectedCalendarEvent, setSelectedCalendarEvent] = useState<CalendarEvent | null>(null)
+  const [calendarView, setCalendarView] = useState<'month' | 'week' | 'agenda'>('month')
+  const [weekStartDate, setWeekStartDate] = useState<Date | null>(null)
+  const [agendaFilter, setAgendaFilter] = useState<'all' | 'payable' | 'receivable'>('all')
+  const [agendaStatusFilter, setAgendaStatusFilter] = useState<'all' | 'pending' | 'completed'>('all')
 
   // Sub-tab for Services
   const [servicesTab, setServicesTab] = useState<'vencimientos' | 'templates'>('vencimientos')
@@ -164,6 +170,7 @@ export default function TreasuryPage() {
   const [newServiceMonto, setNewServiceMonto] = useState("")
   const [newServiceDay, setNewServiceDay] = useState(10)
   const [newServiceSubconcept, setNewServiceSubconcept] = useState("")
+  const [newServiceActivo, setNewServiceActivo] = useState(true)
 
   // Tax form states
   const [newTaxName, setNewTaxName] = useState("")
@@ -171,6 +178,7 @@ export default function TreasuryPage() {
   const [newTaxMonto, setNewTaxMonto] = useState("")
   const [newTaxDay, setNewTaxDay] = useState(15)
   const [newTaxSubconcept, setNewTaxSubconcept] = useState("")
+  const [newTaxActivo, setNewTaxActivo] = useState(true)
 
   // Edit template form states
   const [editTemplateModal, setEditTemplateModal] = useState<{ open: boolean; type: 'servicio' | 'impuesto'; template: any | null }>({ open: false, type: 'servicio', template: null })
@@ -179,6 +187,7 @@ export default function TreasuryPage() {
   const [editTemplateMonto, setEditTemplateMonto] = useState("")
   const [editTemplateDay, setEditTemplateDay] = useState(15)
   const [editTemplateSubconcept, setEditTemplateSubconcept] = useState("")
+  const [editTemplateActivo, setEditTemplateActivo] = useState(true)
   const [isSavingEditTemplate, setIsSavingEditTemplate] = useState(false)
 
   // Petty cash form states
@@ -299,6 +308,23 @@ export default function TreasuryPage() {
     }
   }, [currentPeriod, loadCalendarEvents, loadTabDetails])
 
+  useEffect(() => {
+    if (!currentPeriod) return
+    const [year, month] = currentPeriod.split('-').map(Number)
+    const today = new Date()
+    
+    if (today.getFullYear() === year && (today.getMonth() + 1) === month) {
+      const diff = today.getDate() - today.getDay()
+      const sun = new Date(today.getFullYear(), today.getMonth(), diff)
+      setWeekStartDate(sun)
+    } else {
+      const firstDay = new Date(year, month - 1, 1)
+      const diff = firstDay.getDate() - firstDay.getDay()
+      const sun = new Date(year, month - 1, diff)
+      setWeekStartDate(sun)
+    }
+  }, [currentPeriod])
+
   const formatCurrency = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
   // Modal helpers
@@ -315,8 +341,8 @@ export default function TreasuryPage() {
   const handleOpenCollectSale = (sale: any) => {
     const pending = Number(sale.total_amount) - Number(sale.monto_cobrado)
     setSplitAmounts({
-      efectivo: pending,
-      "mercado pago": 0,
+      efectivo: 0,
+      "mercado pago": pending,
       "banco galicia": 0
     })
     setFormFecha(new Date().toISOString().split('T')[0])
@@ -511,7 +537,8 @@ export default function TreasuryPage() {
       newServiceProv,
       Number(newServiceMonto),
       Number(newServiceDay),
-      newServiceSubconcept
+      newServiceSubconcept,
+      newServiceActivo
     )
 
     if (res.success) {
@@ -521,6 +548,7 @@ export default function TreasuryPage() {
       setNewServiceMonto("")
       setNewServiceDay(10)
       setNewServiceSubconcept("")
+      setNewServiceActivo(true)
       loadTabDetails()
     } else {
       alert("Error al crear servicio: " + res.error)
@@ -541,7 +569,8 @@ export default function TreasuryPage() {
       newTaxEnte,
       Number(newTaxMonto),
       Number(newTaxDay),
-      newTaxSubconcept
+      newTaxSubconcept,
+      newTaxActivo
     )
 
     if (res.success) {
@@ -551,6 +580,7 @@ export default function TreasuryPage() {
       setNewTaxMonto("")
       setNewTaxDay(15)
       setNewTaxSubconcept("")
+      setNewTaxActivo(true)
       loadTabDetails()
     } else {
       alert("Error al crear impuesto: " + res.error)
@@ -571,6 +601,7 @@ export default function TreasuryPage() {
     setEditTemplateMonto(String(template.monto_estimado || ""))
     setEditTemplateDay(Number(template.dia_vencimiento_habitual || 15))
     setEditTemplateSubconcept(template.subconcept_id || "")
+    setEditTemplateActivo(template.activo !== false)
   }
 
   const handleEditTemplateSubmit = async (e: React.FormEvent) => {
@@ -586,7 +617,8 @@ export default function TreasuryPage() {
         editTemplateEnteOrProveedor,
         Number(editTemplateMonto),
         Number(editTemplateDay),
-        editTemplateSubconcept
+        editTemplateSubconcept,
+        editTemplateActivo
       )
     } else {
       res = await editarImpuestoAction(
@@ -595,7 +627,8 @@ export default function TreasuryPage() {
         editTemplateEnteOrProveedor,
         Number(editTemplateMonto),
         Number(editTemplateDay),
-        editTemplateSubconcept
+        editTemplateSubconcept,
+        editTemplateActivo
       )
     }
 
@@ -606,6 +639,27 @@ export default function TreasuryPage() {
       alert("Error al actualizar plantilla: " + res.error)
     }
     setIsSavingEditTemplate(false)
+  }
+
+  const handleGenerarManual = async (type: 'servicio' | 'impuesto', id: string, name: string) => {
+    const confirmGen = window.confirm(`¿Generar el vencimiento para "${name}" en el período actual (${currentPeriod})?`)
+    if (!confirmGen) return
+
+    let res
+    if (type === 'servicio') {
+      res = await generarVencimientoServicioManualAction(id, currentPeriod)
+    } else {
+      res = await generarVencimientoImpuestoManualAction(id, currentPeriod)
+    }
+
+    if (res.success) {
+      alert("Vencimiento generado con éxito para este período.")
+      loadTabDetails()
+      loadCalendarEvents()
+      loadSummary()
+    } else {
+      alert("Error al generar vencimiento: " + res.error)
+    }
   }
 
   const handleOpenPettyModal = () => {
@@ -792,6 +846,501 @@ export default function TreasuryPage() {
     }
 
     return days
+  }
+
+  const handleWeekChange = (direction: 'prev' | 'next') => {
+    if (!weekStartDate) return
+    const newDate = new Date(weekStartDate)
+    if (direction === 'prev') {
+      newDate.setDate(newDate.getDate() - 7)
+    } else {
+      newDate.setDate(newDate.getDate() + 7)
+    }
+    setWeekStartDate(newDate)
+    
+    const year = newDate.getFullYear()
+    const month = String(newDate.getMonth() + 1).padStart(2, '0')
+    const nextPeriod = `${year}-${month}`
+    if (nextPeriod !== currentPeriod) {
+      setCurrentPeriod(nextPeriod)
+    }
+  }
+
+  const handleResetToCurrentWeek = () => {
+    const today = new Date()
+    const diff = today.getDate() - today.getDay()
+    const sun = new Date(today.getFullYear(), today.getMonth(), diff)
+    setWeekStartDate(sun)
+    
+    const year = sun.getFullYear()
+    const month = String(sun.getMonth() + 1).padStart(2, '0')
+    const nextPeriod = `${year}-${month}`
+    if (nextPeriod !== currentPeriod) {
+      setCurrentPeriod(nextPeriod)
+    }
+  }
+
+  const renderWeek = () => {
+    if (!weekStartDate) return null
+
+    const days = []
+    const tempDate = new Date(weekStartDate)
+    
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+    for (let i = 0; i < 7; i++) {
+      const dateStr = `${tempDate.getFullYear()}-${String(tempDate.getMonth() + 1).padStart(2, '0')}-${String(tempDate.getDate()).padStart(2, '0')}`
+      
+      const dayEvents = calendarEvents.filter(e => e.date === dateStr)
+
+      const dayTotal = dayEvents
+        .filter(e => e.tipo !== 'venta' && e.status !== 'pagado')
+        .reduce((sum, e) => sum + e.amount, 0)
+
+      days.push({
+        dateLabel: tempDate.toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit' }).toUpperCase(),
+        dateStr,
+        dayNum: tempDate.getDate(),
+        events: dayEvents,
+        total: dayTotal,
+        isToday: dateStr === todayStr
+      })
+      
+      tempDate.setDate(tempDate.getDate() + 1)
+    }
+
+    const endOfWeekDate = new Date(weekStartDate)
+    endOfWeekDate.setDate(endOfWeekDate.getDate() + 6)
+    
+    const startMonthName = weekStartDate.toLocaleDateString('es-AR', { month: 'long' })
+    const endMonthName = endOfWeekDate.toLocaleDateString('es-AR', { month: 'long' })
+    
+    let weekLabel = ""
+    if (startMonthName === endMonthName) {
+      weekLabel = `Semana del ${weekStartDate.getDate()} al ${endOfWeekDate.getDate()} de ${startMonthName.toUpperCase()} de ${weekStartDate.getFullYear()}`
+    } else {
+      weekLabel = `Semana del ${weekStartDate.getDate()} de ${startMonthName.toUpperCase()} al ${endOfWeekDate.getDate()} de ${endMonthName.toUpperCase()} de ${weekStartDate.getFullYear()}`
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Navigation Bar inside Week View */}
+        <div className="flex flex-col sm:flex-row justify-between items-center bg-slate-50 p-4 border border-slate-200 rounded-[2rem] shadow-sm gap-4">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => handleWeekChange('prev')}
+              className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-indigo-600 hover:border-indigo-100 hover:bg-indigo-50/20 transition shadow-sm active:scale-95"
+              title="Semana Anterior"
+            >
+              <ChevronLeft size={16} />
+            </button>
+            
+            <span className="text-xs font-black text-slate-700 tracking-wider min-w-[220px] text-center">
+              {weekLabel}
+            </span>
+
+            <button
+              onClick={() => handleWeekChange('next')}
+              className="p-2.5 rounded-xl border border-slate-200 bg-white text-slate-500 hover:text-indigo-600 hover:border-indigo-100 hover:bg-indigo-50/20 transition shadow-sm active:scale-95"
+              title="Semana Siguiente"
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+
+          <button
+            onClick={handleResetToCurrentWeek}
+            className="px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-[10px] font-black uppercase text-indigo-600 tracking-widest hover:bg-indigo-50/20 hover:border-indigo-100 transition shadow-sm active:scale-95 flex items-center gap-1.5"
+          >
+            <CalendarDays size={14} /> Esta Semana
+          </button>
+        </div>
+
+        {/* 7 Columns Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+          {days.map((d, index) => {
+            return (
+              <div 
+                key={index} 
+                className={`bg-white border rounded-[2rem] p-4 min-h-[350px] flex flex-col hover:shadow-md transition-all duration-300 ${
+                  d.isToday 
+                    ? 'border-indigo-500 ring-2 ring-indigo-500/20 shadow-sm' 
+                    : 'border-slate-200'
+                }`}
+              >
+                {/* Column Day Header */}
+                <div className="border-b border-slate-100 pb-3 mb-3 flex flex-col justify-between items-center text-center">
+                  <span className={`text-[10px] font-black tracking-widest uppercase ${d.isToday ? 'text-indigo-600' : 'text-slate-400'}`}>
+                    {d.dateLabel.split(' ')[0]}
+                  </span>
+                  <span className={`text-2xl font-black italic tracking-tighter mt-1 ${d.isToday ? 'text-indigo-600 font-black' : 'text-slate-800'}`}>
+                    {d.dayNum}
+                  </span>
+                  {d.total > 0 && (
+                    <span className="text-[8px] font-black text-rose-600 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-100 mt-2 shadow-sm animate-pulse">
+                      {formatCurrency(d.total)}
+                    </span>
+                  )}
+                </div>
+
+                {/* Day events list */}
+                <div className="flex-1 space-y-2 overflow-y-auto max-h-[300px] scrollbar-none">
+                  {d.events.length === 0 ? (
+                    <div className="h-full flex items-center justify-center py-12 text-center text-[10px] font-bold text-slate-300 italic uppercase">
+                      Sin Eventos
+                    </div>
+                  ) : (
+                    d.events.map(e => {
+                      const isEventOverdue = e.date < todayStr && e.status !== 'pagado' && e.status !== 'cobrado'
+                      let colorClass = ''
+                      
+                      if (e.status === 'pagado' || e.status === 'cobrado') {
+                        colorClass = 'bg-slate-100 text-slate-400 border-slate-200 line-through opacity-70'
+                      } else if (e.tipo === 'venta') {
+                        colorClass = 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      } else if (isEventOverdue) {
+                        colorClass = 'bg-rose-50 text-rose-700 border-rose-250 font-bold'
+                      } else if (e.tipo === 'servicio') {
+                        colorClass = 'bg-sky-50 text-sky-700 border-sky-200'
+                      } else if (e.tipo === 'impuesto') {
+                        colorClass = 'bg-amber-50 text-amber-700 border-amber-200'
+                      } else {
+                        colorClass = 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                      }
+
+                      return (
+                        <div 
+                          key={e.id}
+                          onClick={() => setSelectedCalendarEvent(e)}
+                          className={`text-[9px] font-black uppercase tracking-wider px-2.5 py-2 rounded-xl border cursor-pointer truncate transition hover:scale-102 hover:shadow-sm ${colorClass}`}
+                          title={`${e.title} - ${formatCurrency(e.amount)} (${e.status})`}
+                        >
+                          {e.title}
+                          <span className="block text-[8px] font-bold opacity-80 mt-0.5">
+                            {formatCurrency(e.amount)}
+                          </span>
+                        </div>
+                      )
+                    })
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
+  }
+
+  const renderAgenda = () => {
+    if (!currentPeriod) return null
+
+    // 1. Get today's date formatted as YYYY-MM-DD
+    const today = new Date()
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+    // 2. Filter events
+    const filteredEvents = calendarEvents.filter(e => {
+      // Type Filter
+      if (agendaFilter === 'payable') {
+        if (e.tipo !== 'oc' && e.tipo !== 'servicio' && e.tipo !== 'impuesto') return false
+      } else if (agendaFilter === 'receivable') {
+        if (e.tipo !== 'venta') return false
+      }
+
+      // Status Filter
+      const isCompleted = e.status === 'pagado' || e.status === 'cobrado'
+      if (agendaStatusFilter === 'pending' && isCompleted) return false
+      if (agendaStatusFilter === 'completed' && !isCompleted) return false
+
+      return true
+    })
+
+    // 3. Classify/Group events
+    const vencidos: CalendarEvent[] = []
+    const proximos: CalendarEvent[] = []
+    const completados: CalendarEvent[] = []
+
+    filteredEvents.forEach(e => {
+      const isCompleted = e.status === 'pagado' || e.status === 'cobrado'
+      if (isCompleted) {
+        completados.push(e)
+      } else {
+        const isExpense = e.tipo === 'oc' || e.tipo === 'servicio' || e.tipo === 'impuesto'
+        if (isExpense && e.date < todayStr) {
+          vencidos.push(e)
+        } else {
+          proximos.push(e)
+        }
+      }
+    })
+
+    // Sort chronologically within groups:
+    vencidos.sort((a, b) => a.date.localeCompare(b.date))
+    proximos.sort((a, b) => a.date.localeCompare(b.date))
+    completados.sort((a, b) => b.date.localeCompare(a.date))
+
+    const renderEventCard = (e: CalendarEvent, isOverdue: boolean = false) => {
+      const formattedDate = new Date(e.date + 'T12:00:00').toLocaleDateString('es-AR', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short'
+      }).toUpperCase()
+
+      // Define color system based on type
+      let typeLabel = ''
+      let colorClasses = ''
+      let borderClass = 'border-slate-200 hover:border-slate-300'
+      let textAccent = 'text-slate-800'
+
+      if (e.status === 'pagado' || e.status === 'cobrado') {
+        typeLabel = e.tipo === 'venta' ? 'Cobro' : e.tipo === 'oc' ? 'Proveedor' : e.tipo === 'servicio' ? 'Servicio' : 'Impuesto'
+        colorClasses = 'bg-slate-100 text-slate-500 border-slate-200'
+        borderClass = 'border-slate-200 bg-slate-50/40 opacity-75'
+        textAccent = 'text-slate-400 line-through'
+      } else if (e.tipo === 'venta') {
+        typeLabel = 'Cobro Show'
+        colorClasses = 'bg-emerald-50 text-emerald-700 border-emerald-200'
+        borderClass = 'border-emerald-100 hover:border-emerald-255 hover:shadow-sm'
+        textAccent = 'text-emerald-700 font-bold'
+      } else if (isOverdue) {
+        typeLabel = e.tipo === 'oc' ? 'Proveedor' : e.tipo === 'servicio' ? 'Servicio' : 'Impuesto'
+        colorClasses = 'bg-rose-50 text-rose-700 border-rose-200 font-bold'
+        borderClass = 'border-rose-200 bg-rose-50/10 hover:border-rose-350 hover:shadow-sm'
+        textAccent = 'text-rose-700 font-black'
+      } else if (e.tipo === 'servicio') {
+        typeLabel = 'Servicio'
+        colorClasses = 'bg-sky-50 text-sky-700 border-sky-200'
+        borderClass = 'border-sky-100 hover:border-sky-250 hover:shadow-sm'
+        textAccent = 'text-sky-700 font-bold'
+      } else if (e.tipo === 'impuesto') {
+        typeLabel = 'Impuesto'
+        colorClasses = 'bg-amber-50 text-amber-700 border-amber-200'
+        borderClass = 'border-amber-100 hover:border-amber-250 hover:shadow-sm'
+        textAccent = 'text-amber-700 font-bold'
+      } else {
+        typeLabel = 'Proveedor'
+        colorClasses = 'bg-indigo-50 text-indigo-700 border-indigo-200'
+        borderClass = 'border-indigo-100 hover:border-indigo-255 hover:shadow-sm'
+        textAccent = 'text-indigo-700 font-bold'
+      }
+
+      const conceptMap: Record<'oc' | 'servicio' | 'impuesto' | 'venta' | 'iva', 'Materia Prima' | 'Servicios' | 'Impuestos' | 'VENTAS' | 'Impuestos'> = {
+        oc: 'Materia Prima',
+        servicio: 'Servicios',
+        impuesto: 'Impuestos',
+        venta: 'VENTAS',
+        iva: 'Impuestos'
+      }
+
+      const docTypeMap: Record<'oc' | 'servicio' | 'impuesto' | 'venta' | 'iva', 'po' | 'servicio' | 'impuesto' | 'venta' | 'impuesto'> = {
+        oc: 'po',
+        servicio: 'servicio',
+        impuesto: 'impuesto',
+        venta: 'venta',
+        iva: 'impuesto'
+      }
+
+      return (
+        <div 
+          key={e.id}
+          className={`flex flex-col lg:flex-row justify-between items-start lg:items-center p-5 rounded-[2rem] border bg-white shadow-sm hover:shadow-md hover:-translate-y-0.5 transition-all duration-300 gap-4 ${borderClass}`}
+        >
+          {/* Left: Date, Icon & Concept */}
+          <div className="flex items-center gap-4 w-full lg:w-auto">
+            {/* Date block */}
+            <div className="flex flex-col justify-center items-center bg-slate-50 border border-slate-100 rounded-2xl w-16 h-16 shrink-0 text-center shadow-sm">
+              <span className="text-[9px] font-black text-slate-400 uppercase leading-none mb-0.5">{formattedDate.split(' ')[0]}</span>
+              <span className="text-lg font-black text-slate-800 leading-none">{formattedDate.split(' ')[1]}</span>
+              <span className="text-[9px] font-bold text-indigo-605 uppercase leading-none mt-0.5">{formattedDate.split(' ')[2]}</span>
+            </div>
+
+            {/* Title & badge */}
+            <div className="space-y-1 truncate max-w-[280px] sm:max-w-[450px] lg:max-w-[320px]">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`text-[8px] font-black uppercase tracking-widest px-2 py-0.5 rounded border ${colorClasses}`}>
+                  {typeLabel}
+                </span>
+                {isOverdue && (
+                  <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 bg-rose-600 text-white rounded border border-rose-700 animate-pulse">
+                    ⚠️ Vencido
+                  </span>
+                )}
+                {e.status === 'parcial' && (
+                  <span className="text-[8px] font-black uppercase tracking-widest px-2 py-0.5 bg-amber-500 text-white rounded border border-amber-600">
+                    Parcial
+                  </span>
+                )}
+              </div>
+              <h4 className={`text-xs font-black uppercase ${textAccent} truncate`}>
+                {e.title}
+              </h4>
+              <p className="text-[10px] font-bold text-slate-400">
+                Vence: {new Date(e.date + 'T12:00:00').toLocaleDateString('es-AR')}
+              </p>
+            </div>
+          </div>
+
+          {/* Right: Amount & Actions */}
+          <div className="flex items-center justify-between lg:justify-end gap-6 w-full lg:w-auto pt-3 lg:pt-0 border-t border-slate-100 lg:border-t-0">
+            {/* Amount */}
+            <div className="text-left lg:text-right">
+              <p className="text-[8px] font-black uppercase tracking-widest text-slate-400">Monto</p>
+              <p className={`text-base font-black ${textAccent}`}>
+                {formatCurrency(e.amount)}
+              </p>
+              {e.paidAmount && e.paidAmount > 0 && (
+                <p className="text-[9px] font-bold text-slate-400">
+                  Saldado: {formatCurrency(e.paidAmount)}
+                </p>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex gap-2 shrink-0">
+              {e.status !== 'pagado' && e.status !== 'cobrado' ? (
+                <>
+                  <button
+                    onClick={() => {
+                      if (e.tipo === 'oc') handleOpenPayPo(e.metadata)
+                      else if (e.tipo === 'servicio') handleOpenPayService(e.metadata)
+                      else if (e.tipo === 'impuesto' || e.tipo === 'iva') handleOpenPayTax(e.metadata)
+                      else if (e.tipo === 'venta') handleOpenCollectSale(e.metadata)
+                    }}
+                    className={`px-4 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest shadow-sm transition active:scale-95 text-white ${
+                      e.tipo === 'venta' 
+                        ? 'bg-emerald-600 hover:bg-emerald-700' 
+                        : isOverdue 
+                          ? 'bg-rose-600 hover:bg-rose-700' 
+                          : 'bg-indigo-600 hover:bg-indigo-700'
+                    }`}
+                  >
+                    {e.tipo === 'venta' ? 'Cobrar' : 'Pagar'}
+                  </button>
+                  <button
+                    onClick={() => handleOpenReconcile(
+                      docTypeMap[e.tipo],
+                      e.id,
+                      e.amount,
+                      conceptMap[e.tipo]
+                    )}
+                    className="px-3.5 py-2.5 rounded-xl text-[9px] font-black uppercase tracking-widest border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 hover:text-slate-700 transition active:scale-95 flex items-center gap-1.5"
+                    title="Vincular con un movimiento de caja existente"
+                  >
+                    <Link2 size={12} /> Vincular
+                  </button>
+                </>
+              ) : (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-100 text-slate-400 text-[9px] font-black uppercase tracking-wider">
+                  <CheckCircle2 size={14} className="text-slate-400" /> completado
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )
+    }
+
+    return (
+      <div className="space-y-6">
+        {/* Filters bar inside the agenda view */}
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-slate-50 p-4 border border-slate-250 rounded-[2rem] shadow-sm">
+          <div className="flex flex-wrap items-center gap-4">
+            {/* Filter by Type */}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Obligación:</span>
+              <div className="flex bg-white rounded-xl border border-slate-200 p-0.5 shadow-sm">
+                {(['all', 'payable', 'receivable'] as const).map(f => (
+                  <button
+                    key={f}
+                    onClick={() => setAgendaFilter(f)}
+                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
+                      agendaFilter === f
+                        ? 'bg-indigo-600 text-white font-bold'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-55'
+                    }`}
+                  >
+                    {f === 'all' ? 'Todos' : f === 'payable' ? 'A Pagar' : 'A Cobrar'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Filter by Status */}
+            <div className="flex items-center gap-2">
+              <span className="text-[9px] font-black uppercase text-slate-400 tracking-wider">Estado:</span>
+              <div className="flex bg-white rounded-xl border border-slate-200 p-0.5 shadow-sm">
+                {(['all', 'pending', 'completed'] as const).map(s => (
+                  <button
+                    key={s}
+                    onClick={() => setAgendaStatusFilter(s)}
+                    className={`px-3 py-1.5 rounded-lg text-[9px] font-black uppercase tracking-wider transition-all ${
+                      agendaStatusFilter === s
+                        ? 'bg-indigo-600 text-white font-bold'
+                        : 'text-slate-500 hover:text-slate-700 hover:bg-slate-55'
+                    }`}
+                  >
+                    {s === 'all' ? 'Todos' : s === 'pending' ? 'Pendientes' : 'Completados'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="text-[10px] font-bold text-slate-400">
+            Filtrados: <span className="text-slate-700 font-black">{filteredEvents.length} obligaciones</span>
+          </div>
+        </div>
+
+        {/* List layout */}
+        {filteredEvents.length === 0 ? (
+          <div className="text-center py-20 bg-slate-50 rounded-[2.5rem] border border-dashed border-slate-200 text-slate-400">
+            <CalendarIcon className="mx-auto text-slate-350 mb-4 animate-bounce" size={40} />
+            <h4 className="text-sm font-black uppercase tracking-wider text-slate-700">Sin compromisos</h4>
+            <p className="text-xs font-semibold text-slate-400 mt-1">No se encontraron cobros o pagos con los filtros seleccionados para este mes.</p>
+          </div>
+        ) : (
+          <div className="space-y-8">
+            {/* 1. Overdue section */}
+            {vencidos.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-black text-rose-650 uppercase tracking-widest flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-rose-600 animate-ping"></span> ⚠️ Vencimientos Atrasados
+                </h4>
+                <div className="space-y-3">
+                  {vencidos.map(e => renderEventCard(e, true))}
+                </div>
+              </div>
+            )}
+
+            {/* 2. Upcoming section */}
+            {proximos.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+                  📅 Obligaciones Pendientes del Período
+                </h4>
+                <div className="space-y-3">
+                  {proximos.map(e => renderEventCard(e, false))}
+                </div>
+              </div>
+            )}
+
+            {/* 3. Completed section */}
+            {completados.length > 0 && (
+              <div className="space-y-3">
+                <h4 className="text-[10px] font-black text-emerald-600 uppercase tracking-widest flex items-center gap-2">
+                  ✅ Transacciones Completadas
+                </h4>
+                <div className="space-y-3">
+                  {completados.map(e => renderEventCard(e, false))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
   }
 
   const handlePeriodChange = (direction: 'prev' | 'next') => {
@@ -1193,12 +1742,45 @@ export default function TreasuryPage() {
             {/* Panel 2: Financial Calendar */}
             {activeTab === 'calendar' && (
               <div className="space-y-6">
-                <div className="flex justify-between items-center">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                   <div>
                     <h3 className="text-xl font-black text-slate-800 italic uppercase">Calendario Financiero</h3>
                     <p className="text-xs text-slate-500 font-medium">
                       Visualización consolidada de cobros (verde), proveedores (violeta), servicios (celeste), impuestos (amarillo), deudas vencidas (rojo) y obligaciones pagadas (gris).
                     </p>
+                  </div>
+                  {/* View Selector Toggle */}
+                  <div className="flex bg-slate-100 p-1 rounded-2xl border border-slate-200 self-start sm:self-center shrink-0 shadow-sm gap-1">
+                    <button
+                      onClick={() => setCalendarView('month')}
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        calendarView === 'month'
+                          ? 'bg-white text-indigo-600 shadow-md font-bold'
+                          : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'
+                      }`}
+                    >
+                      Mes
+                    </button>
+                    <button
+                      onClick={() => setCalendarView('week')}
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        calendarView === 'week'
+                          ? 'bg-white text-indigo-600 shadow-md font-bold'
+                          : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'
+                      }`}
+                    >
+                      Semana
+                    </button>
+                    <button
+                      onClick={() => setCalendarView('agenda')}
+                      className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
+                        calendarView === 'agenda'
+                          ? 'bg-white text-indigo-600 shadow-md font-bold'
+                          : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'
+                      }`}
+                    >
+                      Cronograma
+                    </button>
                   </div>
                 </div>
 
@@ -1334,8 +1916,8 @@ export default function TreasuryPage() {
                   <div className="flex justify-center items-center py-20">
                     <Loader2 className="animate-spin text-indigo-600" size={32} />
                   </div>
-                ) : (
-                  <div className="space-y-4">
+                ) : calendarView === 'month' ? (
+                  <div className="space-y-4 animate-in fade-in duration-300">
                     {/* Days of week headers */}
                     <div className="grid grid-cols-7 gap-1 text-center font-black uppercase text-[10px] text-slate-400 bg-slate-50 py-3 rounded-t-2xl border border-slate-200 border-b-0">
                       <div>Dom</div>
@@ -1350,6 +1932,14 @@ export default function TreasuryPage() {
                     <div className="grid grid-cols-7 gap-1 bg-slate-100 p-1 rounded-b-2xl border border-slate-200">
                       {renderCalendar()}
                     </div>
+                  </div>
+                ) : calendarView === 'week' ? (
+                  <div className="animate-in fade-in duration-300">
+                    {renderWeek()}
+                  </div>
+                ) : (
+                  <div className="animate-in fade-in duration-300">
+                    {renderAgenda()}
                   </div>
                 )}
 
@@ -1803,10 +2393,19 @@ export default function TreasuryPage() {
                             </p>
                           </div>
                           
-                          <div className="flex items-center gap-3">
-                            <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full ${serv.activo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-                              {serv.activo ? 'activo' : 'inactivo'}
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full ${serv.activo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                              {serv.activo ? 'Recurrente' : 'No Recurrente'}
                             </span>
+                            {!serv.activo && (
+                              <button
+                                onClick={() => handleGenerarManual('servicio', serv.id, serv.nombre)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition"
+                                title="Generar para este mes"
+                              >
+                                Generar
+                              </button>
+                            )}
                             <button
                               onClick={() => handleOpenEditTemplate('servicio', serv)}
                               className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 border border-slate-200 rounded-xl transition"
@@ -1983,10 +2582,19 @@ export default function TreasuryPage() {
                             </p>
                           </div>
                           
-                          <div className="flex items-center gap-3">
-                            <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full ${tax.activo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-                              {tax.activo ? 'activo' : 'inactivo'}
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[9px] font-black uppercase px-2.5 py-0.5 rounded-full ${tax.activo ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
+                              {tax.activo ? 'Recurrente' : 'No Recurrente'}
                             </span>
+                            {!tax.activo && (
+                              <button
+                                onClick={() => handleGenerarManual('impuesto', tax.id, tax.nombre)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-wider transition"
+                                title="Generar para este mes"
+                              >
+                                Generar
+                              </button>
+                            )}
                             <button
                               onClick={() => handleOpenEditTemplate('impuesto', tax)}
                               className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-slate-50 border border-slate-200 rounded-xl transition"
@@ -2582,6 +3190,19 @@ export default function TreasuryPage() {
                 </select>
               </div>
 
+              <div className="flex items-center gap-2 px-1">
+                <input 
+                  type="checkbox"
+                  id="newServiceActivo"
+                  checked={newServiceActivo}
+                  onChange={(e) => setNewServiceActivo(e.target.checked)}
+                  className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <label htmlFor="newServiceActivo" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                  Obligación mensual recurrente (se genera automáticamente)
+                </label>
+              </div>
+
               <div className="flex gap-2 pt-4">
                 <button 
                   type="submit"
@@ -2844,6 +3465,19 @@ export default function TreasuryPage() {
                 </select>
               </div>
 
+              <div className="flex items-center gap-2 px-1">
+                <input 
+                  type="checkbox"
+                  id="newTaxActivo"
+                  checked={newTaxActivo}
+                  onChange={(e) => setNewTaxActivo(e.target.checked)}
+                  className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <label htmlFor="newTaxActivo" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                  Obligación mensual recurrente (se genera automáticamente)
+                </label>
+              </div>
+
               <div className="flex gap-2 pt-4">
                 <button 
                   type="submit"
@@ -3036,6 +3670,19 @@ export default function TreasuryPage() {
                     ))
                   )}
                 </select>
+              </div>
+
+              <div className="flex items-center gap-2 px-1">
+                <input 
+                  type="checkbox"
+                  id="editTemplateActivo"
+                  checked={editTemplateActivo}
+                  onChange={(e) => setEditTemplateActivo(e.target.checked)}
+                  className="w-4 h-4 rounded text-indigo-600 border-slate-300 focus:ring-indigo-500 cursor-pointer"
+                />
+                <label htmlFor="editTemplateActivo" className="text-xs font-semibold text-slate-600 cursor-pointer select-none">
+                  Obligación mensual recurrente (se genera automáticamente)
+                </label>
               </div>
 
               <div className="flex gap-3 pt-4">

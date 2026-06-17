@@ -42,13 +42,21 @@ const sections = [
     icon: LayoutGrid,
     items: [
       { href: "/", label: "Inicio", icon: Home },
-      { href: "/finanzas", label: "Flujo de Caja", icon: DollarSign },
-      { href: "/finanzas/iva", label: "Gestión de IVA", icon: Calculator },
-      { href: "/finanzas/tesoreria", label: "Tesorería", icon: Wallet },
       { href: "/crm", label: "CRM Comercial", icon: TrendingUp },
       { href: "/clients", label: "Clientes", icon: Users },
       { href: "/coordinadores", label: "Coordinadores", icon: User },
       { href: "/buses", label: "Flota & Buses", icon: Bus },
+    ]
+  },
+  {
+    title: "Fondos y Finanzas",
+    icon: Wallet,
+    items: [
+      { href: "/finanzas/tesoreria", label: "Tesorería", icon: Wallet },
+      { href: "/finanzas", label: "Flujo de Caja", icon: DollarSign },
+      { href: "/finanzas/iva", label: "Gestión de IVA", icon: Calculator },
+      { href: "/informes", label: "Central de Informes", icon: BarChart3 },
+      { href: "/finanzas/categorias", label: "Categorías de Gastos", icon: Layers },
     ]
   },
   {
@@ -107,7 +115,7 @@ const sections = [
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const [openSections, setOpenSections] = useState<string[]>(['Operación', 'Inventario', 'Informes'])
+  const [openSections, setOpenSections] = useState<string[]>(['Operación', 'Inventario', 'Fondos y Finanzas'])
   const [role, setRole] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
@@ -158,7 +166,7 @@ export default function Sidebar() {
           '/crm', '/clients', '/coordinadores', '/buses', 
           '/settings/reglas-precios', '/reglas-liberados', '/informes',
           '/settings', '/vehicle-defaults', '/inventario/recetas',
-          '/rrhh', '/finanzas/tesoreria' // Restricción del panel de administración de RRHH y Tesorería
+          '/rrhh', '/finanzas/tesoreria', '/finanzas/categorias' // Restricción del panel de administración de RRHH, Tesorería y Categorías
         ]
         return !restricted.includes(item.href)
       })

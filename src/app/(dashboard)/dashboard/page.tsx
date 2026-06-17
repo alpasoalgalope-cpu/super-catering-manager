@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
-import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, History, MapPin, Building2, ChevronRight, Truck, Package, FileText, CheckCircle2 } from "lucide-react"
+import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, TrendingDown, History, MapPin, Building2, ChevronRight, Truck, Package, FileText, CheckCircle2 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 import ReceivePOModal from "@/components/inventory/ReceivePOModal"
@@ -39,7 +39,7 @@ export default function DashboardPage() {
      eventCount: 0,
      activeCompanies: 0,
      estimatedRevenue: 0,
-     pendingViandas: 0
+     gastosAEjecutar: 0
   })
 
   // Specific Cuts
@@ -300,32 +300,78 @@ export default function DashboardPage() {
         setUpcomingCharts(nextWeekList) // Using this state to store next week for the columns
         setExecutedEvents(allMapped.filter(m => closedStatuses.includes(m.status)).sort((a,b) => safeLocal(b.date, a.date)).slice(0, 15))
 
-        let topPendingEventsCount = 0
-        const activeUniqueCompanies = new Set<string>()
-        let estimatedRev = 0
-        let pendingViandas = 0
-
-        futureEvs.forEach(ev => {
-           topPendingEventsCount++
-           estimatedRev += ev.revenue
-           pendingViandas += ev.sold
-           const m = masters.find(mast => mast.id === ev.id)
-           m?.event_projections?.forEach((p: any) => {
-              if (p.company_name) activeUniqueCompanies.add(p.company_name)
-           })
-        })
-
-        setMetrics({
-           eventCount: topPendingEventsCount,
-           activeCompanies: activeUniqueCompanies.size,
-           estimatedRevenue: estimatedRev,
-           pendingViandas: pendingViandas
-        })
-
         // Venues Rank
         const vRank = Object.keys(venueAggr).map(name => ({name, sold: venueAggr[name]})).filter(c => c.sold > 0).sort((a,b) => b.sold - a.sold).slice(0, 5)
         // Companies Rank
         const cRank = Object.keys(soldByCompany).map(name => ({name, sold: soldByCompany[name]})).filter(c => c.sold > 0).sort((a,b) => b.sold - a.sold).slice(0, 5)
+
+         const currentYear = today.getFullYear()
+         const currentMonthVal = String(today.getMonth() + 1).padStart(2, '0')
+         const currentMonthStr = `${currentYear}-${currentMonthVal}`
+
+         // Initialize service and tax maturities for the current month
+         try {
+            await Promise.all([
+               supabase.rpc('generar_vencimientos_mensuales', { p_periodo: currentMonthStr }),
+               supabase.rpc('generar_vencimientos_impuestos', { p_periodo: currentMonthStr })
+            ])
+         } catch (rpcErr) {
+            console.error("Error generating monthly maturities in dashboard:", rpcErr)
+         }
+
+         // Fetch unpaid service maturities for the current month
+         const { data: servsData } = await supabase
+            .from('vencimientos_servicios')
+            .select('monto')
+            .eq('mes_periodo', currentMonthStr)
+            .neq('estado_pago', 'pagado')
+
+         // Fetch unpaid tax maturities for the current month
+         const { data: taxesData } = await supabase
+            .from('vencimientos_impuestos')
+            .select('monto')
+            .eq('mes_periodo', currentMonthStr)
+            .neq('estado_pago', 'pagado')
+
+         // Fetch OCs in RECIBIDA state that are not paid
+         const { data: posData } = await supabase
+            .from('purchase_orders')
+            .select('costo_total, monto_pagado, fecha_vencimiento_pago')
+            .eq('estado', 'RECIBIDA')
+            .neq('estado_pago', 'pagado')
+
+         // Filter and aggregate deudas
+         const posThisMonth = posData?.filter(po => po.fecha_vencimiento_pago?.startsWith(currentMonthStr)) || []
+         const poDeudaThisMonth = posThisMonth.reduce((sum, po) => sum + (Number(po.costo_total) - Number(po.monto_pagado)), 0)
+         const servDeudaThisMonth = servsData?.reduce((sum, s) => sum + Number(s.monto), 0) || 0
+         const taxesDeudaThisMonth = taxesData?.reduce((sum, t) => sum + Number(t.monto), 0) || 0
+
+         const totalGastosAEjecutar = poDeudaThisMonth + servDeudaThisMonth + taxesDeudaThisMonth
+
+         const currentMonthEvents = allMapped.filter(ev => {
+            return ev.date.startsWith(currentMonthStr) && 
+                   ev.status !== "cancelado" && 
+                   ev.status !== "cancelada"
+         })
+
+         let topPendingEventsCount = currentMonthEvents.length
+         const activeUniqueCompanies = new Set<string>()
+         let estimatedRev = 0
+
+         currentMonthEvents.forEach(ev => {
+            estimatedRev += ev.revenue
+            const m = masters.find(mast => mast.id === ev.id)
+            m?.event_projections?.forEach((p: any) => {
+               if (p.company_name) activeUniqueCompanies.add(p.company_name)
+            })
+         })
+
+         setMetrics({
+            eventCount: topPendingEventsCount,
+            activeCompanies: activeUniqueCompanies.size,
+            estimatedRevenue: estimatedRev,
+            gastosAEjecutar: totalGastosAEjecutar
+         })
 
         setTopVenues(vRank)
         setTopCompanies(cRank)
@@ -530,14 +576,14 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Métrica 4: Viandas Pendientes */}
-        <div className="bg-white hover:bg-purple-50/20 border border-slate-200 hover:border-purple-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-100/50 flex items-center gap-4">
-          <div className="w-14 h-14 bg-slate-50 group-hover:bg-purple-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-purple-200 shrink-0 shadow-sm transition-all duration-300">
-            <Activity className="text-slate-500 group-hover:text-purple-600 transition-colors" size={24} />
+        {/* Métrica 4: Gastos a Ejecutar */}
+        <div className="bg-white hover:bg-rose-50/20 border border-slate-200 hover:border-rose-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-rose-100/50 flex items-center gap-4">
+          <div className="w-14 h-14 bg-slate-50 group-hover:bg-rose-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-rose-200 shrink-0 shadow-sm transition-all duration-300">
+            <TrendingDown className="text-slate-500 group-hover:text-rose-600 transition-colors" size={24} />
           </div>
           <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Viandas Pendientes</p>
-            <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-purple-900 transition-colors leading-none">{metrics.pendingViandas}</p>
+            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Gastos a Ejecutar</p>
+            <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-rose-900 transition-colors leading-none">{formatCurrency(metrics.gastosAEjecutar)}</p>
           </div>
         </div>
       </div>
