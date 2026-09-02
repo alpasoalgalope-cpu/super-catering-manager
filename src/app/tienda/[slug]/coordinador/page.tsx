@@ -124,17 +124,19 @@ export default async function CoordinatorStorePage({ params }: Props) {
       .eq('event_id', store.event_master_id)
 
     if (assignments && assignments.length > 0) {
+      const targetComp = (companyName || '').toLowerCase().trim()
       const matchingAssign: any = assignments.find((a: any) => {
         const cObj: any = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
-        const cComp = cObj?.company?.toLowerCase() || ''
-        const targetComp = companyName.toLowerCase()
-        return cComp.includes(targetComp) || targetComp.includes(cComp)
-      }) || assignments[0]
+        const cComp = (cObj?.company || '').toLowerCase().trim()
+        return cComp && targetComp && (cComp === targetComp || cComp.includes(targetComp) || targetComp.includes(cComp))
+      })
 
-      const coordObj: any = Array.isArray(matchingAssign?.coordinators) ? matchingAssign.coordinators[0] : matchingAssign?.coordinators
-      if (coordObj) {
-        defaultCoordName = coordObj.name || ''
-        defaultCoordPhone = coordObj.phone || ''
+      if (matchingAssign) {
+        const coordObj: any = Array.isArray(matchingAssign.coordinators) ? matchingAssign.coordinators[0] : matchingAssign.coordinators
+        if (coordObj) {
+          defaultCoordName = coordObj.name || ''
+          defaultCoordPhone = coordObj.phone || ''
+        }
       }
     }
   }

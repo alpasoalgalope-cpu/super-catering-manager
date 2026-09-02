@@ -119,8 +119,12 @@ export default async function LogisticaEventoPage({ params, searchParams }: Prop
   // C. Attach Coordinators from Event Bus Assignments if not set
   ev.event_bus_assignments?.forEach((ba: any) => {
     const cObj = Array.isArray(ba.coordinators) ? ba.coordinators[0] : ba.coordinators
-    if (cObj && cObj.company) {
-      const matchComp = Object.keys(companyMap).find(k => k.toLowerCase().includes(cObj.company.toLowerCase()) || cObj.company.toLowerCase().includes(k.toLowerCase()))
+    const cCompany = (cObj?.company || '').toLowerCase().trim()
+    if (cCompany) {
+      const matchComp = Object.keys(companyMap).find(k => {
+        const target = k.toLowerCase().trim()
+        return target && (target === cCompany || target.includes(cCompany) || cCompany.includes(target))
+      })
       if (matchComp && !companyMap[matchComp].coordinator_name) {
         companyMap[matchComp].coordinator_name = cObj.name || ""
         companyMap[matchComp].coordinator_phone = cObj.phone || ""

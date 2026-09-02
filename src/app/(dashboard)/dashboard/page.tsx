@@ -1339,7 +1339,7 @@ function EffectivenessCard({ show, role, onOpenPlan }: { show: any, role: string
                 const coordAssigned = show.coordinators?.find((c: any) => {
                   const comp = (c.company || '').toLowerCase().trim()
                   const pComp = (p.company || '').toLowerCase().trim()
-                  return comp.includes(pComp) || pComp.includes(comp)
+                  return comp && pComp && (comp === pComp || comp.includes(pComp) || pComp.includes(comp))
                 })
                 const coordName = coordAssigned?.name || ''
                 const coordPhoneClean = (coordAssigned?.phone || '').replace(/[^0-9]/g, '')
