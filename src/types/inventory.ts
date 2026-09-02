@@ -28,6 +28,10 @@ export interface Producto {
   precios_historicos?: PrecioHistorico[]
   proveedores?: { nombre: string }
   familias?: { nombre: string }
+  producto_proveedores?: {
+    proveedor_id: string
+    proveedores?: { nombre: string }
+  }[]
 }
 
 export interface PrecioHistorico {
@@ -69,7 +73,6 @@ export interface RecetaInsumo {
   productos?: Producto
 }
 
-// Zod schemas for form validation
 export const productFormSchema = z.object({
   familia_id: z.string().uuid("Seleccione una familia"),
   proveedor_id: z.string().uuid("Seleccione un proveedor"),
@@ -78,7 +81,16 @@ export const productFormSchema = z.object({
   factor_merma: z.coerce.number().min(0.01).max(1000, "El rinde debe ser entre 0.01 y 1000"),
   gramos_por_unidad: z.coerce.number().min(0.01, "El contenido debe ser mayor a 0"),
   iva_pct: z.coerce.number().min(0, "IVA no puede ser negativo"),
-  precio_neto: z.coerce.number().min(0, "El precio no puede ser negativo")
+  precio_neto: z.coerce.number().min(0, "El precio no puede ser negativo"),
+  proveedores_ids: z.array(z.string().uuid()).optional()
+}).refine(data => {
+  if (data.proveedores_ids && data.proveedores_ids.includes(data.proveedor_id)) {
+    return false
+  }
+  return true
+}, {
+  message: "El proveedor principal no puede estar seleccionado también como proveedor adicional",
+  path: ["proveedores_ids"]
 })
 
 export type ProductFormData = z.infer<typeof productFormSchema>

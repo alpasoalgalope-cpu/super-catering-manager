@@ -2,10 +2,36 @@
 
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
-import { Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, TrendingDown, History, MapPin, Building2, ChevronRight, Truck, Package, FileText, CheckCircle2 } from "lucide-react"
+import { 
+  Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, TrendingDown, 
+  History, MapPin, Building2, ChevronRight, Truck, Package, Copy, FileText, 
+  CheckCircle2, Sparkles, Camera, ExternalLink, MessageCircle, ShoppingBag, 
+  Store, Check, Bus, Send, Share2, User
+} from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
 import ReceivePOModal from "@/components/inventory/ReceivePOModal"
+import WeeklyBriefingModal from "@/components/dashboard/ai/WeeklyBriefingModal"
+import RemitoOCRModal from "@/components/dashboard/ai/RemitoOCRModal"
+import FinancialDiagnosisModal from "@/components/dashboard/ai/FinancialDiagnosisModal"
+import EventProductionPlanModal from "@/components/dashboard/ai/EventProductionPlanModal"
+import SupplierShortagesModal from "@/components/dashboard/ai/SupplierShortagesModal"
+import {
+  generateWeeklyBriefingAction,
+  predictSupplierShortagesAction,
+  generateFinancialDiagnosisAction,
+  generateEventProductionPlanAction
+} from "@/app/actions/gemini-copilot"
+
+function slugify(text: string) {
+  return text
+    .toString()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
 
 interface EventData {
    id: string
@@ -25,6 +51,14 @@ interface EventData {
       company: string
       pax: number
       adjusted: number
+      storeSlug?: string | null
+      storeIsActive?: boolean
+   }[]
+   onlineStores?: {
+      id: string
+      slug: string
+      title: string
+      is_active: boolean
    }[]
 }
 
@@ -54,61 +88,185 @@ export default function DashboardPage() {
   const [futureByVenue, setFutureByVenue] = useState<{name: string, projected: number}[]>([])
   const [futureByCompany, setFutureByCompany] = useState<{name: string, projected: number}[]>([])
   const [incomingPOs, setIncomingPOs] = useState<any[]>([])
+  const [receivingPoId, setReceivingPoId] = useState<string | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
   const [selectedPOId, setSelectedPOId] = useState<string | null>(null)
 
+  // Gemini Copilot AI States
+  const [briefingOpen, setBriefingOpen] = useState(false)
+  const [briefingLoading, setBriefingLoading] = useState(false)
+  const [briefingData, setBriefingData] = useState<any>(null)
+
+  const [financialOpen, setFinancialOpen] = useState(false)
+  const [financialLoading, setFinancialLoading] = useState(false)
+  const [financialData, setFinancialData] = useState<any>(null)
+
+  const [shortagesOpen, setShortagesOpen] = useState(false)
+  const [shortagesLoading, setShortagesLoading] = useState(false)
+  const [shortagesData, setShortagesData] = useState<any>(null)
+
+  const [ocrOpen, setOcrOpen] = useState(false)
+
+  const [eventPlanOpen, setEventPlanOpen] = useState(false)
+  const [eventPlanLoading, setEventPlanLoading] = useState(false)
+  const [eventPlanData, setEventPlanData] = useState<any>(null)
+
+  const handleOpenWeeklyBriefing = async () => {
+    setBriefingOpen(true)
+    setBriefingLoading(true)
+    try {
+      const res = await generateWeeklyBriefingAction(upcoming10Days)
+      if (res.success) setBriefingData(res.data)
+      else alert(res.error || "Error al generar briefing")
+    } catch (e: any) {
+      alert("Error: " + e.message)
+    } finally {
+      setBriefingLoading(false)
+    }
+  }
+
+  const handleOpenFinancialDiagnosis = async () => {
+    setFinancialOpen(true)
+    setFinancialLoading(true)
+    try {
+      const res = await generateFinancialDiagnosisAction(metrics, upcoming10Days)
+      if (res.success) setFinancialData(res.data)
+      else alert(res.error || "Error al generar diagnóstico")
+    } catch (e: any) {
+      alert("Error: " + e.message)
+    } finally {
+      setFinancialLoading(false)
+    }
+  }
+
+  const handleOpenShortages = async () => {
+    setShortagesOpen(true)
+    setShortagesLoading(true)
+    try {
+      const res = await predictSupplierShortagesAction(upcoming10Days, incomingPOs)
+      if (res.success) setShortagesData(res.data)
+      else alert(res.error || "Error al verificar faltantes")
+    } catch (e: any) {
+      alert("Error: " + e.message)
+    } finally {
+      setShortagesLoading(false)
+    }
+  }
+
+  const handleOpenEventPlan = async (show: any) => {
+    setEventPlanOpen(true)
+    setEventPlanLoading(true)
+    try {
+      const res = await generateEventProductionPlanAction(show)
+      if (res.success) setEventPlanData(res.data)
+      else alert(res.error || "Error al generar plan de producción")
+    } catch (e: any) {
+      alert("Error: " + e.message)
+    } finally {
+      setEventPlanLoading(false)
+    }
+  }
+
+  const fetchPOs = async () => {
+     const { data: poData, error: poErr } = await supabase
+        .from('purchase_orders')
+        .select(`
+           id,
+           fecha_esperada,
+           costo_total,
+           estado,
+           proveedores (nombre),
+           purchase_order_items (
+             cantidad,
+             productos (nombre, unidad_medida, gramos_por_unidad)
+           )
+        `)
+        .eq('estado', 'PENDIENTE')
+        .order('fecha_esperada', { ascending: true })
+
+     if (poErr) {
+        console.error("Dashboard PO fetch error:", poErr)
+        return
+     }
+
+     const today = new Date()
+     const currentDay = today.getDay()
+     const endOfThisWeek = new Date(today)
+     const daysToSunday = currentDay === 0 ? 0 : 7 - currentDay
+     endOfThisWeek.setDate(today.getDate() + daysToSunday)
+     endOfThisWeek.setHours(23,59,59,999)
+
+     const filteredPOs = poData ? poData.filter((po: any) => {
+        if (!po.fecha_esperada) return false
+        const poDate = new Date(po.fecha_esperada + 'T12:00:00')
+        return poDate <= endOfThisWeek
+     }) : []
+
+     setIncomingPOs(filteredPOs)
+  }
+
+  const handlePORecievedSuccess = () => {
+     setReceivingPoId(null)
+     fetchPOs()
+  }
+
   useEffect(() => {
-     const bootstrapDashboard = async () => {
+     async function checkRole() {
+       const { data: { user } } = await supabase.auth.getUser()
+       if (user) {
+         const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+         if (profile) setRole(profile.role)
+       }
+     }
+     checkRole()
+  }, [supabase])
+
+  useEffect(() => {
+     fetchPOs()
+  }, [refreshTrigger])
+
+  useEffect(() => {
+     async function bootstrapDashboard() {
         setLoading(true)
+        setFetchError(null)
 
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-           if (user.email === 'fschottenfeld@gmail.com') setRole('admin')
-           else if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') setRole('cocina')
-           else setRole(user.app_metadata?.role || user.user_metadata?.role || 'cocina')
-         }
-
-         // Fetch Pending Purchase Orders
-         const { data: poData, error: poErr } = await supabase
-            .from('purchase_orders')
-            .select(`
-               id,
-               fecha_esperada,
-               costo_total,
-               estado,
-               proveedores (nombre),
-                purchase_order_items (
-                  cantidad,
-                  productos (nombre, unidad_medida, gramos_por_unidad)
-                )
-            `)
-            .eq('estado', 'PENDIENTE')
-            .order('fecha_esperada', { ascending: true })
-
-         if (poErr) {
-            console.error("Dashboard PO fetch error:", poErr)
-         }
-
-        // 1. Fetch ALL Events Master (To capture History and Future)
-        const { data: masters, error } = await supabase
-           .from("events_master")
-            .select(`
-               id, event_date, show_name, status,
-               venues (name),
-               event_projections (
-                  id, 
-                  company_name, 
-                  projected_pax
-               ),
-               event_bus_assignments (
+        const [
+           { data: masters, error: mErr },
+           { data: clients, error: cErr },
+           { data: salesHeaders, error: sErr },
+           { data: pendingPOs, error: pErr },
+           { data: storesData }
+        ] = await Promise.all([
+           supabase
+              .from("events_master")
+              .select(`
                  id,
-                 coordinators (id, name, phone, company)
-               )
-            `)
+                 event_date,
+                 show_name,
+                 status,
+                 venues ( name ),
+                 event_projections (
+                    company_name,
+                    projected_pax
+                 ),
+                 event_bus_assignments (
+                    coordinators (
+                       name,
+                       phone,
+                       company
+                    )
+                 )
+              `)
+              .order("event_date", { ascending: true }),
+           supabase.from("clients").select("id", { count: "exact" }),
+           supabase.from("event_sales_headers").select("event_master_id, total_amount, total_sold"),
+           supabase.from("purchase_orders").select("costo_total").eq("estado", "PENDIENTE"),
+           supabase.from("online_store_events").select("id, event_master_id, slug, title, is_active")
+        ])
 
-        if (error) {
-           console.error("Dashboard master fetch error:", error)
-           setFetchError(JSON.stringify(error))
+        if (mErr) {
+           console.error("CRITICAL DASHBOARD ERROR:", mErr)
+           setFetchError("Error cargando base maestra de eventos: " + mErr.message)
            setLoading(false)
            return
         }
@@ -118,57 +276,30 @@ export default function DashboardPage() {
            return
         }
 
-        const masterIds = masters.map(m => m.id)
+        const totalGastosAEjecutar = pendingPOs?.reduce((acc, po) => acc + (Number(po.costo_total) || 0), 0) || 0
 
-        // 2. Fetch financial & logistic totals natively
-        const { data: headers, error: headErr } = await supabase
-           .from("event_sales_headers")
-           .select("id, event_master_id, total_amount, company_name") // adding company_name from headers too
-
-        if (headErr) {
-            console.error("Headers fetch error:", headErr);
-            setFetchError(JSON.stringify(headErr))
-            setLoading(false)
-            return
-        }
-
-        const soldByMaster: Record<string, number> = {}
         const revenueByMaster: Record<string, number> = {}
-        const soldByCompany: Record<string, number> = {}
+        const soldByMaster: Record<string, number> = {}
+        const companySalesAggr: Record<string, number> = {}
 
-        if (headers && headers.length > 0) {
-           const headerIds = headers.map(h => h.id)
-           
-           const { data: units } = await supabase
-              .from("event_sales_units")
-              .select("header_id, sold_qty")
-              .in("header_id", headerIds)
+        salesHeaders?.forEach(sh => {
+           if (sh.event_master_id) {
+              revenueByMaster[sh.event_master_id] = (revenueByMaster[sh.event_master_id] || 0) + (Number(sh.total_amount) || 0)
+              soldByMaster[sh.event_master_id] = (soldByMaster[sh.event_master_id] || 0) + (Number(sh.total_sold) || 0)
+           }
+        })
 
-           const unitsByHeader: Record<string, number> = {}
-           units?.forEach(u => {
-              unitsByHeader[u.header_id] = (unitsByHeader[u.header_id] || 0) + (Number(u.sold_qty) || 0)
-           })
+        const { data: salesCompanies } = await supabase
+           .from("event_sales_companies")
+           .select("company_name, quantity_total")
 
-           headers.forEach(h => {
-              const amount = Number(h.total_amount) || 0
-              const sold = unitsByHeader[h.id] || 0
-              
-              const mId = h.event_master_id
-              if (!soldByMaster[mId]) soldByMaster[mId] = 0
-              if (!revenueByMaster[mId]) revenueByMaster[mId] = 0
+        salesCompanies?.forEach(sc => {
+           if (sc.company_name) {
+              companySalesAggr[sc.company_name] = (companySalesAggr[sc.company_name] || 0) + (Number(sc.quantity_total) || 0)
+           }
+        })
 
-              soldByMaster[mId] += sold
-              revenueByMaster[mId] += amount
-
-              // For accurate company aggregation based on actual sales headers
-              const cName = h.company_name || 'Desconocido'
-              if (!soldByCompany[cName]) soldByCompany[cName] = 0
-              soldByCompany[cName] += sold
-           })
-        }
-
-        // 2.5 Fetch Clients for Conversion Factors & Rules
-        const [ { data: clientsData }, { data: rulesData } ] = await Promise.all([
+        const [{ data: clientsData }, { data: rulesData }] = await Promise.all([
            supabase.from("clients").select("name, conversion_factor"),
            supabase.from("commercial_rules").select("*")
         ])
@@ -185,28 +316,22 @@ export default function DashboardPage() {
            if (key) rulesMap[key] = r
         })
 
-        // 3. Mathematical Aggregation
         const today = new Date()
-        const currentDay = today.getDay() // 0 (Sun) - 6 (Sat)
-        const dayOffset = currentDay === 0 ? 6 : currentDay - 1
-
+        const currentDay = today.getDay()
         const todayDate = new Date(today)
         todayDate.setHours(0,0,0,0)
         
         const venueAggr: Record<string, number> = {}
 
-        // End of this week (Sunday)
         const endOfThisWeek = new Date(today)
         const daysToSunday = currentDay === 0 ? 0 : 7 - currentDay
         endOfThisWeek.setDate(today.getDate() + daysToSunday)
         endOfThisWeek.setHours(23,59,59,999)
 
-        // Start of next week (Monday)
         const startOfNextWeek = new Date(endOfThisWeek)
         startOfNextWeek.setDate(endOfThisWeek.getDate() + 1)
         startOfNextWeek.setHours(0,0,0,0)
 
-        // End of next week (Sunday after next)
         const endOfNextWeek = new Date(startOfNextWeek)
         endOfNextWeek.setDate(startOfNextWeek.getDate() + 6)
         endOfNextWeek.setHours(23,59,59,999)
@@ -215,13 +340,14 @@ export default function DashboardPage() {
            const eRev = revenueByMaster[m.id] || 0
            const eSold = soldByMaster[m.id] || 0
            
-           // Calculate Adjusted Projection and Projected Revenue
+           const eventStores = (storesData || []).filter((s: any) => s.event_master_id === m.id)
+
            let totalAdjustedProj = 0
            let totalProjectedRev = 0
-           const projections: {company: string, pax: number, adjusted: number}[] = []
+           const projections: {company: string, pax: number, adjusted: number, storeSlug?: string | null, storeIsActive?: boolean}[] = []
 
            m.event_projections?.forEach((p: any) => {
-              const compKey = p.company_name?.trim().toLowerCase()
+              const compKey = (p.company_name || "").trim().toLowerCase()
               const factor = conversionMap[compKey] || 1.0
               const rule = rulesMap[compKey]
               
@@ -229,14 +355,33 @@ export default function DashboardPage() {
               const adjustedSales = basePax * factor
               totalAdjustedProj += adjustedSales
 
+              // Match store by event_master_id first or by slug pattern
+              let matchedStore = eventStores.find((s: any) => {
+                 const sTitle = (s.title || "").toLowerCase()
+                 const sSlug = (s.slug || "").toLowerCase()
+                 const cleanComp = compKey.replace(/[^a-z0-9]/g, "")
+                 return sTitle.includes(compKey) || sSlug.includes(cleanComp)
+              })
+
+              if (!matchedStore) {
+                 matchedStore = (storesData || []).find((s: any) => {
+                    const sSlug = (s.slug || "").toLowerCase()
+                    const cleanComp = compKey.replace(/[^a-z0-9]/g, "")
+                    return sSlug.includes(m.event_date) && sSlug.includes(cleanComp)
+                 })
+              }
+
+              const autoSlug = `${slugify(m.show_name)}-${slugify(p.company_name)}-${m.event_date}`
+
               projections.push({
                  company: p.company_name,
                  pax: basePax,
-                 adjusted: Math.round(adjustedSales)
+                 adjusted: Math.round(adjustedSales),
+                 storeSlug: matchedStore?.slug || autoSlug,
+                 storeIsActive: matchedStore?.is_active ?? true
               })
               
               if (rule) {
-                 // Formula solicitada: PAX Ajustado * Precio Base (Sin restar liberados, costeando el 100%)
                  totalProjectedRev += adjustedSales * (Number(rule.price_base) || 0)
               }
            })
@@ -249,11 +394,14 @@ export default function DashboardPage() {
             const coordinators: {name: string, phone: string, company: string}[] = []
             m.event_bus_assignments?.forEach((ba: any) => {
                if (ba.coordinators) {
-                  coordinators.push({
-                     name: ba.coordinators.name,
-                     phone: ba.coordinators.phone,
-                     company: ba.coordinators.company
-                  })
+                  const cObj = Array.isArray(ba.coordinators) ? ba.coordinators[0] : ba.coordinators
+                  if (cObj) {
+                     coordinators.push({
+                        name: cObj.name || "",
+                        phone: cObj.phone || "",
+                        company: cObj.company || ""
+                     })
+                  }
                }
             })
 
@@ -267,7 +415,8 @@ export default function DashboardPage() {
                sold: eSold,
                revenue: eRev > 0 ? eRev : totalProjectedRev,
                coordinators,
-               projections
+               projections,
+               onlineStores: eventStores
             }
         })
 
@@ -278,7 +427,6 @@ export default function DashboardPage() {
 
         allMapped.sort((a,b) => safeLocal(a.date, b.date))
         
-        const pendingStatuses = ["pendiente", "proyectado", "proyectada", "confirmado"]
         const closedStatuses = ["ejecutado", "ejecutada", "cancelado", "cancelada"]
 
         const futureEvs = allMapped.filter(m => {
@@ -297,86 +445,32 @@ export default function DashboardPage() {
         })
 
         setUpcoming10Days(thisWeekList)
-        setUpcomingCharts(nextWeekList) // Using this state to store next week for the columns
+        setUpcomingCharts(nextWeekList)
         setExecutedEvents(allMapped.filter(m => closedStatuses.includes(m.status)).sort((a,b) => safeLocal(b.date, a.date)).slice(0, 15))
 
-        // Venues Rank
-        const vRank = Object.keys(venueAggr).map(name => ({name, sold: venueAggr[name]})).filter(c => c.sold > 0).sort((a,b) => b.sold - a.sold).slice(0, 5)
-        // Companies Rank
-        const cRank = Object.keys(soldByCompany).map(name => ({name, sold: soldByCompany[name]})).filter(c => c.sold > 0).sort((a,b) => b.sold - a.sold).slice(0, 5)
+        const totalEstimatedRev = futureEvs.reduce((acc, curr) => acc + curr.revenue, 0)
+        setMetrics({
+           eventCount: futureEvs.length,
+           activeCompanies: clients?.length || 0,
+           estimatedRevenue: totalEstimatedRev,
+           gastosAEjecutar: totalGastosAEjecutar
+        })
 
-         const currentYear = today.getFullYear()
-         const currentMonthVal = String(today.getMonth() + 1).padStart(2, '0')
-         const currentMonthStr = `${currentYear}-${currentMonthVal}`
+        setTopVenues(
+           Object.keys(venueAggr)
+              .map(name => ({ name, sold: venueAggr[name] }))
+              .filter(v => v.name !== "-")
+              .sort((a,b) => b.sold - a.sold)
+              .slice(0, 5)
+        )
 
-         // Initialize service and tax maturities for the current month
-         try {
-            await Promise.all([
-               supabase.rpc('generar_vencimientos_mensuales', { p_periodo: currentMonthStr }),
-               supabase.rpc('generar_vencimientos_impuestos', { p_periodo: currentMonthStr })
-            ])
-         } catch (rpcErr) {
-            console.error("Error generating monthly maturities in dashboard:", rpcErr)
-         }
+        setTopCompanies(
+           Object.keys(companySalesAggr)
+              .map(name => ({ name, sold: companySalesAggr[name] }))
+              .sort((a,b) => b.sold - a.sold)
+              .slice(0, 5)
+        )
 
-         // Fetch unpaid service maturities for the current month
-         const { data: servsData } = await supabase
-            .from('vencimientos_servicios')
-            .select('monto')
-            .eq('mes_periodo', currentMonthStr)
-            .neq('estado_pago', 'pagado')
-
-         // Fetch unpaid tax maturities for the current month
-         const { data: taxesData } = await supabase
-            .from('vencimientos_impuestos')
-            .select('monto')
-            .eq('mes_periodo', currentMonthStr)
-            .neq('estado_pago', 'pagado')
-
-         // Fetch OCs in RECIBIDA state that are not paid
-         const { data: posData } = await supabase
-            .from('purchase_orders')
-            .select('costo_total, monto_pagado, fecha_vencimiento_pago')
-            .eq('estado', 'RECIBIDA')
-            .neq('estado_pago', 'pagado')
-
-         // Filter and aggregate deudas
-         const posThisMonth = posData?.filter(po => po.fecha_vencimiento_pago?.startsWith(currentMonthStr)) || []
-         const poDeudaThisMonth = posThisMonth.reduce((sum, po) => sum + (Number(po.costo_total) - Number(po.monto_pagado)), 0)
-         const servDeudaThisMonth = servsData?.reduce((sum, s) => sum + Number(s.monto), 0) || 0
-         const taxesDeudaThisMonth = taxesData?.reduce((sum, t) => sum + Number(t.monto), 0) || 0
-
-         const totalGastosAEjecutar = poDeudaThisMonth + servDeudaThisMonth + taxesDeudaThisMonth
-
-         const currentMonthEvents = allMapped.filter(ev => {
-            return ev.date.startsWith(currentMonthStr) && 
-                   ev.status !== "cancelado" && 
-                   ev.status !== "cancelada"
-         })
-
-         let topPendingEventsCount = currentMonthEvents.length
-         const activeUniqueCompanies = new Set<string>()
-         let estimatedRev = 0
-
-         currentMonthEvents.forEach(ev => {
-            estimatedRev += ev.revenue
-            const m = masters.find(mast => mast.id === ev.id)
-            m?.event_projections?.forEach((p: any) => {
-               if (p.company_name) activeUniqueCompanies.add(p.company_name)
-            })
-         })
-
-         setMetrics({
-            eventCount: topPendingEventsCount,
-            activeCompanies: activeUniqueCompanies.size,
-            estimatedRevenue: estimatedRev,
-            gastosAEjecutar: totalGastosAEjecutar
-         })
-
-        setTopVenues(vRank)
-        setTopCompanies(cRank)
-
-        // FUTURE ANALYSIS CALCULATIONS
         const monthAggr: Record<string, number> = {}
         const futVenueAggr: Record<string, number> = {}
         const futCompanyAggr: Record<string, number> = {}
@@ -400,16 +494,6 @@ export default function DashboardPage() {
         setFutureByMonth(Object.keys(monthAggr).map(name => ({name, projected: monthAggr[name]})))
         setFutureByVenue(Object.keys(futVenueAggr).map(name => ({name, projected: futVenueAggr[name]})).sort((a,b) => b.projected - a.projected))
         setFutureByCompany(Object.keys(futCompanyAggr).map(name => ({name, projected: futCompanyAggr[name]})))
-
-         // Filter pending POs for this week and overdue
-         const filteredPOs = poData ? poData.filter((po: any) => {
-            if (!po.fecha_esperada) return false
-            const poDate = new Date(po.fecha_esperada + 'T12:00:00')
-            // Show if it is overdue (before today) OR if it is within this week
-            return poDate <= endOfThisWeek
-         }) : []
-         
-         setIncomingPOs(filteredPOs)
 
         setLoading(false)
      }
@@ -439,16 +523,11 @@ export default function DashboardPage() {
       )
   }
 
-  const today = new Date()
-  const todayDate = new Date(today)
-  todayDate.setHours(0,0,0,0)
-
   const formatCurrency = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
-  const downloadPOText = () => {
+  const copyPOText = () => {
      if (incomingPOs.length === 0) return
 
-     // Sort POs by date
      const sortedPOs = [...incomingPOs].sort((a, b) => {
         if (!a.fecha_esperada) return 1
         if (!b.fecha_esperada) return -1
@@ -457,7 +536,6 @@ export default function DashboardPage() {
 
      let text = `📦 *ENTREGAS PENDIENTES - RECIBIR ESTA SEMANA*\n\n`
 
-     // Group POs by date
      const groupedByDate: Record<string, any[]> = {}
      sortedPOs.forEach(po => {
         const dateStr = po.fecha_esperada || 'Sin Fecha'
@@ -500,28 +578,20 @@ export default function DashboardPage() {
 
      text += `_Generado automáticamente desde Super Catering Manager_`
 
-     // Create and trigger download
-     const blob = new Blob([text], { type: 'text/plain;charset=utf-8;' })
-     const url = URL.createObjectURL(blob)
-     const link = document.createElement('a')
-     link.href = url
-     link.setAttribute('download', `entregas_semana_${new Date().toISOString().split('T')[0]}.txt`)
-     document.body.appendChild(link)
-     link.click()
-     document.body.removeChild(link)
+     navigator.clipboard.writeText(text)
+     alert("Lista de entregas copiada al portapapeles con éxito!")
   }
 
   return (
     <div className="space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
-      {/* Estilos locales para inyectar CSS que oculte barras de scroll nativas en paneles verticales */}
       <style>{`
         .scrollbar-none::-webkit-scrollbar {
           display: none;
         }
         .scrollbar-none {
-          -ms-overflow-style: none;  /* IE and Edge */
-          scrollbar-width: none;  /* Firefox */
+          -ms-overflow-style: none;
+          scrollbar-width: none;
         }
       `}</style>
 
@@ -539,7 +609,7 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Tarjetas de Accesos Rápidos / Métricas en Header con Micro-interacciones */}
+      {/* Tarjetas de Accesos Rápidos / Métricas en Header */}
       <div className={`grid grid-cols-2 ${role === 'cocina' ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-6 mb-10`}>
         {/* Métrica 1: Shows Activos */}
         <div className="bg-white hover:bg-indigo-50/20 border border-slate-200 hover:border-indigo-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-100/50 flex items-center gap-4">
@@ -563,16 +633,25 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Métrica 3: Previsión Financiera */}
+        {/* Métrica 3: Previsión Financiera con Copiloto IA */}
         {role !== 'cocina' && (
-          <div className="bg-white hover:bg-amber-50/20 border border-slate-200 hover:border-amber-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-amber-100/50 flex items-center gap-4">
-            <div className="w-14 h-14 bg-slate-50 group-hover:bg-amber-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-amber-200 shrink-0 shadow-sm transition-all duration-300">
-              <DollarSign className="text-slate-500 group-hover:text-amber-600 transition-colors" size={24} />
+          <div className="bg-white hover:bg-amber-50/20 border border-slate-200 hover:border-amber-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-amber-100/50 flex flex-col justify-between">
+            <div className="flex items-center gap-4">
+              <div className="w-14 h-14 bg-slate-50 group-hover:bg-amber-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-amber-200 shrink-0 shadow-sm transition-all duration-300">
+                <DollarSign className="text-slate-500 group-hover:text-amber-600 transition-colors" size={24} />
+              </div>
+              <div>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Previsión Ventas</p>
+                <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-amber-900 transition-colors leading-none">{formatCurrency(metrics.estimatedRevenue)}</p>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Previsión Ventas</p>
-              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-amber-900 transition-colors leading-none">{formatCurrency(metrics.estimatedRevenue)}</p>
-            </div>
+
+            <button
+              onClick={handleOpenFinancialDiagnosis}
+              className="mt-4 w-full py-1.5 px-3 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
+            >
+              <Sparkles size={11} className="text-amber-200 animate-pulse" /> Diagnóstico Financiero IA
+            </button>
           </div>
         )}
 
@@ -588,10 +667,10 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Grid General con Dos Columnas Estables (Sin Scroll Horizontal en ningún caso) */}
+      {/* Grid General con Dos Columnas Estables */}
       <div className="grid lg:grid-cols-3 gap-8 items-start">
          
-         {/* COLUMNA 1 y 2: SHOWS PRÓXIMAS SEMANAS (2/3 de ancho) */}
+         {/* COLUMNA 1 y 2: SHOWS PRÓXIMAS SEMANAS */}
          <div className="lg:col-span-2 bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
            <div className="mb-12">
              <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
@@ -613,12 +692,14 @@ export default function DashboardPage() {
                footerTitle="Planificación de Compras"
                footerLabel="PAX AJUSTADOS"
                role={role}
+               onOpenBriefing={handleOpenWeeklyBriefing}
+               onOpenPlan={handleOpenEventPlan}
              />
              
              <SectionView 
                title="Próxima Semana" 
                shows={upcomingCharts} 
-               subtitle="Lunes — Domingo"
+               subtitle="Lunes — Domingo" 
                total_projected={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
                total_adjusted={upcomingCharts.reduce((acc, curr) => acc + curr.projected, 0)}
                total_revenue={upcomingCharts.reduce((acc, curr) => acc + curr.revenue, 0)}
@@ -626,63 +707,80 @@ export default function DashboardPage() {
                footerTitle="Previsión Logística"
                footerLabel="PAX ESTIMADOS"
                role={role}
+               onOpenBriefing={handleOpenWeeklyBriefing}
+               onOpenPlan={handleOpenEventPlan}
              />
-           </div>
-         </div>
-
-          {/* COLUMNA 3: MERCADERÍA A RECIBIR (1/3 de ancho) */}
-          <div className="lg:col-span-1 bg-white rounded-[2.5rem] border border-slate-200 p-6 md:p-8 shadow-xl shadow-slate-200/50">
-            <div className="mb-6 flex justify-between items-start gap-4">
-              <div>
-                <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
-                  <Truck className="text-indigo-600 animate-pulse" size={28} /> 
-                  Recibir esta Semana
-                </h3>
-                <p className="text-xs text-slate-500 font-medium mt-1">Mercadería a recibir de proveedores.</p>
-              </div>
-              {incomingPOs.length > 0 && (
-                <button
-                  onClick={downloadPOText}
-                  className="flex items-center gap-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm shrink-0"
-                  title="Descargar lista para WhatsApp"
-                >
-                  <FileText size={14} />
-                  WhatsApp
-                </button>
-              )}
             </div>
-            
-            {/* Contenedor con scroll vertical limpio para entregas de mercadería */}
-            <div className="relative group/scroll-po">
-               <div className="space-y-4 max-h-[780px] overflow-y-auto pr-2 scrollbar-none scroll-smooth pb-10">
+          </div>
+          
+          {/* COLUMNA 3: MERCADERÍA A RECIBIR */}
+          <div className="lg:col-span-1 bg-white rounded-[2.5rem] border border-slate-200 p-6 md:p-8 shadow-xl shadow-slate-200/50">
+            <div className="mb-4">
+              <div className="flex justify-between items-start gap-4 mb-3">
+                <div>
+                  <span className="text-[10px] font-black uppercase text-indigo-500 tracking-[0.2em] flex items-center gap-1.5">
+                     <Truck size={14}/> Recibir esta Semana
+                  </span>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Mercadería a recibir de proveedores.</p>
+                </div>
+                <button 
+                  onClick={copyPOText} 
+                  disabled={incomingPOs.length === 0}
+                  className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-[9px] font-black uppercase tracking-wider transition-all flex items-center gap-1 shadow-2xs disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
+                  title="Copiar lista de entregas para WhatsApp"
+                >
+                  <Copy size={11} /> WhatsApp
+                </button>
+              </div>
+
+              {/* Botones de IA para Recepción y Control Predictivo */}
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <button
+                  onClick={() => setOcrOpen(true)}
+                  className="py-2 px-2.5 bg-gradient-to-r from-teal-600 to-emerald-600 hover:from-teal-500 hover:to-emerald-500 text-white rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 shadow-xs transition active:scale-95 cursor-pointer"
+                  title="Subir o tomar foto de remito papel para escanear con IA"
+                >
+                  <Camera size={12} /> Escanear Remito IA
+                </button>
+                <button
+                  onClick={handleOpenShortages}
+                  className="py-2 px-2.5 bg-slate-900 hover:bg-slate-800 text-teal-300 rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1 shadow-xs transition active:scale-95 cursor-pointer border border-slate-700"
+                  title="Verificar si los insumos a recibir alcanzan para los shows de la semana"
+                >
+                  <Truck size={12} /> Faltantes IA
+                </button>
+              </div>
+            </div>
+
+            <div className="relative">
+               <div className="space-y-4 max-h-[620px] overflow-y-auto pr-1 scrollbar-none pb-8">
                   {incomingPOs.length === 0 ? (
-                     <div className="py-16 text-center bg-slate-50 rounded-[2rem] border border-dashed border-slate-200">
-                        <Package className="mx-auto text-slate-300 mb-3" size={32} />
-                        <p className="text-slate-400 font-bold uppercase tracking-widest text-[10px]">Sin entregas pendientes</p>
+                     <div className="py-12 text-center bg-slate-50 border border-slate-100 rounded-3xl p-6">
+                        <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Sin entregas pendientes</p>
                      </div>
                   ) : (
-                     incomingPOs.map((po, index) => {
-                        const poDate = new Date(po.fecha_esperada + 'T12:00:00')
-                        const isOverdue = poDate < todayDate
-                        const isPoToday = po.fecha_esperada === today.toLocaleDateString('sv-SE')
+                     incomingPOs.map((po: any) => {
+                        const poDate = po.fecha_esperada ? new Date(po.fecha_esperada + 'T12:00:00') : null
+                        const weekday = poDate ? poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '') : '-'
+                        const dayNum = poDate ? poDate.getDate() : '-'
+                        const monthName = poDate ? poDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.', '') : ''
                         
-                        const weekday = poDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
-                        const dayNum = poDate.getDate()
-                        const monthName = poDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.', '')
-                        
+                        const isOverdue = poDate && poDate < new Date(new Date().setHours(0,0,0,0))
+                        const isPoToday = poDate && poDate.toDateString() === new Date().toDateString()
+
                         return (
                            <div 
                               key={po.id} 
-                              className={`p-4 rounded-[1.5rem] border transition-all duration-300 relative hover:shadow-md ${
+                              className={`border rounded-3xl p-4 transition-all duration-200 relative group ${
                                  isPoToday 
-                                    ? 'border-emerald-400 bg-emerald-50/10 ring-2 ring-emerald-50 shadow-sm' 
+                                    ? 'bg-emerald-50/40 border-emerald-200 shadow-sm' 
                                     : isOverdue 
-                                       ? 'border-rose-300 bg-rose-50/10' 
-                                       : 'border-slate-200 hover:border-indigo-300 bg-white shadow-sm'
+                                       ? 'bg-rose-50/40 border-rose-200 shadow-sm' 
+                                       : 'bg-white hover:bg-slate-50 border-slate-200/80'
                               }`}
                            >
-                              <div className="flex justify-between items-start gap-2">
-                                 <div className="flex gap-3 min-w-0 flex-1 items-center">
+                              <div className="flex items-start justify-between gap-3">
+                                 <div className="flex items-center gap-3">
                                     <div className={`flex flex-col items-center justify-center w-10 h-12 rounded-xl border text-center shrink-0 ${
                                        isPoToday 
                                           ? 'bg-emerald-500 border-emerald-600 text-white' 
@@ -755,12 +853,19 @@ export default function DashboardPage() {
                                     Recepcionar
                                  </button>
                               </div>
+
+                              <button
+                                onClick={() => setReceivingPoId(po.id)}
+                                className="mt-3 w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest transition shadow-sm flex items-center justify-center gap-1.5"
+                              >
+                                <Truck size={14} />
+                                Recibir
+                              </button>
                            </div>
                         )
                      })
                   )}
                </div>
-               {/* Gradiente sutil indicador al final de la columna scrollable */}
                <div className="absolute left-0 right-2 bottom-0 h-16 bg-gradient-to-t from-white to-transparent pointer-events-none opacity-90" />
             </div>
           </div>
@@ -904,6 +1009,14 @@ export default function DashboardPage() {
             </div>
          </div>
 
+      {receivingPoId && (
+        <ReceivePOModal
+          orderId={receivingPoId}
+          onClose={() => setReceivingPoId(null)}
+          onSuccess={handlePORecievedSuccess}
+        />
+      )}
+
       </div>
 
       {selectedPOId && (
@@ -916,6 +1029,45 @@ export default function DashboardPage() {
           }}
         />
       )}
+
+      {/* MODALES DE INTELIGENCIA ARTIFICIAL GEMINI */}
+      <WeeklyBriefingModal
+        isOpen={briefingOpen}
+        onClose={() => setBriefingOpen(false)}
+        briefingData={briefingData}
+        loading={briefingLoading}
+      />
+
+      <FinancialDiagnosisModal
+        isOpen={financialOpen}
+        onClose={() => setFinancialOpen(false)}
+        data={financialData}
+        loading={financialLoading}
+      />
+
+      <SupplierShortagesModal
+        isOpen={shortagesOpen}
+        onClose={() => setShortagesOpen(false)}
+        data={shortagesData}
+        loading={shortagesLoading}
+      />
+
+      <RemitoOCRModal
+        isOpen={ocrOpen}
+        onClose={() => setOcrOpen(false)}
+        onApplyData={(data) => {
+          console.log("OCR Data Received:", data)
+          alert(`Remito de ${data.proveedor_detectado || 'Proveedor'} (${data.nro_comprobante || 'S/N'}) detectado con ${data.items?.length || 0} ítems.`)
+        }}
+      />
+
+      <EventProductionPlanModal
+        isOpen={eventPlanOpen}
+        onClose={() => setEventPlanOpen(false)}
+        data={eventPlanData}
+        loading={eventPlanLoading}
+      />
+
     </div>
   )
 }
@@ -924,7 +1076,7 @@ export default function DashboardPage() {
 
 const formatCurrencyLocal = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
-function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel, role }: any) {
+function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel, role, onOpenBriefing, onOpenPlan }: any) {
   if (shows.length === 0) return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b-4 border-slate-100 pb-4">
@@ -950,7 +1102,16 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
             <h4 className={`text-2xl font-black ${colors.text} uppercase tracking-tight italic`}>{title}</h4>
             <span className={`text-[10px] font-black ${colors.bg} ${colors.text} px-3 py-1 rounded-full uppercase tracking-widest`}>{subtitle}</span>
          </div>
-         <div className="flex items-center gap-6">
+         <div className="flex items-center gap-4">
+            {title === "Esta Semana" && onOpenBriefing && (
+              <button
+                onClick={onOpenBriefing}
+                className="px-4 py-2 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-800 hover:from-indigo-500 hover:to-purple-500 text-white rounded-2xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1.5 shadow-md shadow-indigo-500/20 transition-all active:scale-95 cursor-pointer"
+                title="Generar minuta y briefing de producción para WhatsApp con Gemini"
+              >
+                <Sparkles size={14} className="text-amber-300 animate-pulse" /> Minuta Semanal IA
+              </button>
+            )}
             <div className="text-right">
               <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Previsión de Compra</p>
               <p className={`text-xl font-black ${colors.text} tabular-nums`}>{total_adjusted} PAX</p>
@@ -983,10 +1144,9 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
                     <div className="h-px bg-indigo-100 flex-1"></div>
                  </div>
                  
-                 {/* Cuadrícula Adaptativa Dinámica: 1 columna si hay un solo show, 2 columnas en pantallas medianas si hay más */}
                  <div className={`grid grid-cols-1 ${group.shows.length > 1 ? 'md:grid-cols-2' : ''} gap-6`}>
                     {group.shows.map((show: any, j: number) => (
-                      <EffectivenessCard key={j} show={show} role={role} />
+                      <EffectivenessCard key={j} show={show} role={role} onOpenPlan={onOpenPlan} />
                     ))}
                  </div>
               </div>
@@ -1028,7 +1188,9 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
   )
 }
 
-function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
+function EffectivenessCard({ show, role, onOpenPlan }: { show: any, role: string | null, onOpenPlan?: (show: any) => void }) {
+  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
   const evDate = new Date(show.date + 'T12:00:00')
   const weekday = evDate.toLocaleDateString('es-AR', { weekday: 'short' }).toUpperCase().replace('.', '')
   const day = evDate.getDate()
@@ -1043,6 +1205,20 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
     pendiente: 'bg-amber-50 text-amber-900 border-amber-200'
   }
   const cls = statusColors[show.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'
+
+  const buildWhatsAppMessage = (coordUrl: string, storeUrl: string, coordinatorName?: string) => {
+    const nameFirst = coordinatorName?.trim() ? coordinatorName.trim().split(' ')[0] : ''
+    const greeting = nameFirst ? `Hola ${nameFirst}! Como estás?` : `Hola! Como estás?`
+
+    return `${greeting}\nTe dejo para que tengas a mano el link de gestión para el día de hoy. Acá vas a encontrar el detalle de pasajeros que van pidiendo, y podés además declarar la ubicación una vez que estacionan: ${coordUrl}\n\nAdemás, para que puedas copiar y pegar, te dejo la propuesta armada!\n\n*🥪 ¡Cená en el micro a la vuelta del show!*\n\nPara que no pierdas tiempo buscando comida a la salida ni hagas filas eternas, ya podés reservar tu vianda fresca para el regreso. Te subís al micro y ya tenés tu cena lista.\n\n*Elegí tu combo:*\n\n🥖 Tradicional: Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.\n🥑 Vegetariano: Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.\n🌾 Sin TACC: Pan árabe de jamón y queso (envasado al vacío certificado) + Agua mineral 500ml.\n\n*💳 Precios:*\nMenú Tradicional / Vegetariano: $12.000\nMenú Sin TACC: $15.000 (Pagás directo con Mercado Pago: tarjetas, débito o dinero en cuenta)\n⚠️ Cupos limitados por viaje. Los pedidos se reciben hasta las 12:30 hs.\n\n👉 Hacé tu reserva online acá: ${storeUrl}`
+  }
+
+  const handleCopyMessagePack = (coordUrl: string, storeUrl: string, key: string, coordinatorName?: string) => {
+    const text = buildWhatsAppMessage(coordUrl, storeUrl, coordinatorName)
+    navigator.clipboard.writeText(text)
+    setCopiedKey(key)
+    setTimeout(() => setCopiedKey(null), 2500)
+  }
 
   return (
     <div className={`block bg-white rounded-[2.5rem] border shadow-sm hover:shadow-lg transition-all duration-300 relative flex flex-col justify-between h-full p-6
@@ -1083,13 +1259,29 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
              ? 'bg-emerald-50/50 border-emerald-100' 
              : 'bg-slate-50 border-slate-100'
         }`}>
-          {show.coordinators.map((c: any, idx: number) => (
-            <div key={idx} className="flex items-center gap-2 text-xs">
-              <Users size={12} className={isToday ? "text-emerald-600 shrink-0" : "text-indigo-500 shrink-0"} />
-              <span className="font-bold text-slate-700">{c.name} ({c.company}):</span>
-              <span className="text-slate-500 font-medium">{c.phone}</span>
-            </div>
-          ))}
+          {show.coordinators.map((c: any, idx: number) => {
+            const phoneClean = (c.phone || '').replace(/[^0-9]/g, '')
+            return (
+              <div key={idx} className="flex items-center justify-between gap-2 text-xs">
+                <div className="flex items-center gap-2 truncate">
+                  <Users size={12} className={isToday ? "text-emerald-600 shrink-0" : "text-indigo-500 shrink-0"} />
+                  <span className="font-bold text-slate-700 truncate">{c.name} ({c.company}):</span>
+                  <span className="text-slate-500 font-medium">{c.phone}</span>
+                </div>
+                {phoneClean && (
+                  <a
+                    href={`https://wa.me/${phoneClean}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-1 text-emerald-600 hover:bg-emerald-100 rounded-lg transition shrink-0"
+                    title="WhatsApp Coordinador"
+                  >
+                    <MessageCircle size={14} />
+                  </a>
+                )}
+              </div>
+            )
+          })}
         </div>
       )}
 
@@ -1129,16 +1321,125 @@ function EffectivenessCard({ show, role }: { show: any, role: string | null }) {
             </div>
           </div>
         )}
+
+        {/* ACCESOS RÁPIDOS Y PACK INTEGRAL DE WHATSAPP POR EMPRESA */}
+        {show.projections && show.projections.length > 0 && (
+          <div className="pt-3.5 border-t border-slate-200/80 space-y-2.5">
+            <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1">
+              <Store size={12} /> Pack WhatsApp y Links por Empresa:
+            </p>
+
+            <div className="space-y-2.5">
+              {show.projections.map((p: any, idx: number) => {
+                const origin = typeof window !== 'undefined' ? window.location.origin : ''
+                const targetSlug = p.storeSlug || `${slugify(show.show)}-${slugify(p.company)}-${show.date}`
+                const storeUrl = `${origin}/tienda/${targetSlug}`
+                const coordUrl = `${origin}/tienda/${targetSlug}/coordinador`
+
+                const coordAssigned = show.coordinators?.find((c: any) => {
+                  const comp = (c.company || '').toLowerCase().trim()
+                  const pComp = (p.company || '').toLowerCase().trim()
+                  return comp.includes(pComp) || pComp.includes(comp)
+                })
+                const coordName = coordAssigned?.name || ''
+                const coordPhoneClean = (coordAssigned?.phone || '').replace(/[^0-9]/g, '')
+                const isPackCopied = copiedKey === `pack-${p.company}`
+
+                return (
+                  <div key={idx} className="bg-white border border-slate-200/90 rounded-2xl p-3 shadow-2xs space-y-2.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 truncate max-w-[170px]">
+                        <span className="font-black text-slate-800 uppercase truncate" title={p.company}>
+                          {p.company}
+                        </span>
+                        {coordName && (
+                          <span className="bg-indigo-50 border border-indigo-100 text-indigo-700 text-[8px] font-black px-1.5 py-0.5 rounded-md flex items-center gap-0.5 shrink-0" title={`Coordinador: ${coordName}`}>
+                            <User size={8} /> {coordName.split(' ')[0]}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[9px] font-black text-slate-400 uppercase shrink-0">
+                        {p.adjusted} PAX
+                      </span>
+                    </div>
+
+                    {/* BOTÓN PRINCIPAL: PACK COMPLETO DE WHATSAPP (PERSONALIZADO CON NOMBRE) */}
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleCopyMessagePack(coordUrl, storeUrl, `pack-${p.company}`, coordName)}
+                        className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer active:scale-95 ${
+                          isPackCopied
+                            ? 'bg-emerald-600 text-white'
+                            : 'bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 text-white'
+                        }`}
+                        title={`Copiar propuesta y links para ${coordName || p.company}`}
+                      >
+                        {isPackCopied ? <Check size={13} /> : <Copy size={13} />}
+                        <span>{isPackCopied ? '¡Mensaje Copiado!' : coordName ? `Copiar Pack (${coordName.split(' ')[0]})` : 'Copiar Mensaje Pack'}</span>
+                      </button>
+
+                      {coordPhoneClean && (
+                        <a
+                          href={`https://wa.me/${coordPhoneClean}?text=${encodeURIComponent(buildWhatsAppMessage(coordUrl, storeUrl, coordName))}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="p-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 border border-emerald-200 rounded-xl transition cursor-pointer flex items-center justify-center shrink-0"
+                          title={`Enviar Pack a ${coordName || 'Coordinador'} por WhatsApp`}
+                        >
+                          <MessageCircle size={15} />
+                        </a>
+                      )}
+                    </div>
+
+                    {/* Mini accesos para abrir directamente en navegador */}
+                    <div className="flex items-center justify-between pt-1 border-t border-slate-100 text-[9px] font-bold text-slate-500">
+                      <Link
+                        href={`/tienda/${targetSlug}`}
+                        target="_blank"
+                        className="text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline truncate max-w-[120px]"
+                      >
+                        <ShoppingBag size={10} /> <span>Abrir Tienda</span>
+                      </Link>
+
+                      <Link
+                        href={`/tienda/${targetSlug}/coordinador`}
+                        target="_blank"
+                        className="text-teal-700 hover:text-teal-900 flex items-center gap-1 hover:underline truncate max-w-[120px]"
+                      >
+                        <Bus size={10} /> <span>Abrir Panel Coordi</span>
+                      </Link>
+                    </div>
+
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Botones de Acción */}
-      <div className="grid grid-cols-2 gap-3 mt-auto">
-        <Link href={`/settings/eventos?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-slate-50 hover:bg-slate-100 text-slate-700 py-3 rounded-xl uppercase tracking-widest transition-all border border-slate-200">
+      <div className="grid grid-cols-4 gap-2 mt-auto">
+        <Link href={`/settings/eventos?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-slate-50 hover:bg-slate-100 text-slate-700 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-slate-200 flex items-center justify-center">
           Gestión
         </Link>
-        <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-3 rounded-xl uppercase tracking-widest transition-all border border-indigo-100 shadow-sm">
+        <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-indigo-100 shadow-2xs flex items-center justify-center">
           Ventas
         </Link>
+        <Link href={`/logistica-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-emerald-200 shadow-2xs flex items-center justify-center gap-1">
+          <Truck size={12} className="text-emerald-700" /> Logística
+        </Link>
+        {onOpenPlan && (
+          <button
+            type="button"
+            onClick={() => onOpenPlan(show)}
+            className="w-full text-center text-[9px] font-black bg-gradient-to-r from-purple-50 to-indigo-50 hover:from-purple-100 hover:to-indigo-100 text-purple-700 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-purple-200/80 shadow-2xs flex items-center justify-center gap-1 cursor-pointer"
+            title="Generar plan de producción D-2, D-1, Día D para WhatsApp"
+          >
+            <Sparkles size={11} className="text-purple-600" /> Plan IA
+          </button>
+        )}
       </div>
 
       {/* Etiqueta de Hoy */}

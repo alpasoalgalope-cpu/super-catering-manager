@@ -61,13 +61,64 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   const [vehicles, setVehicles] = useState(initVehicles)
   const [coordinators, setCoordinators] = useState(initCoordinators)
 
+  // Quick Add Company to Event State
+  const [showAddCompanyModal, setShowAddCompanyModal] = useState(false)
+  const [newCompanyInput, setNewCompanyInput] = useState("")
+  const [newPaxInput, setNewPaxInput] = useState(50)
+  const [addingCompanyLoading, setAddingCompanyLoading] = useState(false)
+
+  const handleAddCompanyToEvent = async () => {
+    if (!selectedEventId || !newCompanyInput.trim()) return
+    setAddingCompanyLoading(true)
+
+    try {
+      const companyName = newCompanyInput.trim()
+      const pax = Number(newPaxInput) || 50
+
+      // 1. Insert projection row into DB
+      const { data: newProj, error } = await supabase
+        .from('event_projections')
+        .insert([{
+          event_id: selectedEventId,
+          company_name: companyName,
+          projected_pax: pax
+        }])
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // 2. Update local state
+      setEvents(prev => prev.map(e => {
+        if (e.id !== selectedEventId) return e
+        const existing = e.event_projections || []
+        if (existing.some(p => p.company_name?.toLowerCase() === companyName.toLowerCase())) return e
+        return {
+          ...e,
+          event_projections: [...existing, { id: newProj.id, company_name: companyName, projected_pax: pax }]
+        }
+      }))
+
+      // 3. Select newly added company
+      setSelectedCompany(companyName)
+      setShowAddCompanyModal(false)
+      setMessage({ type: 'success', text: `¡Empresa ${companyName} vinculada al evento con ${pax} pax!` })
+    } catch (err: any) {
+      console.error("Error al agregar empresa al evento:", err)
+      alert("Error al agregar la empresa al evento: " + (err.message || 'Error desconocido'))
+    } finally {
+      setAddingCompanyLoading(false)
+    }
+  }
+
   // Edición en caliente
   const [savedHeaderId, setSavedHeaderId] = useState<string | null>(null)
   const [isFetchingData, setIsFetchingData] = useState(false)
+  const [onlineSalesData, setOnlineSalesData] = useState<any>(null)
 
   // Form state
   const [skipStock, setSkipStock] = useState(false)
-  const [deliveryTime, setDeliveryTime] = useState("")
+  const [deliveryTime, setDeliveryTime] = useState("22:00")
   const [deliveryPoint, setDeliveryPoint] = useState("")
   const [deliveryAddress, setDeliveryAddress] = useState("")
   const [units, setUnits] = useState<UnitRecord[]>([newUnit("Micro 1")])
@@ -131,18 +182,55 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     setSelectedCompany("")
   }, [selectedEventId])
 
+  
+  const applyOnlineSalesToUnits = (salesInfo: any) => {
+    if (!salesInfo || !salesInfo.ordersByBus) return
+
+    const busKeys = Object.keys(salesInfo.ordersByBus)
+    if (busKeys.length === 0) return
+
+    const generatedUnits: UnitRecord[] = busKeys.map((busName, idx) => {
+      const b = salesInfo.ordersByBus[busName]
+      const totalViandas = (b.trad || 0) + (b.veg || 0) + (b.vegan || 0) + (b.st || 0)
+      
+      return {
+        id: crypto.randomUUID(),
+        name: busName || `Micro ${idx + 1}`,
+        vehicle_id: "",
+        coordinator_id: "",
+        sold: totalViandas,
+        liberated: 0,
+        traditional: b.trad || 0,
+        vegetarian: b.veg || 0,
+        vegana: b.vegan || 0,
+        sin_tacc: b.st || 0,
+        water: totalViandas,
+        observations: `Importado de Tienda Online (${salesInfo.totalOrders} pedidos)`,
+        details: [],
+        isExpanded: true
+      }
+    })
+
+    setUnits(generatedUnits)
+    setMessage({
+      type: 'success',
+      text: `¡Se importaron con éxito ${salesInfo.totalViandas} viandas desde la Tienda Online!`
+    })
+  }
+
   // Auto-fetch data para Edición en Caliente
   useEffect(() => {
     const fetchExistingSale = async () => {
       if (!selectedEventId || !selectedCompany) {
         setSavedHeaderId(null)
+        setOnlineSalesData(null)
         setUnits([newUnit("Micro 1")])
         return
       }
 
       setIsFetchingData(true)
       try {
-        // FETCH ASIGNACIONES LOGISTICAS PLANIFICADAS ANTES QUE NADA
+        // 1. FETCH ASIGNACIONES LOGISTICAS PLANIFICADAS ANTES QUE NADA
         const cRecord = clients.find((c: any) => c.name?.toLowerCase() === selectedCompany.toLowerCase())
         let assignedBuses: any[] = []
         if (cRecord?.id) {
@@ -154,7 +242,73 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
            if (ab) assignedBuses = ab
         }
 
-        // Buscar cabecera
+        // 2. FETCH ONLINE STORE ORDERS FOR THIS EVENT & COMPANY
+        let detectedOnlineSales: any = null
+        try {
+          const { data: stores } = await supabase
+            .from('online_store_events')
+            .select('id, title, slug')
+            .eq('event_master_id', selectedEventId)
+
+          const matchedStore = (stores || []).find(s => 
+            s.title?.toLowerCase().includes(selectedCompany.toLowerCase()) ||
+            s.slug?.toLowerCase().includes(selectedCompany.toLowerCase().replace(/\s+/g, '-'))
+          )
+
+          if (matchedStore) {
+            const { data: oOrders } = await supabase
+              .from('online_orders')
+              .select('*, online_customers(*)')
+              .eq('store_event_id', matchedStore.id)
+              .eq('status', 'paid')
+              .order('created_at', { ascending: true })
+
+            if (oOrders && oOrders.length > 0) {
+              const ordersByBus: Record<string, { trad: number; veg: number; vegan: number; st: number; total: number }> = {}
+              let trad = 0, veg = 0, vegan = 0, st = 0
+
+              oOrders.forEach(o => {
+                const bName = o.bus_identifier?.trim() || "Micro Único"
+                if (!ordersByBus[bName]) {
+                  ordersByBus[bName] = { trad: 0, veg: 0, vegan: 0, st: 0, total: 0 }
+                }
+                const t = Number(o.qty_tradicional) || 0
+                const v = Number(o.qty_vegetariano) || 0
+                const vg = Number(o.qty_vegano) || 0
+                const s = Number(o.qty_sintacc) || 0
+                
+                ordersByBus[bName].trad += t
+                ordersByBus[bName].veg += v
+                ordersByBus[bName].vegan += vg
+                ordersByBus[bName].st += s
+                ordersByBus[bName].total += (t + v + vg + s)
+
+                trad += t
+                veg += v
+                vegan += vg
+                st += s
+              })
+
+              detectedOnlineSales = {
+                storeTitle: matchedStore.title,
+                totalOrders: oOrders.length,
+                totalViandas: trad + veg + vegan + st,
+                trad, veg, vegan, stacc: st,
+                ordersByBus,
+                orders: oOrders
+              }
+              setOnlineSalesData(detectedOnlineSales)
+            } else {
+              setOnlineSalesData(null)
+            }
+          } else {
+            setOnlineSalesData(null)
+          }
+        } catch (e) {
+          console.error("Error checking online store orders:", e)
+        }
+
+        // 3. BUSCAR CABECERA MANUAL EXISTENTE
         const { data: header, error: hErr } = await supabase
           .from('event_sales_headers')
           .select('*')
@@ -233,8 +387,11 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             }
           }
         } else {
+          // NO HAY CABECERA MANUAL GUARDADA
           setSavedHeaderId(null)
-          if (assignedBuses.length > 0) {
+          if (detectedOnlineSales && detectedOnlineSales.totalViandas > 0) {
+            applyOnlineSalesToUnits(detectedOnlineSales)
+          } else if (assignedBuses.length > 0) {
             setUnits(assignedBuses.map((ab, idx) => ({
               ...newUnit(`Micro ${idx + 1}`),
               vehicle_id: ab.vehicle_id || "",
@@ -243,7 +400,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           } else {
             setUnits([newUnit("Micro 1")])
           }
-          setDeliveryTime("")
+          setDeliveryTime("22:00")
         }
       } catch (err: any) {
         console.error("Error cargando venta existente", err)
@@ -266,17 +423,23 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       (r.company_name?.toLowerCase().trim() === selectedCompany?.toLowerCase().trim())
     )
     
-    if (cRule) return cRule
+    let rule = cRule ? { ...cRule } : null
 
     // Fallback simplificado si no hay regla
-    if (cRecord) {
-      return {
+    if (!rule && cRecord) {
+      rule = {
         company_name: cRecord.name,
         price_base: 0, // Indicará que no hay regla válida
         noRuleFound: true
       }
     }
-    return null
+
+    // Terco Tour NUNCA incluye agua
+    if (rule && (selectedCompany.toLowerCase().includes("terco tour") || rule.company_name?.toLowerCase().includes("terco tour"))) {
+      rule.includes_water = false
+    }
+
+    return rule
   }, [selectedCompany, commercialRules, clients])
 
   // --- Unit Handlers ---
@@ -294,26 +457,36 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
         updated.traditional = (Number(updated.traditional) || 0) + diff
       }
 
-      if ((field === 'sold' || field === 'liberated') && activeRule?.includes_water) {
-        // Regla especial: Traslados solo agua para sold. Otros (Rock) para ambos.
-        const isTraslados = activeRule.company_name?.toLowerCase().includes("traslados")
-        updated.water = isTraslados ? (Number(updated.sold) || 0) : ((Number(updated.sold) || 0) + (Number(updated.liberated) || 0))
+      if (field === 'sold' || field === 'liberated') {
+        const isTerco = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
+        const isRV = selectedCompany?.toLowerCase().includes("rv traslados") || activeRule?.company_name?.toLowerCase().includes("rv traslados")
+        const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
+        const soldNum = Number(updated.sold) || 0
+        const libNum = Number(updated.liberated) || 0
+        const ocupationPct = pax > 0 ? (soldNum / pax) * 100 : 0
+        
+        updated.water = isTerco ? 0 : ((isRV && ocupationPct < 50) ? soldNum : (soldNum + libNum))
       }
       return updated
     }))
-  }, [activeRule])
+  }, [activeRule, selectedCompany, paxOverride, projectedPax])
 
-  // Recalcular agua si cambia la regla (ej: cambio de empresa)
+  // Recalcular agua si cambia la regla o la ocupación
   useEffect(() => {
-    if (activeRule?.includes_water) {
-      setUnits(prev => prev.map(u => {
-        const isTraslados = activeRule.company_name?.toLowerCase().includes("traslados")
-        const newWater = isTraslados ? (Number(u.sold) || 0) : ((Number(u.sold) || 0) + (Number(u.liberated) || 0))
-        if (u.water !== newWater) return { ...u, water: newWater }
-        return u
-      }))
-    }
-  }, [activeRule])
+    const isTerco = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
+    const isRV = selectedCompany?.toLowerCase().includes("rv traslados") || activeRule?.company_name?.toLowerCase().includes("rv traslados")
+    const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
+
+    setUnits(prev => prev.map(u => {
+      const soldNum = Number(u.sold) || 0
+      const libNum = Number(u.liberated) || 0
+      const ocupationPct = pax > 0 ? (soldNum / pax) * 100 : 0
+      const expectedWater = isTerco ? 0 : ((isRV && ocupationPct < 50) ? soldNum : (soldNum + libNum))
+      
+      if (u.water !== expectedWater) return { ...u, water: expectedWater }
+      return u
+    }))
+  }, [activeRule, selectedCompany, projectedPax, paxOverride])
 
   // --- Totals & Validation ---
   const totals = useMemo(() => {
@@ -332,42 +505,163 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       const sumOp = (Number(u.sold) || 0) + (Number(u.liberated) || 0)
       return { id: u.id, isValid: sumCat === sumOp }
     })
-    const allValid = unitsValidity.every(v => v.isValid) && selectedEventId !== "" && selectedCompany !== ""
 
-    if (!activeRule) {
-      return {
-        ...consolidated,
-        amount: 0,
-        allValid,
-        unitsValidity,
-        CupoGratis: 0,
-        SinTaccExcedentes: 0,
-        SinTaccFacturables: 0,
-        price_base: 0,
-        price_sintacc_effective: 0,
-        price_sintacc_threshold: 0,
-        hasSpecialSinTaccPrice: false
+    const isRVTraslados = selectedCompany?.toLowerCase().includes("rv traslados") || activeRule?.company_name?.toLowerCase().includes("rv traslados")
+    const isProximaEstacion = selectedCompany?.toLowerCase().includes("proxima") || selectedCompany?.toLowerCase().includes("próxima") || activeRule?.company_name?.toLowerCase().includes("proxima") || activeRule?.company_name?.toLowerCase().includes("próxima")
+    const isValBus = selectedCompany?.toLowerCase().includes("valbus") || activeRule?.company_name?.toLowerCase().includes("valbus")
+    const isRockEnLasVenas = selectedCompany?.toLowerCase().includes("rock") || activeRule?.company_name?.toLowerCase().includes("rock")
+    const isTercoTour = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
+
+    const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
+    const ocupationPct = pax > 0 ? (consolidated.sold / pax) * 100 : 0
+
+    let CupoGratis = 0
+    let SinTaccExcedentes = 0
+    let SinTaccFacturables = 0
+    let price_base = Number(activeRule?.price_base || 7000)
+    let price_sintacc_effective = Number(activeRule?.price_sintacc_base || price_base)
+    let price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold || 10000)
+
+    let amount = 0
+    let rvValidationErrors: string[] = []
+
+    if (isRVTraslados || isProximaEstacion) {
+      price_base = 10000
+      price_sintacc_effective = 13000
+      price_sintacc_threshold = 13000
+
+      const companyLabel = isProximaEstacion ? 'Próxima Estación' : 'RV Traslados'
+
+      // 1. Common viandas (Trad + Veg + Vegan)
+      const commonViandas = consolidated.trad + consolidated.veg + consolidated.vegan
+
+      // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
+      if (consolidated.liberated > commonViandas) {
+        rvValidationErrors.push(
+          `En ${companyLabel} las viandas Sin TACC no pueden liberarse ($13.000 c/u). Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
+        )
       }
+
+      // 2. Occupation scale limit:
+      let maxLiberadasAllowed = 0
+      if (ocupationPct >= 30) {
+        maxLiberadasAllowed = 3
+      } else if (ocupationPct >= 10) {
+        maxLiberadasAllowed = 1
+      }
+
+      if (consolidated.liberated > maxLiberadasAllowed) {
+        rvValidationErrors.push(
+          `Con ${ocupationPct.toFixed(1)}% de ocupación (${consolidated.sold} vendidos de ${pax} pax proyectados), ${companyLabel} permite como máximo ${maxLiberadasAllowed} vianda(s) liberada(s). Tenés ${consolidated.liberated} asignada(s).`
+        )
+      }
+
+      const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
+      amount = (commonFacturables * price_base) + (consolidated.st * price_sintacc_effective)
+
+      SinTaccFacturables = consolidated.st
+      SinTaccExcedentes = 0
+      CupoGratis = 0
+
+    } else if (isValBus) {
+      price_base = 8500
+      price_sintacc_effective = 10000
+      price_sintacc_threshold = 10000
+
+      // 1. Common viandas (Trad + Veg + Vegan)
+      const commonViandas = consolidated.trad + consolidated.veg + consolidated.vegan
+
+      // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
+      if (consolidated.liberated > commonViandas) {
+        rvValidationErrors.push(
+          `En ValBus las viandas Sin TACC no pueden liberarse ($10.000 c/u). Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
+        )
+      }
+
+      // 2. Max 1 liberada per vehicle at >=10% occupation (no coordinators, driver only)
+      const totalUnitsCount = units.length
+      const maxLiberadasAllowed = ocupationPct >= 10 ? totalUnitsCount : 0
+
+      if (consolidated.liberated > maxLiberadasAllowed) {
+        if (ocupationPct < 10) {
+          rvValidationErrors.push(
+            `Con ${ocupationPct.toFixed(1)}% de ocupación (<10%), ValBus no permite liberar viandas.`
+          )
+        } else {
+          rvValidationErrors.push(
+            `ValBus trabaja únicamente con chofer, permitiendo como máximo 1 vianda liberada por coche (${maxLiberadasAllowed} para ${totalUnitsCount} coche(s)). Tenés ${consolidated.liberated} asignada(s).`
+          )
+        }
+      }
+
+      const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
+      amount = (commonFacturables * price_base) + (consolidated.st * price_sintacc_effective)
+
+      SinTaccFacturables = consolidated.st
+      SinTaccExcedentes = 0
+      CupoGratis = 0
+
+    } else if (isRockEnLasVenas || isTercoTour) {
+      const isRock = isRockEnLasVenas
+      price_base = isRock ? 7000 : 6000
+      price_sintacc_effective = price_base
+      price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold) > 0 ? Number(activeRule.price_sintacc_threshold) : 10000
+
+      const companyLabel = isRock ? 'Rock en las Venas' : 'Terco Tour'
+
+      // 1. Common viandas (Trad + Veg + Vegan)
+      const commonViandas = consolidated.trad + consolidated.veg + consolidated.vegan
+
+      // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
+      if (consolidated.liberated > commonViandas) {
+        rvValidationErrors.push(
+          `En ${companyLabel} las viandas Sin TACC no pueden liberarse. Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
+        )
+      }
+
+      // 2. Liberaciones fijas de tripulación (1 a 3 por coche)
+      const totalUnitsCount = units.length
+      const maxLiberadasAllowed = totalUnitsCount * 3
+
+      if (consolidated.liberated > maxLiberadasAllowed) {
+        rvValidationErrors.push(
+          `En ${companyLabel} se liberan únicamente choferes y coordinadores (máximo 3 por coche: ${maxLiberadasAllowed} para ${totalUnitsCount} coche(s)). Tenés ${consolidated.liberated} asignadas.`
+        )
+      }
+
+      // 3. Cupo Sin TACC % de tolerancia:
+      // Sin TACC facturables = TOTAL de Sin TACC cargadas (nunca entran en liberados)
+      SinTaccFacturables = consolidated.st
+      const limitPct = Number(activeRule?.sintacc_limit_pct || 5)
+      CupoGratis = Math.ceil(pax * (limitPct / 100))
+      SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
+      const sinTaccEnCupo = Math.min(SinTaccFacturables, CupoGratis)
+
+      const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
+      amount = (commonFacturables * price_base) + 
+               (sinTaccEnCupo * price_base) + 
+               (SinTaccExcedentes * price_sintacc_threshold)
+
+    } else {
+      // Standard calculation for other companies
+      SinTaccFacturables = Math.max(0, consolidated.st - consolidated.liberated)
+      const limitPct = Number(activeRule?.sintacc_limit_pct || 0)
+      CupoGratis = Math.ceil(pax * (limitPct / 100))
+      SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
+
+      price_sintacc_effective = Number(activeRule?.special_sintacc_price) > 0
+        ? Number(activeRule.special_sintacc_price)
+        : Number(activeRule?.price_sintacc_base || price_base)
+
+      amount = (consolidated.sold * price_base) +
+        (SinTaccFacturables * (price_sintacc_effective - price_base)) +
+        (SinTaccExcedentes * (price_sintacc_threshold - price_sintacc_effective))
     }
 
-    const SinTaccFacturables = Math.max(0, consolidated.st - consolidated.liberated)
-    const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
-    const limitPct = Number(activeRule.sintacc_limit_pct || 0)
-    const CupoGratis = Math.ceil(pax * (limitPct / 100))
-    const SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
-
-    const price_base = Number(activeRule.price_base || 0)
-    // Regla de Oro: special_sintacc_price tiene prioridad absoluta
-    // Si la empresa tiene precio especial (ej: RV TRASLADOS = $10.000), se usa ese.
-    // Si no, se usa price_sintacc_base del evento, y si tampoco existe, se usa price_base.
-    const price_sintacc_effective = Number(activeRule.special_sintacc_price) > 0
-      ? Number(activeRule.special_sintacc_price)
-      : Number(activeRule.price_sintacc_base || price_base)
-    const price_sintacc_threshold = Number(activeRule.price_sintacc_threshold || 0)
-
-    const amount = (consolidated.sold * price_base) +
-      (SinTaccFacturables * (price_sintacc_effective - price_base)) +
-      (SinTaccExcedentes * (price_sintacc_threshold - price_sintacc_effective))
+    const allValid = unitsValidity.every(v => v.isValid) && 
+                     selectedEventId !== "" && 
+                     selectedCompany !== "" && 
+                     rvValidationErrors.length === 0
 
     return {
       ...consolidated,
@@ -380,9 +674,17 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       price_base,
       price_sintacc_effective,
       price_sintacc_threshold,
-      hasSpecialSinTaccPrice: Number(activeRule.special_sintacc_price) > 0,
+      hasSpecialSinTaccPrice: Number(activeRule?.special_sintacc_price) > 0,
+      isRVTraslados,
+      isProximaEstacion,
+      isValBus,
+      isRockEnLasVenas,
+      isTercoTour,
+      pax,
+      ocupationPct,
+      rvValidationErrors
     }
-  }, [units, activeRule, projectedPax, selectedEventId, selectedCompany])
+  }, [units, activeRule, projectedPax, paxOverride, selectedEventId, selectedCompany])
 
   // --- Save / Update ---
   const saveAll = async () => {
@@ -425,6 +727,16 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           .single()
         if (hErr) throw hErr
         header = data
+      }
+
+      // Sync updated pax_projected to event_projections table in database
+      const finalPax = paxOverride !== null ? paxOverride : projectedPax
+      if (selectedEventId && selectedCompany) {
+        await supabase
+          .from('event_projections')
+          .update({ projected_pax: finalPax })
+          .eq('event_id', selectedEventId)
+          .eq('company_name', selectedCompany)
       }
 
       headerId = header.id
@@ -494,8 +806,21 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
          if (bErr) throw bErr
       }
       
-      // ACTUALIZAR COMISION RV TRASLADOS EN EL MAESTRO (Unidades Vendidas * 1000)
+      // ACTUALIZAR COMISIONES EN EL MAESTRO DE EVENTOS
       if (selectedCompany?.toUpperCase().includes('RV TRASLADOS')) {
+        const totalSold = units.reduce((acc, u) => acc + (Number(u.sold) || 0), 0)
+        const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
+        const ocupationPct = pax > 0 ? (totalSold / pax) * 100 : 0
+        let commission = totalSold * 1000
+        if (ocupationPct >= 70) {
+          commission += 10000 // Bonus $10.000 por superar 70% ocupación
+        }
+        await supabase
+          .from('events_master')
+          .update({ commissions_cost: commission })
+          .eq('id', selectedEventId)
+      } else if (selectedCompany?.toUpperCase().includes('PROXIMA ESTACION') || selectedCompany?.toUpperCase().includes('PRÓXIMA ESTACIÓN')) {
+        // En Próxima Estación la comisión es $1.000 por vianda a la EMPRESA, SIN bonus al 70%
         const totalSold = units.reduce((acc, u) => acc + (Number(u.sold) || 0), 0)
         const commission = totalSold * 1000
         await supabase
@@ -773,17 +1098,45 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
           {/* Company Selector */}
           <div className="space-y-1">
-            <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
-              <Building2 size={10} /> Empresa
-            </label>
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1">
+                <Building2 size={10} /> Empresa
+              </label>
+              {selectedEventId && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewCompanyInput(clients?.[0]?.name || '')
+                    setNewPaxInput(50)
+                    setShowAddCompanyModal(true)
+                  }}
+                  className="text-[11px] font-extrabold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 hover:underline cursor-pointer bg-indigo-50 px-2.5 py-1 rounded-lg border border-indigo-100 transition"
+                >
+                  <Plus size={12} /> Agregar Empresa al Evento
+                </button>
+              )}
+            </div>
             <select
               disabled={!selectedEventId}
-              className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition font-bold disabled:opacity-50"
+              className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition font-bold disabled:opacity-50 cursor-pointer"
               value={selectedCompany}
-              onChange={e => setSelectedCompany(e.target.value)}
+              onChange={e => {
+                if (e.target.value === '__ADD_NEW__') {
+                  setNewCompanyInput(clients?.[0]?.name || '')
+                  setNewPaxInput(50)
+                  setShowAddCompanyModal(true)
+                } else {
+                  setSelectedCompany(e.target.value)
+                }
+              }}
             >
               <option value="">-- Seleccionar Empresa --</option>
               {availableCompanies.map(c => <option key={c} value={c}>{c}</option>)}
+              {selectedEventId && (
+                <option value="__ADD_NEW__" className="font-bold text-indigo-600 bg-indigo-50">
+                  + Agregar nueva empresa a este evento...
+                </option>
+              )}
             </select>
           </div>
         </div>
@@ -978,10 +1331,13 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                       {/* Water & Specials */}
                       <div className="space-y-4 pt-4 border-t">
                         <div className="flex justify-between items-center">
-                          <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">Agua Sugerida{activeRule?.includes_water && " (V+L)"}</label>
+                          <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
+                            {totals?.isTercoTour ? 'Agua (No incluida)' : `Agua Sugerida${activeRule?.includes_water ? ' (V+L)' : ''}`}
+                          </label>
                           <input type="text" inputMode="numeric"
-                            className="w-20 p-2 bg-indigo-50 border border-indigo-100 rounded-xl text-center font-bold text-indigo-700 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            value={u.water}
+                            disabled={totals?.isTercoTour}
+                            className={`w-20 p-2 rounded-xl text-center font-bold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${totals?.isTercoTour ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-indigo-50 border border-indigo-100 text-indigo-700'}`}
+                            value={totals?.isTercoTour ? 0 : u.water}
                             onChange={e => updateUnit(u.id, 'water', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
                             onFocus={e => e.target.select()} />
                         </div>
@@ -1058,6 +1414,20 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
             {/* Action Bar */}
             <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200">
+              {totals?.rvValidationErrors && totals.rvValidationErrors.length > 0 && (
+                <div className="mb-6 space-y-2">
+                  {totals.rvValidationErrors.map((err, i) => (
+                    <div key={i} className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 font-bold text-xs flex items-start gap-3 shadow-xs">
+                      <AlertCircle className="shrink-0 text-rose-600 mt-0.5" size={18} />
+                      <div>
+                        <p className="uppercase text-[9px] font-black tracking-widest text-rose-800">Bloqueo por Regla Comercial — RV Traslados</p>
+                        <p className="mt-0.5 text-xs font-semibold leading-relaxed">{err}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {message && (
                 <div className={`mb-4 p-3 rounded-xl text-sm font-bold text-center ${message?.type === 'success' ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-500'}`}>
                   {message?.type === 'success' ? <CheckCircle2 className="inline mr-2" size={14} /> : <AlertCircle className="inline mr-2" size={14} />}
@@ -1074,10 +1444,10 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                   <div>
                     <span className={`text-xs font-bold flex items-center gap-2 ${totals?.allValid ? 'text-emerald-600' : 'text-rose-500'}`}>
                       {totals?.allValid ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                      {totals?.allValid ? 'Datos Validados' : 'Error en Distribución'}
+                      {totals?.allValid ? 'Datos Validados' : (totals?.rvValidationErrors?.length ? 'Bloqueo Regla RV' : 'Error en Distribución')}
                     </span>
                     <p className="text-[10px] text-slate-400">
-                      {totals?.allValid ? 'Listo para persistir' : 'Revisá que categorías = producción'}
+                      {totals?.allValid ? 'Listo para persistir' : 'Revisá las advertencias rojas arriba'}
                     </p>
                   </div>
                 </div>
@@ -1121,7 +1491,145 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                 </div>
               </div>
 
-              {activeRule && (
+              {totals?.isRVTraslados ? (
+                <div className="bg-indigo-950/60 p-5 rounded-2xl border border-indigo-500/30 space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
+                    <span className="text-indigo-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas RV Traslados</span>
+                    <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Minorista</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Ocupación Pax</span>
+                    <span className="font-bold text-white">{totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Máx. Liberadas permitidas</span>
+                    <span className="font-bold text-emerald-400">
+                      {totals.ocupationPct >= 30 ? '3 viandas (≥30%)' : totals.ocupationPct >= 10 ? '1 vianda (≥10%)' : '0 viandas (<10%)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Sin TACC (Fija $13.000)</span>
+                    <span className="font-bold text-amber-300">{totals.st} un. (${(totals.st * 13000).toLocaleString('es-AR')})</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/10 pt-2">
+                    <span className="text-white/60">Comisión Coordinador</span>
+                    <span className="font-bold text-sky-300">
+                      ${((totals.sold * 1000) + (totals.ocupationPct >= 70 ? 10000 : 0)).toLocaleString('es-AR')}
+                      {totals.ocupationPct >= 70 && <span className="text-[9px] text-emerald-400 block font-normal">(+$10.000 Bonus ≥70%)</span>}
+                    </span>
+                  </div>
+                </div>
+              ) : totals?.isValBus ? (
+                <div className="bg-emerald-950/60 p-5 rounded-2xl border border-emerald-500/30 space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
+                    <span className="text-emerald-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas ValBus</span>
+                    <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Minorista</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Ocupación Pax</span>
+                    <span className="font-bold text-white">{totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Máx. Liberadas (1/coche)</span>
+                    <span className="font-bold text-emerald-400">
+                      {totals.ocupationPct >= 10 ? `${units.length} vianda(s) (≥10%)` : '0 viandas (<10%)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Precios Base / Sin TACC</span>
+                    <span className="font-bold text-white">$8.500 / $10.000</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/10 pt-2">
+                    <span className="text-white/60">Coordinador / Comisión</span>
+                    <span className="font-bold text-slate-400">Sin Coordi ($0)</span>
+                  </div>
+                </div>
+              ) : totals?.isProximaEstacion ? (
+                <div className="bg-sky-950/60 p-5 rounded-2xl border border-sky-500/30 space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
+                    <span className="text-sky-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas Próxima Estación</span>
+                    <span className="bg-sky-500/20 text-sky-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Combo</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Ocupación Pax</span>
+                    <span className="font-bold text-white">{totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Máx. Liberadas permitidas</span>
+                    <span className="font-bold text-emerald-400">
+                      {totals.ocupationPct >= 30 ? '3 viandas (≥30%)' : totals.ocupationPct >= 10 ? '1 vianda (≥10%)' : '0 viandas (<10%)'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Sin TACC (Fija $13.000)</span>
+                    <span className="font-bold text-amber-300">{totals.st} un. (${(totals.st * 13000).toLocaleString('es-AR')})</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/10 pt-2">
+                    <span className="text-white/60">Comisión Empresa</span>
+                    <span className="font-bold text-sky-300">
+                      ${(totals.sold * 1000).toLocaleString('es-AR')} ($1.000 c/u)
+                    </span>
+                  </div>
+                </div>
+              ) : totals?.isRockEnLasVenas ? (
+                <div className="bg-purple-950/60 p-5 rounded-2xl border border-purple-500/30 space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
+                    <span className="text-purple-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas Rock en las Venas</span>
+                    <span className="bg-purple-500/20 text-purple-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Mayorista</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Precio Vianda (Combo)</span>
+                    <span className="font-bold text-emerald-400">$7.000 (Incluye agua)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Liberaciones Tripulación</span>
+                    <span className="font-bold text-white">Chofer/es + Coordi (1-3/coche)</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/10 pt-2">
+                    <span className="text-white/60">Cupo libre ({activeRule?.sintacc_limit_pct || 5}% de {totals.pax})</span>
+                    <span className="font-bold text-emerald-400">{totals.CupoGratis} un.</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60 italic">Facturables / Excedentes</span>
+                    <span className="font-bold text-rose-400">{totals.SinTaccFacturables} / {totals.SinTaccExcedentes} un.</span>
+                  </div>
+                  {totals.SinTaccExcedentes > 0 && (
+                    <div className="flex justify-between text-amber-300 font-bold border-t border-white/10 pt-1.5">
+                      <span>Excedente Sin TACC ($10.000 c/u)</span>
+                      <span>+${(totals.SinTaccExcedentes * totals.price_sintacc_threshold).toLocaleString('es-AR')}</span>
+                    </div>
+                  )}
+                </div>
+              ) : totals?.isTercoTour ? (
+                <div className="bg-amber-950/60 p-5 rounded-2xl border border-amber-500/30 space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
+                    <span className="text-amber-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas Terco Tour</span>
+                    <span className="bg-amber-500/20 text-amber-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Mayorista</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Precio Vianda (Solo vianda)</span>
+                    <span className="font-bold text-amber-400">$6.000 (Sin agua)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60">Liberaciones Tripulación</span>
+                    <span className="font-bold text-white">Chofer/es + Coordi (1-3/coche)</span>
+                  </div>
+                  <div className="flex justify-between border-t border-white/10 pt-2">
+                    <span className="text-white/60">Cupo libre ({activeRule?.sintacc_limit_pct || 5}% de {totals.pax})</span>
+                    <span className="font-bold text-emerald-400">{totals.CupoGratis} un.</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-white/60 italic">Facturables / Excedentes</span>
+                    <span className="font-bold text-rose-400">{totals.SinTaccFacturables} / {totals.SinTaccExcedentes} un.</span>
+                  </div>
+                  {totals.SinTaccExcedentes > 0 && (
+                    <div className="flex justify-between text-amber-300 font-bold border-t border-white/10 pt-1.5">
+                      <span>Excedente Sin TACC ($10.000 c/u)</span>
+                      <span>+${(totals.SinTaccExcedentes * totals.price_sintacc_threshold).toLocaleString('es-AR')}</span>
+                    </div>
+                  )}
+                </div>
+              ) : activeRule ? (
                 <div className="bg-white/5 p-5 rounded-2xl border border-white/10 space-y-2 text-xs">
                   <div className="flex justify-between items-center pb-2 border-b border-white/10">
                     <span className="text-white/60 font-bold uppercase text-[9px] tracking-widest">Detalle Sin TACC</span>
@@ -1134,7 +1642,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                     <span className="font-bold text-white">${Number(totals?.price_sintacc_effective || 0).toLocaleString('es-AR')}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-white/60">Cupo libre ({activeRule.sintacc_limit_pct}% de {projectedPax})</span>
+                    <span className="text-white/60">Cupo libre ({activeRule.sintacc_limit_pct}% de {totals.pax})</span>
                     <span className="font-bold text-emerald-400">{totals?.CupoGratis} un.</span>
                   </div>
                   <div className="flex justify-between">
@@ -1142,7 +1650,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                     <span className="font-bold text-rose-400">{totals?.SinTaccFacturables} / {totals?.SinTaccExcedentes} un.</span>
                   </div>
                 </div>
-              )}
+              ) : null}
 
               <div className="pt-4 border-t border-white/10 text-center">
                 <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Monto Total</p>
@@ -1185,6 +1693,95 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           <p className="text-slate-400">Una vez seleccionados, podrás cargar los micros y sus viandas.</p>
         </div>
       )}
+
+      {/* QUICK ADD COMPANY MODAL */}
+      {showAddCompanyModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl space-y-6">
+            <div className="flex items-center justify-between border-b pb-4 border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-xl">
+                  <Building2 size={20} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">Agregar Empresa al Evento</h3>
+                  <p className="text-xs text-slate-400">Vincular una empresa sin ir a Gestión de Eventos</p>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                  Seleccionar Empresa *
+                </label>
+                <select
+                  value={newCompanyInput}
+                  onChange={e => setNewCompanyInput(e.target.value)}
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 font-bold text-slate-800 text-sm"
+                >
+                  {clients.map((c: any) => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                  O Escribir Nombre Personalizado
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Nueva Empresa SA"
+                  value={newCompanyInput}
+                  onChange={e => setNewCompanyInput(e.target.value)}
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 font-bold text-slate-800 text-sm placeholder-slate-400"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1.5">
+                  Pasajeros Proyectados (Pax) *
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  value={newPaxInput}
+                  onChange={e => setNewPaxInput(parseInt(e.target.value) || 0)}
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 font-bold text-slate-800 text-sm"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowAddCompanyModal(false)}
+                className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-xs uppercase tracking-wider hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleAddCompanyToEvent}
+                disabled={addingCompanyLoading || !newCompanyInput.trim()}
+                className="flex-1 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase tracking-wider transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {addingCompanyLoading ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Guardando...
+                  </>
+                ) : (
+                  <>
+                    <Plus size={16} /> Agregar al Evento
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modals */}
       <FleetModal 
         isOpen={fleetModal} 

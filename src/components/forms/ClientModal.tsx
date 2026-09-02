@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { supabase } from "@/lib/supabase"
+import { syncClientPricesToFutureStoresAction } from "@/app/actions/online-sales"
 import {
   Building2, X, Save, Loader2, User, Phone, Mail,
   MapPin, CreditCard, Hash, Percent, Coins, TrendingUp
@@ -136,6 +137,10 @@ export default function ClientModal({
       return
     }
 
+    // Auto-sync prices to future stores (> today)
+    if (form.vianda_price != null) {
+      syncClientPricesToFutureStoresAction(form.name, form.vianda_price, form.sintacc_price).catch(console.error)
+    }
     const saved = data?.[0]
     if (onSuccess && saved) onSuccess(saved.id, saved.name)
     router.refresh()

@@ -2,6 +2,7 @@
 
 import { useState } from "react"
 import { supabase } from "@/lib/supabase"
+import { syncClientPricesToFutureStoresAction } from "@/app/actions/online-sales"
 import { Building2, X, Save, Loader2 } from "lucide-react"
 
 interface CompanyModalProps {
@@ -65,6 +66,9 @@ export default function CompanyModal({ isOpen, onClose, onSuccess }: CompanyModa
         setError(err2.message)
         return
       }
+    }
+    if (form.price_base) {
+      syncClientPricesToFutureStoresAction(form.company_name.trim(), parseFloat(form.price_base), form.special_sintacc_price ? parseFloat(form.special_sintacc_price) : null).catch(console.error)
     }
     onSuccess(form.company_name.trim())
     setForm({ company_name: "", price_base: "", sintacc_limit_pct: "10", special_sintacc_price: "", includes_water: false, address: "", city: "", province: "", cuit: "" })

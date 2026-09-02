@@ -5,8 +5,9 @@ import { supabase } from "@/lib/supabase"
 import {
   ChefHat, Printer, Calendar, ChevronRight,
   Calculator, Loader2, Table as TableIcon, Building2, Users,
-  Truck, Package
+  Truck, Package, Copy, MessageSquare
 } from "lucide-react"
+import ReceivePOModal from "@/components/inventory/ReceivePOModal"
 
 export default function ProduccionPage() {
   const [eventos, setEventos] = useState<any[]>([])
@@ -18,10 +19,111 @@ export default function ProduccionPage() {
   const [incomingPOs, setIncomingPOs] = useState<any[]>([])
   const [poLoading, setPoLoading] = useState(false)
   const [isMounted, setIsMounted] = useState(false)
+  const [receivingPoId, setReceivingPoId] = useState<string | null>(null)
 
   useEffect(() => {
     setIsMounted(true)
   }, [])
+  const fetchPOs = async () => {
+    setPoLoading(true)
+    try {
+      const today = new Date()
+      const currentDay = today.getDay()
+      const endOfThisWeek = new Date(today)
+      const daysToSunday = currentDay === 0 ? 0 : 7 - currentDay
+      endOfThisWeek.setDate(today.getDate() + daysToSunday)
+      endOfThisWeek.setHours(23,59,59,999)
+
+      const { data: poData, error: poErr } = await supabase
+        .from('purchase_orders')
+        .select(`
+           id,
+           fecha_esperada,
+           costo_total,
+           estado,
+           proveedores (nombre),
+           purchase_order_items (
+             cantidad,
+             productos (nombre, unidad_medida, gramos_por_unidad)
+           )
+        `)
+        .eq('estado', 'PENDIENTE')
+        .order('fecha_esperada', { ascending: true })
+
+      if (poErr) {
+        console.error("Error fetching POs for kitchen:", poErr)
+        return
+      }
+
+      const filteredPOs = poData ? poData.filter((po: any) => {
+        if (!po.fecha_esperada) return false
+        const poDate = new Date(po.fecha_esperada + 'T12:00:00')
+        return poDate <= endOfThisWeek
+      }) : []
+
+      setIncomingPOs(filteredPOs)
+    } catch (err) {
+      console.error("Error in fetchPOs:", err)
+    } finally {
+      setPoLoading(false)
+    }
+  }
+
+  const handlePORecievedSuccess = () => {
+    setReceivingPoId(null)
+    fetchPOs()
+  }
+
+  const handleCopyPendingPOs = () => {
+    if (incomingPOs.length === 0) return
+    
+    let text = `📦 *ENTREGAS PENDIENTES - RECIBIR ESTA SEMANA*\n\n`
+    
+    // Group POs by fecha_esperada
+    const grouped: { [date: string]: any[] } = {}
+    incomingPOs.forEach(po => {
+      if (!grouped[po.fecha_esperada]) {
+        grouped[po.fecha_esperada] = []
+      }
+      grouped[po.fecha_esperada].push(po)
+    })
+    
+    // Sort dates
+    const sortedDates = Object.keys(grouped).sort()
+    
+    const daysOfWeek = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO']
+
+    sortedDates.forEach(dateStr => {
+      const d = new Date(dateStr + 'T12:00:00')
+      const weekday = daysOfWeek[d.getDay()]
+      const day = d.getDate()
+      const month = d.getMonth() + 1
+      
+      text += `📅 *${weekday} ${day}-${month}*\n`
+      
+      grouped[dateStr].forEach(po => {
+        text += `  • *${(po.proveedores?.nombre || 'PROVEEDOR').toUpperCase()}*:\n`
+        po.purchase_order_items?.forEach((item: any) => {
+          const prod = item.productos
+          const name = (prod?.nombre || 'Insumo').toUpperCase()
+          const qty = Number(item.cantidad) || 0
+          const um = prod?.unidad_medida || 'un'
+          const unitSize = Number(prod?.gramos_por_unidad) || 1
+          
+          if (unitSize > 1 && (um === 'gr' || um === 'ml')) {
+            const bultos = (qty / unitSize) % 1 === 0 ? (qty / unitSize).toString() : (qty / unitSize).toFixed(2)
+            text += `    - ${name}: ${bultos} bultos x ${unitSize} = ${qty} ${um}\n`
+          } else {
+            text += `    - ${name}: ${qty} ${um}\n`
+          }
+        })
+      })
+      text += `\n`
+    })
+    
+    navigator.clipboard.writeText(text.trim())
+    alert("Copiado al portapapeles (Entregas de la semana)")
+  }
 
   // Load events from events_master (with fallback to recitales_staging)
   useEffect(() => {
@@ -57,50 +159,7 @@ export default function ProduccionPage() {
 
   // Load pending purchase orders for the current week
   useEffect(() => {
-    const fetchPOs = async () => {
-      setPoLoading(true)
-      try {
-        const today = new Date()
-        const currentDay = today.getDay()
-        const endOfThisWeek = new Date(today)
-        const daysToSunday = currentDay === 0 ? 0 : 7 - currentDay
-        endOfThisWeek.setDate(today.getDate() + daysToSunday)
-        endOfThisWeek.setHours(23,59,59,999)
 
-        const { data: poData, error: poErr } = await supabase
-          .from('purchase_orders')
-          .select(`
-             id,
-             fecha_esperada,
-             costo_total,
-             estado,
-             proveedores (nombre),
-             purchase_order_items (
-               cantidad,
-               productos (nombre, unidad_medida)
-             )
-          `)
-          .eq('estado', 'PENDIENTE')
-          .order('fecha_esperada', { ascending: true })
-
-        if (poErr) {
-          console.error("Error fetching POs for kitchen:", poErr)
-          return
-        }
-
-        const filteredPOs = poData ? poData.filter((po: any) => {
-          if (!po.fecha_esperada) return false
-          const poDate = new Date(po.fecha_esperada + 'T12:00:00')
-          return poDate <= endOfThisWeek
-        }) : []
-
-        setIncomingPOs(filteredPOs)
-      } catch (err) {
-        console.error("Error in fetchPOs:", err)
-      } finally {
-        setPoLoading(false)
-      }
-    }
     fetchPOs()
   }, [])
 
@@ -115,40 +174,61 @@ export default function ProduccionPage() {
         setEventsForSelectedDate(eventsForDate)
         
         if (eventsForDate.length === 0) {
-           setConsolidado({ total: 0, items: [], specials: {}, companies: [], headerCount: 0 })
+           setConsolidado({ total: 0, items: [], specials: {}, companies: [], headerCount: 0, headers: [], units: [] })
            return
         }
         
         const eventIds = eventsForDate.map(e => e.id)
 
-        // Find all sales headers for these events
+        // 1. Find all sales headers for these events (Manual Wholesale)
         const { data: headers, error: hErr } = await supabase
           .from("event_sales_headers")
-          .select("id, company, company_name")
+          .select("id, company, company_name, coordinator_name, total_amount, event_master_id, pax_projected")
           .or(`event_id.in.(${eventIds.join(',')}),event_master_id.in.(${eventIds.join(',')})`)
 
         if (hErr) throw hErr
-        if (!headers || headers.length === 0) {
-          setConsolidado({ total: 0, items: [], specials: {}, companies: [], headerCount: 0 })
+        const currentHeaders = headers || []
+        const headerIds = currentHeaders.map((h: any) => h.id)
+
+        // 2. Fetch all units linked to those headers
+        let units: any[] = []
+        if (headerIds.length > 0) {
+          const { data: uData, error: uErr } = await supabase
+            .from("event_sales_units")
+            .select("traditional, vegetarian, vegana, sin_tacc, water_qty, water, special_breakdown, sold_qty, liberated_qty, unit_name")
+            .in("header_id", headerIds)
+          if (uErr) throw uErr
+          units = uData || []
+        }
+
+        // 3. Find all paid Online Orders for these events (Tienda Online)
+        const { data: storeEvents } = await supabase
+          .from("online_store_events")
+          .select("id, title, slug, event_master_id")
+          .in("event_master_id", eventIds)
+
+        const storeIds = (storeEvents || []).map((s: any) => s.id)
+        let onlineOrders: any[] = []
+        if (storeIds.length > 0) {
+          const { data: oOrders } = await supabase
+            .from("online_orders")
+            .select("*, online_store_events(title, slug)")
+            .eq("status", "paid")
+            .in("store_event_id", storeIds)
+          onlineOrders = oOrders || []
+        }
+
+        if (currentHeaders.length === 0 && onlineOrders.length === 0) {
+          setConsolidado({ total: 0, items: [], specials: {}, companies: [], headerCount: 0, headers: [], units: [] })
           return
         }
 
-        const headerIds = headers.map((h: any) => h.id)
-
-        // Fetch all units linked to those headers
-        const { data: units, error: uErr } = await supabase
-          .from("event_sales_units")
-          .select("traditional, vegetarian, vegana, sin_tacc, water_qty, water, special_breakdown, sold_qty, liberated_qty, unit_name")
-          .in("header_id", headerIds)
-
-        if (uErr) throw uErr
-
-        // Aggregation
+        // 4. Aggregation
         const specialsMap: Record<string, { qty: number; note: string }[]> = {
           traditional: [], vegetarian: [], vegana: [], sin_tacc: []
         }
 
-        const totals = (units || []).reduce((acc: any, u: any) => {
+        const totals = units.reduce((acc: any, u: any) => {
           if (u.special_breakdown) {
             try {
               const details = JSON.parse(u.special_breakdown)
@@ -172,15 +252,38 @@ export default function ProduccionPage() {
           }
         }, { trad: 0, veg: 0, vegan: 0, st: 0, water: 0, sold: 0, liberated: 0 })
 
+        const uniqueCompanies = Array.from(new Set(currentHeaders.map((h: any) => h.company_name || h.company).filter(Boolean)))
+
+        // Add online orders to totals
+        onlineOrders.forEach((o: any) => {
+          const t = Number(o.qty_tradicional) || 0
+          const v = Number(o.qty_vegetariano) || 0
+          const vg = Number(o.qty_vegano) || 0
+          const st = Number(o.qty_sintacc) || 0
+          const orderViandas = t + v + vg + st
+
+          totals.trad += t
+          totals.veg += v
+          totals.vegan += vg
+          totals.st += st
+          totals.water += orderViandas
+          totals.sold += orderViandas
+
+          const storeTitle = o.online_store_events?.title || ''
+          const parts = storeTitle.split('—').map((s: string) => s.trim())
+          const comp = parts.length > 1 ? parts[1] : storeTitle
+          if (comp && !uniqueCompanies.includes(comp)) {
+            uniqueCompanies.push(comp)
+          }
+        })
+
         const items = [
-          { key: "traditional", label: "TRADICIONAL / CARNE", qty: totals.trad, color: "bg-slate-900" },
+          { key: "traditional", label: "TRADICIONAL", qty: totals.trad, color: "bg-slate-900" },
           { key: "vegetarian", label: "VEGETARIANA", qty: totals.veg, color: "bg-emerald-600" },
           { key: "vegana", label: "VEGANA", qty: totals.vegan, color: "bg-emerald-500" },
           { key: "sin_tacc", label: "SIN TACC", qty: totals.st, color: "bg-indigo-600" },
           { key: "water", label: "AGUA MINERAL", qty: totals.water, color: "bg-sky-500" },
         ]
-
-        const uniqueCompanies = Array.from(new Set(headers.map((h: any) => h.company_name || h.company).filter(Boolean)))
 
         setConsolidado({
           total: totals.trad + totals.veg + totals.vegan + totals.st,
@@ -189,7 +292,9 @@ export default function ProduccionPage() {
           items,
           specials: specialsMap,
           companies: uniqueCompanies,
-          headerCount: headers.length
+          headerCount: currentHeaders.length + onlineOrders.length,
+          headers: currentHeaders,
+          units
         })
       } catch (err) {
         console.error("Error consolidando producción:", err)
@@ -209,12 +314,244 @@ export default function ProduccionPage() {
   const uniqueDates = Array.from(new Set(eventos.map(e => e.event_date))).sort()
   const totalProjectedPax = eventsForSelectedDate.reduce((acc, e) => acc + (e.total_projected_pax || e.pax_projected || 0), 0)
 
+  const handleCopyCocina = () => {
+    if (!consolidado || !selectedDate) return
+    
+    const formattedDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')
+    const artists = eventsForSelectedDate.map(e => e.show_name).join(' + ')
+    const venues = eventsForSelectedDate.map(e => e.venue_name || e.venue).join(' + ')
+    
+    let trad = consolidado.items.find((i: any) => i.key === 'traditional')?.qty || 0
+    let veg = consolidado.items.find((i: any) => i.key === 'vegetarian')?.qty || 0
+    let vegan = consolidado.items.find((i: any) => i.key === 'vegana')?.qty || 0
+    let st = consolidado.items.find((i: any) => i.key === 'sin_tacc')?.qty || 0
+    const water = consolidado.items.find((i: any) => i.key === 'water')?.qty || 0
+    
+    // Group and format individual specials
+    const specialsLines: string[] = []
+    let specialsTotalQty = 0
+
+    Object.entries(consolidado.specials || {}).forEach(([categoryKey, list]: [string, any]) => {
+      if (Array.isArray(list)) {
+        list.forEach((s: any) => {
+          const qty = Number(s.qty) || 1
+          const note = s.note || ''
+          if (note.trim() !== '') {
+            specialsLines.push(`* Especial ${note}: ${qty}`)
+            specialsTotalQty += qty
+            
+            // Subtract from the base category to avoid double-counting
+            if (categoryKey === 'traditional') trad = Math.max(0, trad - qty)
+            else if (categoryKey === 'vegetarian') veg = Math.max(0, veg - qty)
+            else if (categoryKey === 'vegana') vegan = Math.max(0, vegan - qty)
+            else if (categoryKey === 'sin_tacc') st = Math.max(0, st - qty)
+          }
+        })
+      }
+    })
+
+    const totalSandwiches = trad + veg + vegan + st + specialsTotalQty
+
+    let text = `*Pedido cargado* - ${formattedDate} - ${artists} - ${venues}\n\n`
+    text += `*Total Sandwiches = ${totalSandwiches}*\n`
+    text += `* Tradicional: ${trad}\n`
+    if (specialsLines.length > 0) {
+      text += specialsLines.join('\n') + '\n'
+    }
+    text += `* Vegetariana: ${veg}\n`
+    text += `* Vegana: ${vegan}\n`
+    text += `* Sin tacc: ${st}\n`
+    text += `* Aguas: ${water}`
+
+    navigator.clipboard.writeText(text)
+    alert("Copiado al portapapeles para WhatsApp (Cocina)")
+  }
+
+  const handleCopyFletero = () => {
+    if (!consolidado || !selectedDate) return
+    
+    const formattedDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')
+    const artists = eventsForSelectedDate.map(e => e.show_name).join(' + ')
+    const venues = eventsForSelectedDate.map(e => e.venue_name || e.venue).join(' + ')
+    
+    const trad = consolidado.items.find((i: any) => i.key === 'traditional')?.qty || 0
+    const veg = consolidado.items.find((i: any) => i.key === 'vegetarian')?.qty || 0
+    const vegan = consolidado.items.find((i: any) => i.key === 'vegana')?.qty || 0
+    const st = consolidado.items.find((i: any) => i.key === 'sin_tacc')?.qty || 0
+    const water = consolidado.items.find((i: any) => i.key === 'water')?.qty || 0
+    const totalFood = consolidado.total
+
+    let text = `*Hoja de Ruta Fletero* - ${formattedDate}\n`
+    text += `*Destino (Venue):* ${venues}\n`
+    text += `*Detalle de Carga:* Desglose simplificado para el envío del Artista: ${artists}.\n`
+    text += `- Total Comida: ${totalFood} sándwiches (Tradicional: ${trad}, Vegetariana: ${veg}, Vegana: ${vegan}, Sin TACC: ${st})\n`
+    text += `- Aguas: ${water} unidades`
+
+    navigator.clipboard.writeText(text)
+    alert("Copiado al portapapeles para WhatsApp (Fletero)")
+  }
+
+  const handleCopyLogistica = () => {
+    if (!consolidado || !selectedDate) return
+    
+    const fecha = new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')
+    const artista = eventsForSelectedDate.map(e => e.show_name).join(' + ')
+    const venue = eventsForSelectedDate.map(e => e.venue_name || e.venues?.name || e.venue).join(' + ')
+    
+    const rawTime = eventsForSelectedDate[0]?.load_time || eventsForSelectedDate[0]?.event_time || eventsForSelectedDate[0]?.horario_carga || eventsForSelectedDate[0]?.horario || "21:30"
+    const loadTime = rawTime.replace(':', '.')
+    
+    const waterQty = consolidado.items.find((i: any) => i.key === "water")?.qty || 0
+    
+    const text = `*Hoja de Ruta Logistica* - ${fecha}\n` +
+      `*Horario de carga:* ${loadTime} hs\n` +
+      `*Destino (Venue):* ${venue}\n` +
+      `*Detalle de Carga:* Desglose simplificado para el envío del Artista: ${artista}.\n` +
+      `- Total Comida: ${consolidado.total} sándwiches\n` +
+      `- Aguas: ${waterQty} unidades`
+      
+    navigator.clipboard.writeText(text)
+    alert("Copiado para WhatsApp (Logística) con éxito!")
+  }
+
   const handlePrint = () => {
     if (!consolidado || !selectedDate) return
     const docFileTitle = `CONSOLIDADO-COCINA-${selectedDate}`
     
     const printWindow = window.open('', '_blank')
     if (!printWindow) return
+
+    // Generar Remitos por Empresa / Unidad
+    const remitosHtml = (consolidado.headers || []).flatMap((h: any) => {
+      const event = eventsForSelectedDate.find(e => e.id === h.event_master_id || e.id === h.event_id)
+      const headerUnits = (consolidado.units || []).filter((u: any) => u.header_id === h.id)
+      
+      const client = (consolidado.clients || []).find((c: any) => c.name?.toLowerCase() === h.company_name?.toLowerCase())
+      const headerAssignments = [...(consolidado.assignments || [])].filter((a: any) => a.event_id === h.event_master_id && a.client_id === client?.id)
+
+      return headerUnits.map((u: any) => {
+        const assign = headerAssignments.shift()
+        const vehName = assign?.vehicles?.internal_name || 'Desconocido'
+        const vehPlate = assign?.vehicles?.plate || 'Sin Patente'
+        const coordName = assign?.coordinators?.name || 'S/D'
+        const coordPhone = assign?.coordinators?.phone || 'S/D'
+        
+        const totalSandwiches = (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
+        const totalLiquids = Number(u.water_qty) || Number(u.water) || 0
+
+        let specialNotes: string[] = []
+        try {
+          if (u.special_breakdown) {
+            const details = JSON.parse(u.special_breakdown)
+            if (Array.isArray(details)) {
+              details.forEach((d: any) => {
+                if (d.note && d.note.trim() !== '') {
+                  specialNotes.push(`• ${d.qty > 0 ? d.qty + 'x ' : ''}${d.type === 'traditional' ? 'traditional' : d.type} - ${d.note.toUpperCase()}`)
+                }
+              })
+            }
+          }
+        } catch (e) {}
+
+        const obsText = u.observations || ''
+        const showObs = obsText.trim() !== '' || specialNotes.length > 0
+
+        return `
+          <!-- Salto de página para el remito -->
+          <div style="page-break-before: always; padding-top: 10px;"></div>
+          
+          <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 10px; border-bottom: 4px solid #000; padding-bottom: 5px;">
+            <div>
+              <h2 style="font-size: 24px; font-weight: 900; margin: 0; color: #000; text-transform: uppercase; letter-spacing: -0.5px;">REMITO DE DESCARGA POR EMPRESA</h2>
+              <h3 style="font-size: 16px; font-weight: 900; margin: 4px 0 0 0; color: #2563eb; text-transform: uppercase;">UNIDAD: ${u.unit_name || 'MICRO 1'}</h3>
+            </div>
+          </div>
+
+          <div style="border: 2px solid #cbd5e1; border-radius: 12px; padding: 15px; margin-bottom: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; font-size: 11px; background-color: #f8fafc; font-family: Arial, sans-serif;">
+            <div>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">EMPRESA DE TRANSPORTE</span> <strong style="font-size: 14px; color: #0f172a;">${h.company_name || h.company || 'S/D'}</strong></p>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">VEHÍCULO / PATENTE</span> <strong style="font-size: 14px; color: #0f172a;">${vehName} (${vehPlate})</strong></p>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">COORDINADOR / RESPONSABLE</span> <strong style="font-size: 14px; color: #0f172a;">${coordName}</strong></p>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">TELÉFONO COORDINADOR</span> <strong style="font-size: 14px; color: #0f172a;">${coordPhone}</strong></p>
+            </div>
+            <div>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">EVENTO / SHOW</span> <strong style="font-size: 14px; color: #0f172a;">${event?.show_name || 'S/D'}</strong></p>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">FECHA</span> <strong style="font-size: 14px; color: #0f172a;">${new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')}</strong></p>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">HORARIO DE DESCARGA</span> <strong style="font-size: 14px; color: #0f172a;">${h.delivery_time || 'S/D'}</strong></p>
+              <p style="margin: 4px 0;"><span style="color: #64748b; font-weight: bold; text-transform: uppercase; font-size: 8px; display: block; margin-bottom: 2px;">PUNTO DE ENTREGA / VENUE</span> <strong style="font-size: 13px; color: #0f172a;">${h.delivery_point || 'S/D'} ${h.delivery_address ? '- ' + h.delivery_address : ''}</strong></p>
+            </div>
+          </div>
+
+          <h4 style="font-size: 12px; font-weight: 900; text-transform: uppercase; margin: 15px 0 8px 0; border-bottom: 2px solid #000; padding-bottom: 4px;">1. DETALLE DE VIANDAS (SÓLIDOS)</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; font-family: Arial, sans-serif;">
+            <thead>
+              <tr style="border-bottom: 2px solid #000;">
+                <th style="text-align: left; padding: 6px 0; text-transform: uppercase; font-size: 9px; color: #64748b;">TIPO DE MENÚ</th>
+                <th style="text-align: right; padding: 6px 10px; background: #000; color: #fff; font-size: 9px; width: 100px;">CANTIDAD</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 8px 0; font-weight: bold;">Menú Tradicional</td>
+                <td style="text-align: right; padding: 8px 10px; font-weight: bold; font-size: 14px;">${u.traditional || 0}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 8px 0; font-weight: bold;">Menú Vegetariano</td>
+                <td style="text-align: right; padding: 8px 10px; font-weight: bold; font-size: 14px;">${u.vegetarian || 0}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 8px 0; font-weight: bold;">Menú Vegano</td>
+                <td style="text-align: right; padding: 8px 10px; font-weight: bold; font-size: 14px;">${u.vegana || 0}</td>
+              </tr>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 8px 0; font-weight: bold;">Menú Sin TACC</td>
+                <td style="text-align: right; padding: 8px 10px; font-weight: bold; font-size: 14px;">${u.sin_tacc || 0}</td>
+              </tr>
+              <tr style="background: #e2e8f0; font-weight: bold;">
+                <td style="padding: 0 10px; text-transform: uppercase; font-size: 11px; vertical-align: middle;">TOTAL SANDWICHES</td>
+                <td style="text-align: right; padding: 0; width: 100px; vertical-align: middle;">
+                  <div style="background: #000; color: #fff; padding: 10px; font-size: 16px; font-weight: 900; text-align: right;">${totalSandwiches}</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <h4 style="font-size: 12px; font-weight: 900; text-transform: uppercase; margin: 15px 0 8px 0; border-bottom: 2px solid #000; padding-bottom: 4px;">2. DETALLE DE BEBIDAS (LÍQUIDOS)</h4>
+          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; font-family: Arial, sans-serif;">
+            <thead>
+              <tr style="border-bottom: 2px solid #000;">
+                <th style="text-align: left; padding: 6px 0; text-transform: uppercase; font-size: 9px; color: #64748b;">TIPO DE BEBIDA</th>
+                <th style="text-align: right; padding: 6px 10px; background: #000; color: #fff; font-size: 9px; width: 100px;">CANTIDAD</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 8px 0; font-weight: bold;">Agua Sin Gas (500ml)</td>
+                <td style="text-align: right; padding: 8px 10px; font-weight: bold; font-size: 14px;">${totalLiquids}</td>
+              </tr>
+              <tr style="background: #e2e8f0; font-weight: bold;">
+                <td style="padding: 0 10px; text-transform: uppercase; font-size: 11px; vertical-align: middle;">TOTAL BEBIDAS</td>
+                <td style="text-align: right; padding: 0; width: 100px; vertical-align: middle;">
+                  <div style="background: #000; color: #fff; padding: 10px; font-size: 16px; font-weight: 900; text-align: right;">${totalLiquids}</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+
+          <div style="border: 2px dashed #000; border-radius: 12px; padding: 15px; margin-top: 15px; font-size: 11px; background-color: #fff; font-family: Arial, sans-serif;">
+            <span style="font-weight: 900; text-transform: uppercase; display: block; margin-bottom: 6px; font-size: 9px; color: #64748b;">OBSERVACIONES OPERATIVAS</span>
+            ${showObs ? `
+              ${obsText.trim() !== '' ? `<p style="margin: 2px 0; font-style: italic; font-weight: bold;">${obsText}</p>` : ''}
+              ${specialNotes.map(n => `<p style="margin: 2px 0; font-weight: bold; text-transform: uppercase;">${n}</p>`).join('')}
+            ` : '<p style="margin: 2px 0; font-style: italic; color: #64748b;">Sin observaciones...</p>'}
+          </div>
+
+          <div style="margin-top: 30px; text-align: center; font-size: 9px; color: #94a3b8; border-top: 1px solid #eee; padding-top: 10px; font-family: Arial, sans-serif;">
+            Generado por Super Catering Manager — ${new Date().toLocaleDateString('es-AR')} ${new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+          </div>
+        `
+      })
+    }).join('')
 
     printWindow.document.write(`
       <html>
@@ -287,6 +624,8 @@ export default function ProduccionPage() {
             Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')} — ${docFileTitle}.pdf
           </div>
 
+          ${remitosHtml}
+
           <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
           <script>
             window.onload = function() {
@@ -307,10 +646,11 @@ export default function ProduccionPage() {
     printWindow.document.close()
   }
 
+
+
   const today = new Date()
   const todayDate = new Date(today)
   todayDate.setHours(0,0,0,0)
-
   const formatCurrency = (val: any) => {
     const num = Number(val) || 0
     return new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(num)
@@ -329,7 +669,6 @@ export default function ProduccionPage() {
           scrollbar-width: none;  /* Firefox */
         }
       `}</style>
-
       <div className="grid lg:grid-cols-3 gap-8 items-start">
         
         {/* COLUMNA 1 y 2: PLAN DE COCINA CONSOLIDADO */}
@@ -346,9 +685,9 @@ export default function ProduccionPage() {
                 <h1 className="text-3xl font-black text-slate-900 tracking-tighter">Plan de Cocina Consolidado</h1>
                 <p className="text-sm text-slate-400 mt-1">Agrupado por Evento — suma de TODAS las empresas</p>
               </div>
-              <div className="flex gap-4 w-full md:w-auto">
+              <div className="flex flex-wrap gap-4 w-full md:w-auto items-center">
                 <select
-                  className="bg-slate-50 border border-slate-200 p-4 rounded-2xl font-bold flex-1 md:w-96 outline-none focus:ring-2 focus:ring-indigo-50 transition"
+                  className="bg-slate-50 border border-slate-200 p-4 rounded-2xl font-bold flex-1 md:w-72 outline-none focus:ring-2 focus:ring-indigo-50 transition"
                   value={selectedDate}
                   onChange={e => setSelectedDate(e.target.value)}>
                   <option value="">-- Seleccionar Día de Producción --</option>
@@ -362,8 +701,30 @@ export default function ProduccionPage() {
                     )
                   })}
                 </select>
+                
+                {consolidado && (
+                  <>
+                    <button 
+                      onClick={handleCopyCocina}
+                      className="bg-emerald-600 text-white px-5 py-4 rounded-2xl hover:bg-emerald-700 transition shadow-md text-xs font-black uppercase tracking-wider flex items-center gap-2"
+                      title="Copiar pedido para WhatsApp (Cocina)"
+                    >
+                      <MessageSquare size={16} /> WhatsApp Cocina
+                    </button>
+                    
+                    <button 
+                      onClick={handleCopyLogistica}
+                      className="bg-blue-600 text-white px-5 py-4 rounded-2xl hover:bg-blue-700 transition shadow-md text-xs font-black uppercase tracking-wider flex items-center gap-2"
+                      title="Copiar hoja de ruta para WhatsApp (Logística)"
+                    >
+                      <Truck size={16} /> WhatsApp Logística
+                    </button>
+                  </>
+                )}
+
                 <button onClick={handlePrint}
-                  className="bg-slate-900 text-white p-4 rounded-2xl hover:bg-slate-800 transition shadow-lg">
+                  className="bg-slate-900 text-white p-4 rounded-2xl hover:bg-slate-800 transition shadow-lg shrink-0"
+                  title="Imprimir PDF Consolidado">
                   <Printer size={24} />
                 </button>
               </div>
@@ -469,17 +830,26 @@ export default function ProduccionPage() {
               </div>
             </div>
           )}
-
         </div>
-
         {/* COLUMNA 3: MERCADERÍA A RECIBIR (1/3 de ancho) - Solo visible en pantalla (print:hidden) */}
         <div className="lg:col-span-1 bg-white rounded-[2.5rem] border border-slate-200 p-6 md:p-8 shadow-xl shadow-slate-200/50 print:hidden">
-          <div className="mb-6">
-            <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
-              <Truck className="text-indigo-600 animate-pulse" size={28} /> 
-              Recibir esta Semana
-            </h3>
-            <p className="text-xs text-slate-500 font-medium mt-1">Mercadería a recibir de proveedores.</p>
+          <div className="mb-6 flex justify-between items-start">
+            <div>
+              <h3 className="text-2xl font-black text-slate-900 tracking-tighter flex items-center gap-2">
+                <Truck className="text-indigo-600 animate-pulse" size={28} /> 
+                Recibir esta Semana
+              </h3>
+              <p className="text-xs text-slate-500 font-medium mt-1">Mercadería a recibir de proveedores.</p>
+            </div>
+            {incomingPOs.length > 0 && (
+              <button
+                onClick={handleCopyPendingPOs}
+                className="p-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl transition shadow-sm"
+                title="Copiar entregas de la semana"
+              >
+                <Copy size={16} />
+              </button>
+            )}
           </div>
           
           {/* Contenedor con scroll vertical limpio para entregas de mercadería */}
@@ -573,6 +943,13 @@ export default function ProduccionPage() {
                                <span className="font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
                                <span className="font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
                             </div>
+                            <button
+                              onClick={() => setReceivingPoId(po.id)}
+                              className="mt-3 w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl text-xs font-black uppercase tracking-widest transition shadow-sm flex items-center justify-center gap-1.5"
+                            >
+                              <Truck size={14} />
+                              Recibir
+                            </button>
                          </div>
                       )
                    })
@@ -584,6 +961,13 @@ export default function ProduccionPage() {
         </div>
 
       </div>
+      {receivingPoId && (
+        <ReceivePOModal
+          orderId={receivingPoId}
+          onClose={() => setReceivingPoId(null)}
+          onSuccess={handlePORecievedSuccess}
+        />
+      )}
 
       <style jsx global>{`
         @media print {

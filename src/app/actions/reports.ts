@@ -1067,19 +1067,33 @@ export async function getRVTrasladosShowsComparisonAction(selectedEventMasterIds
       const headerTotalPaxOriginal = Number(h.pax_projected) || 0
       const headerTotalUnitsSold = hUnits.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0)
 
-      hUnits.forEach(u => {
-        const coordName = (u.coordinators as any)?.name || h.coordinator_name || 'S/D'
-        const sold = Number(u.sold_qty) || 0
-        const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0
-        const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0
-
+      if (hUnits.length === 0 && Number(h.total_amount) > 0) {
+        const coordName = h.coordinator_name || 'Venta Directa / Sin Asignar'
+        const pax = Number(h.pax_projected) || 0
+        const sales = Number(h.total_amount) || 0
+        const unitsSold = Math.round(sales / 10000)
+        
         if (!coordinatorHistoricalStats[coordName]) {
           coordinatorHistoricalStats[coordName] = { units: 0, pax: 0, sales: 0 }
         }
-        coordinatorHistoricalStats[coordName].units += sold
-        coordinatorHistoricalStats[coordName].pax += unitPax
-        coordinatorHistoricalStats[coordName].sales += unitBilling
-      })
+        coordinatorHistoricalStats[coordName].units += unitsSold
+        coordinatorHistoricalStats[coordName].pax += pax
+        coordinatorHistoricalStats[coordName].sales += sales
+      } else {
+        hUnits.forEach(u => {
+          const coordName = (u.coordinators as any)?.name || h.coordinator_name || 'S/D'
+          const sold = Number(u.sold_qty) || 0
+          const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0
+          const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0
+
+          if (!coordinatorHistoricalStats[coordName]) {
+            coordinatorHistoricalStats[coordName] = { units: 0, pax: 0, sales: 0 }
+          }
+          coordinatorHistoricalStats[coordName].units += sold
+          coordinatorHistoricalStats[coordName].pax += unitPax
+          coordinatorHistoricalStats[coordName].sales += unitBilling
+        })
+      }
     })
 
     // Now, if selectedEventMasterIds is provided and not empty, calculate performance for SELECTED shows
@@ -1095,30 +1109,45 @@ export async function getRVTrasladosShowsComparisonAction(selectedEventMasterIds
         const headerTotalPaxOriginal = Number(h.pax_projected) || 0
         const headerTotalUnitsSold = hUnits.reduce((acc, u) => acc + (Number(u.sold_qty) || 0), 0)
 
-        hUnits.forEach(u => {
-          const coordName = (u.coordinators as any)?.name || h.coordinator_name || 'S/D'
-          const sold = Number(u.sold_qty) || 0
-          const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0
-          const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0
-
+        if (hUnits.length === 0 && Number(h.total_amount) > 0) {
+          const coordName = h.coordinator_name || 'Venta Directa / Sin Asignar'
+          const pax = Number(h.pax_projected) || 0
+          const sales = Number(h.total_amount) || 0
+          const unitsSold = Math.round(sales / 10000)
+          
           if (!coordinatorSelectedStats[coordName]) {
             coordinatorSelectedStats[coordName] = { units: 0, pax: 0, sales: 0 }
           }
-          coordinatorSelectedStats[coordName].units += sold
-          coordinatorSelectedStats[coordName].pax += unitPax
-          coordinatorSelectedStats[coordName].sales += unitBilling
-          grandTotalSalesSelected += unitBilling
-        })
+          coordinatorSelectedStats[coordName].units += unitsSold
+          coordinatorSelectedStats[coordName].pax += pax
+          coordinatorSelectedStats[coordName].sales += sales
+          grandTotalSalesSelected += sales
+        } else {
+          hUnits.forEach(u => {
+            const coordName = (u.coordinators as any)?.name || h.coordinator_name || 'S/D'
+            const sold = Number(u.sold_qty) || 0
+            const unitPax = hUnits.length > 0 ? headerTotalPaxOriginal / hUnits.length : 0
+            const unitBilling = headerTotalUnitsSold > 0 ? (Number(h.total_amount) / headerTotalUnitsSold) * sold : 0
+
+            if (!coordinatorSelectedStats[coordName]) {
+              coordinatorSelectedStats[coordName] = { units: 0, pax: 0, sales: 0 }
+            }
+            coordinatorSelectedStats[coordName].units += sold
+            coordinatorSelectedStats[coordName].pax += unitPax
+            coordinatorSelectedStats[coordName].sales += unitBilling
+            grandTotalSalesSelected += unitBilling
+          })
+        }
       })
 
       // Build the comparison results
-      Object.keys(coordinatorHistoricalStats).forEach(coordName => {
+      Object.keys(coordinatorSelectedStats).forEach(coordName => {
         const selected = coordinatorSelectedStats[coordName]
-        const historical = coordinatorHistoricalStats[coordName]
+        const historical = coordinatorHistoricalStats[coordName] || selected
 
         if (selected && selected.sales > 0) {
           const convSelected = selected.pax > 0 ? (selected.units / selected.pax) * 100 : 0
-          const convHistorical = historical.pax > 0 ? (historical.units / historical.pax) * 100 : 0
+          const convHistorical = historical && historical.pax > 0 ? (historical.units / historical.pax) * 100 : convSelected
 
           comparison.push({
             coordinador: coordName,

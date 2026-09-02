@@ -28,7 +28,7 @@ export default function CreatePOModal({ editOrderId, onClose, onSuccess }: Creat
       setLoading(true)
       const [{ data: provs }, { data: prods }] = await Promise.all([
         supabase.from("proveedores").select("id, nombre").order("nombre"),
-        supabase.from("productos").select("id, nombre, unidad_medida, proveedor_id, gramos_por_unidad").order("nombre")
+        supabase.from("productos").select("id, nombre, unidad_medida, proveedor_id, gramos_por_unidad, producto_proveedores(proveedor_id)").order("nombre")
       ])
       
       if (provs) setProveedores(provs)
@@ -70,7 +70,10 @@ export default function CreatePOModal({ editOrderId, onClose, onSuccess }: Creat
   }, [editOrderId])
 
   const availableProducts = proveedorId 
-    ? productos.filter(p => p.proveedor_id === proveedorId) 
+    ? productos.filter(p => 
+        p.proveedor_id === proveedorId || 
+        (p.producto_proveedores && p.producto_proveedores.some((pp: any) => pp.proveedor_id === proveedorId))
+      ) 
     : productos
 
   const handleAddItem = () => {

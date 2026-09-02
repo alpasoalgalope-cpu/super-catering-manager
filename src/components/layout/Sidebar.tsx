@@ -32,90 +32,102 @@ import {
   PackageSearch,
   Layers,
   ChefHat,
+  Store,
   LogOut,
-  Wallet
+  Wallet,
+  Sparkles,
+  PieChart,
+  ShieldCheck,
+  Sliders,
+  Utensils
 } from "lucide-react"
 
 const sections = [
   {
-    title: "Operación",
-    icon: LayoutGrid,
-    items: [
-      { href: "/", label: "Inicio", icon: Home },
-      { href: "/crm", label: "CRM Comercial", icon: TrendingUp },
-      { href: "/clients", label: "Clientes", icon: Users },
-      { href: "/coordinadores", label: "Coordinadores", icon: User },
-      { href: "/buses", label: "Flota & Buses", icon: Bus },
-    ]
-  },
-  {
-    title: "Fondos y Finanzas",
-    icon: Wallet,
-    items: [
-      { href: "/finanzas/tesoreria", label: "Tesorería", icon: Wallet },
-      { href: "/finanzas", label: "Flujo de Caja", icon: DollarSign },
-      { href: "/finanzas/iva", label: "Gestión de IVA", icon: Calculator },
-      { href: "/informes", label: "Central de Informes", icon: BarChart3 },
-      { href: "/finanzas/categorias", label: "Categorías de Gastos", icon: Layers },
-    ]
-  },
-  {
-    title: "Eventos",
-    icon: Calendar,
+    title: "Accesos Frecuentes",
+    icon: Sparkles,
     items: [
       { href: "/settings/eventos", label: "Gestión de Eventos", icon: CalendarDays },
+      { href: "/inventario/proyeccion", label: "Proyección de Insumos", icon: Calculator },
+      { href: "/inventario/ordenes-compra", label: "Órdenes de Compra", icon: Truck },
+      { href: "/ventas-online", label: "Ventas Online", icon: Store },
       { href: "/ventas-evento", label: "Ventas por Evento", icon: DollarSign },
-      { href: "/logistica-compras", label: "Efectividad de Shows", icon: BarChart3 },
+      { href: "/produccion", label: "Consolidado Cocina", icon: ChefHat },
+      { href: "/informes", label: "Central de Informes", icon: BarChart3 },
+    ]
+  },
+  {
+    title: "Clientes",
+    icon: Users,
+    items: [
+      { href: "/crm", label: "CRM Comercial", icon: TrendingUp },
       { href: "/settings/reglas-precios", label: "Reglas de Precios", icon: Tag },
+      { href: "/clients", label: "Clientes", icon: Users },
+      { href: "/buses", label: "Flota & Buses", icon: Bus },
+      { href: "/coordinadores", label: "Coordinadores", icon: User },
       { href: "/reglas-liberados", label: "Liberados", icon: Gift },
     ]
   },
   {
-    title: "Producción",
-    icon: Factory,
+    title: "Operación de Cocina",
+    icon: ChefHat,
     items: [
-      { href: "/produccion", label: "Consolidado Cocina", icon: ChefHat },
-      { href: "/recitales-staging", label: "Recitales (Staging)", icon: ClipboardList },
-      { href: "/inventario/proyeccion", label: "Proyección de Insumos", icon: Calculator },
+      { href: "/inventario/rubros-comida", label: "Categorías de Cocina", icon: Utensils },
+      { href: "/inventario/proveedores", label: "Proveedores", icon: Truck },
+      { href: "/inventario/familias", label: "Familias de Insumos", icon: Layers },
+      { href: "/inventario/productos", label: "Productos e Insumos", icon: PackageSearch },
+      { href: "/inventario/catalogo", label: "Catálogo de Productos", icon: Boxes },
       { href: "/inventario/recetas", label: "Maestro de Recetas", icon: BookOpen },
-      { href: "/inventario/catalogo", label: "Catálogo de Productos", icon: PackageSearch },
+      { href: "/inventario/stock", label: "Control de Stock", icon: Warehouse },
+      { href: "/inventario/trazabilidad", label: "Auditoría de Stock", icon: ClipboardList },
+      { href: "/inventario/ajustes", label: "Ajustes de Inventario", icon: AlertTriangle },
     ]
   },
   {
-    title: "Inventario",
-    icon: Warehouse,
+    title: "Finanzas e Informes",
+    icon: BarChart3,
     items: [
-      { href: "/inventario/stock", label: "Control de Stock", icon: Boxes },
-      { href: "/inventario/trazabilidad", label: "Auditoría de Stock", icon: ClipboardList },
-      { href: "/inventario/productos", label: "Productos e Insumos", icon: PackageSearch },
-      { href: "/inventario/ajustes", label: "Ajustes de Inventario", icon: AlertTriangle },
-      { href: "/inventario/ordenes-compra", label: "Órdenes de Compra", icon: Truck },
-      { href: "/inventario/familias", label: "Familias de Insumos", icon: Layers },
-      { href: "/inventario/rubros-comida", label: "Categorías de Cocina", icon: ChefHat },
-      { href: "/inventario/proveedores", label: "Proveedores", icon: Truck },
+      { href: "/informes", label: "Central de Informes", icon: BarChart3 },
+      { href: "/finanzas/categorias", label: "Categorías de Gastos", icon: Layers },
+      { href: "/informes/flujo-caja", label: "Análisis de Caja", icon: DollarSign },
+    ]
+  },
+  {
+    title: "Tesorería",
+    icon: Wallet,
+    items: [
+      { href: "/finanzas/tesoreria", label: "Tesorería", icon: Wallet },
+      { href: "/informes/financieros", label: "Rentabilidad y Costos", icon: PieChart },
     ]
   },
   {
     title: "Recursos Humanos",
-    icon: Users,
+    icon: ShieldCheck,
     items: [
       { href: "/rrhh", label: "Panel Admin", icon: ClipboardList },
       { href: "/rrhh/portal", label: "Mi Portal", icon: User },
     ]
   },
   {
-    title: "Sistema",
+    title: "Configuración",
     icon: Settings,
     items: [
-      { href: "/settings", label: "Configuración", icon: Settings },
-      { href: "/vehicle-defaults", label: "Defaults Vehículos", icon: Car },
+      { href: "/settings", label: "Configuración", icon: Sliders },
     ]
   }
 ]
 
 export default function Sidebar() {
   const pathname = usePathname()
-  const [openSections, setOpenSections] = useState<string[]>(['Operación', 'Inventario', 'Fondos y Finanzas'])
+  const [openSections, setOpenSections] = useState<string[]>([
+    'Accesos Frecuentes', 
+    'Clientes', 
+    'Operación de Cocina',
+    'Finanzas e Informes',
+    'Tesorería',
+    'Recursos Humanos',
+    'Configuración'
+  ])
   const [role, setRole] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
@@ -166,7 +178,7 @@ export default function Sidebar() {
           '/crm', '/clients', '/coordinadores', '/buses', 
           '/settings/reglas-precios', '/reglas-liberados', '/informes',
           '/settings', '/vehicle-defaults', '/inventario/recetas',
-          '/rrhh', '/finanzas/tesoreria', '/finanzas/categorias' // Restricción del panel de administración de RRHH, Tesorería y Categorías
+          '/rrhh', '/finanzas/tesoreria', '/finanzas/categorias', '/informes/financieros'
         ]
         return !restricted.includes(item.href)
       })
@@ -192,88 +204,90 @@ export default function Sidebar() {
 
   return (
     <aside className="w-64 h-screen bg-[#0f172a] border-r border-slate-800/50 flex flex-col shadow-2xl z-20 flex-shrink-0 overflow-hidden">
-      <div className="p-8 mb-4 flex-shrink-0">
-        <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:bg-indigo-500 transition-colors">
+      {/* Top Logo Button - Always redirects to Home */}
+      <div className="p-6 pb-4 flex-shrink-0 border-b border-slate-800/60">
+        <Link href="/" className="flex items-center gap-3 group cursor-pointer" title="Ir al Inicio">
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:bg-indigo-500 group-hover:scale-105 transition-all">
             <Warehouse className="text-white" size={20} />
           </div>
           <div>
-            <h2 className="text-white font-black text-lg tracking-tighter uppercase italic leading-tight group-hover:text-indigo-400 transition-colors">Super Catering</h2>
-            <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-[0.2em]">Management System</p>
+            <h2 className="text-white font-black text-lg tracking-tighter uppercase italic leading-tight group-hover:text-indigo-400 transition-colors">
+              Super Catering
+            </h2>
+            <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-[0.2em]">
+              Management System
+            </p>
           </div>
         </Link>
       </div>
 
-      <nav className="flex-1 flex flex-col gap-2 px-4 overflow-y-auto custom-scrollbar">
+      {/* Nav List */}
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-6 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
         {filteredSections.map((section) => {
           const isOpen = openSections.includes(section.title)
           const SectionIcon = section.icon
 
           return (
-            <div key={section.title} className="flex flex-col gap-1 pb-4 mb-2 border-b border-slate-800/40 last:border-0">
-              <button 
+            <div key={section.title} className="space-y-1">
+              <button
                 onClick={() => toggleSection(section.title)}
-                className="flex items-center justify-between px-4 py-3 rounded-2xl hover:bg-slate-800/40 transition-all group text-left w-full"
+                className="w-full flex items-center justify-between px-3 py-2 text-xs font-black text-slate-400 hover:text-slate-200 uppercase tracking-wider rounded-xl hover:bg-slate-800/50 transition-colors cursor-pointer"
               >
-                <div className="flex items-center gap-3">
-                  <div className={`p-2 rounded-lg transition-colors ${isOpen ? 'bg-indigo-500/10 text-indigo-400' : 'text-slate-500 group-hover:text-slate-300'}`}>
-                    <SectionIcon size={18} />
-                  </div>
-                  <h3 className={`text-[11px] font-black uppercase tracking-widest transition-colors ${isOpen ? 'text-indigo-100' : 'text-slate-500 group-hover:text-slate-300'}`}>
-                    {section.title}
-                  </h3>
+                <div className="flex items-center gap-2">
+                  <SectionIcon size={14} className="text-indigo-400" />
+                  <span>{section.title}</span>
                 </div>
-                {isOpen ? (
-                  <ChevronDown size={14} className="text-slate-600" />
-                ) : (
-                  <ChevronRight size={14} className="text-slate-600" />
-                )}
+                {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
               </button>
 
-              <div className={`flex flex-col gap-1 overflow-hidden transition-all duration-300 ${isOpen ? 'max-h-[600px] opacity-100 mt-1' : 'max-h-0 opacity-0'}`}>
-                {section.items.map((item) => {
-                  const isActive = pathname === item.href
-                  const ItemIcon = item.icon
+              {isOpen && (
+                <div className="space-y-0.5 pl-2 mt-1">
+                  {section.items.map((item: any) => {
+                    const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+                    const ItemIcon = item.icon
 
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={`
-                        group flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all relative
-                        ${isActive 
-                          ? 'bg-indigo-600/10 text-white font-bold' 
-                          : 'text-slate-400 hover:text-white hover:bg-slate-800/30'
-                        }
-                      `}
-                    >
-                      {isActive && (
-                        <div className="absolute left-0 w-1 h-5 bg-indigo-500 rounded-r-full" />
-                      )}
-                      <ItemIcon 
-                        size={16} 
-                        className={`transition-colors ${isActive ? 'text-indigo-400' : 'text-slate-600 group-hover:text-slate-400'}`} 
-                      />
-                      <span className="text-sm tracking-tight">{item.label}</span>
-                    </Link>
-                  )
-                })}
-              </div>
+                    return (
+                      <Link
+                        key={item.href + item.label}
+                        href={item.href}
+                        className={`flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                          isActive
+                            ? "bg-indigo-600 text-white shadow-lg shadow-indigo-600/30"
+                            : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/40"
+                        }`}
+                      >
+                        <ItemIcon size={15} className={isActive ? "text-white" : "text-slate-400"} />
+                        <span className="truncate">{item.label}</span>
+                      </Link>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )
         })}
-      </nav>
+      </div>
 
-      <div className="p-4 mt-auto border-t border-slate-800/50 flex-shrink-0">
-        <div className="px-4 py-2 mb-2">
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Usuario: <span className="text-indigo-400">{role || 'Cargando...'}</span></p>
+      {/* User / Logout */}
+      <div className="p-4 border-t border-slate-800/60 bg-slate-900/40 flex-shrink-0 flex items-center justify-between">
+        <div className="flex items-center gap-2.5 overflow-hidden">
+          <div className="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 font-bold flex items-center justify-center text-xs shrink-0">
+            {role === 'admin' ? 'AD' : role === 'cocina' ? 'CO' : 'EM'}
+          </div>
+          <div className="truncate">
+            <p className="text-xs font-bold text-slate-200 truncate uppercase tracking-wider">
+              {role === 'admin' ? 'Admin' : role === 'cocina' ? 'Cocina' : 'Empleado'}
+            </p>
+            <p className="text-[10px] text-slate-500 font-medium truncate">Online</p>
+          </div>
         </div>
-        <button 
+
+        <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-all font-black text-xs uppercase tracking-widest"
+          className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-lg transition-colors cursor-pointer"
+          title="Cerrar sesión"
         >
-          <LogOut size={18} />
-          Cerrar Sesión
+          <LogOut size={16} />
         </button>
       </div>
     </aside>

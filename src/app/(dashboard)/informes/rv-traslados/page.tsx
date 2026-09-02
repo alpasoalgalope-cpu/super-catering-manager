@@ -280,44 +280,52 @@ export default function RVTrasladosReport() {
               </div>
             ) : (
               <div className="border border-slate-200 rounded-[2rem] overflow-hidden flex-1 flex flex-col justify-between">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse text-xs">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider">Coordinador</th>
-                        <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-right">Venta en Shows</th>
-                        <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-center">Conv. Shows</th>
-                        <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-center">Conv. Histórica</th>
-                        <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-center">Desviación</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {comparisonList.map((c, idx) => {
-                        const isPositive = c.diferencia > 0
-                        const isZero = c.diferencia === 0
-                        return (
-                          <tr key={idx} className="hover:bg-slate-50/50 transition">
-                            <td className="py-3.5 px-5 font-bold text-slate-800">{c.coordinador}</td>
-                            <td className="py-3.5 px-5 text-right font-black text-slate-700">
-                              {formatCurrency(c.venta_seleccionada)}
-                            </td>
-                            <td className="py-3.5 px-5 text-center font-black text-indigo-600">
-                              {c.conv_seleccionada.toFixed(1)}%
-                            </td>
-                            <td className="py-3.5 px-5 text-center font-black text-slate-500">
-                              {c.conv_historica.toFixed(1)}%
-                            </td>
-                            <td className={`py-3.5 px-5 text-center font-black ${
-                              isZero ? "text-slate-400" : isPositive ? "text-emerald-600" : "text-rose-500"
-                            }`}>
-                              {isZero ? "0.0%" : (isPositive ? "+" : "") + c.diferencia.toFixed(1) + "%"}
-                            </td>
-                          </tr>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                {comparisonList.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-16 text-slate-400 p-6 text-center">
+                    <Users size={36} className="text-slate-300 mb-3" />
+                    <p className="font-black uppercase tracking-widest text-xs text-slate-600">Sin desglose por coordinador individual</p>
+                    <p className="text-[11px] text-slate-400 mt-1 max-w-sm">Los shows seleccionados tienen una facturación registrada pero no cuentan con coordinadores asignados en sus unidades.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider">Coordinador</th>
+                          <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-right">Venta en Shows</th>
+                          <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-center">Conv. Shows</th>
+                          <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-center">Conv. Histórica</th>
+                          <th className="py-4 px-5 font-black uppercase text-slate-400 tracking-wider text-center">Desviación</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {comparisonList.map((c, idx) => {
+                          const isPositive = c.diferencia > 0
+                          const isZero = c.diferencia === 0
+                          return (
+                            <tr key={idx} className="hover:bg-slate-50/50 transition">
+                              <td className="py-3.5 px-5 font-bold text-slate-800">{c.coordinador}</td>
+                              <td className="py-3.5 px-5 text-right font-black text-slate-700">
+                                {formatCurrency(c.venta_seleccionada)}
+                              </td>
+                              <td className="py-3.5 px-5 text-center font-black text-indigo-600">
+                                {c.conv_seleccionada.toFixed(1)}%
+                              </td>
+                              <td className="py-3.5 px-5 text-center font-black text-slate-500">
+                                {c.conv_historica.toFixed(1)}%
+                              </td>
+                              <td className={`py-3.5 px-5 text-center font-black ${
+                                isZero ? "text-slate-400" : isPositive ? "text-emerald-600" : "text-rose-500"
+                              }`}>
+                                {isZero ? "0.0%" : (isPositive ? "+" : "") + c.diferencia.toFixed(1) + "%"}
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {/* Footer comparison summary */}
                 <div className="p-5 bg-slate-50 border-t border-slate-200 flex justify-between items-center text-xs font-bold text-slate-500 rounded-b-[2rem]">

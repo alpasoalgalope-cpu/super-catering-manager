@@ -1,7 +1,8 @@
 "use client"
 
 import React, { useState, useMemo, useEffect, useRef } from "react"
-import { Search, ChefHat, Plus, Layers, Package, Trash2, Edit3, X, Calculator, Save, AlertCircle, ChevronRight, Info, Copy, Loader2, ChevronDown, ArrowLeft, ShoppingCart, TrendingUp, BarChart3, LayoutGrid } from "lucide-react"
+import { Search, ChefHat, Plus, Layers, Package, Trash2, Edit3, X, Calculator, Save, AlertCircle, ChevronRight, Info, Copy, Loader2, ChevronDown, ArrowLeft, ShoppingCart, TrendingUp, BarChart3, LayoutGrid, Download } from "lucide-react"
+import * as XLSX from "xlsx"
 import { RubroComida, Receta, Producto } from "@/types/inventory"
 import { 
   deleteRecetaAction 
@@ -238,6 +239,171 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
     if (res.success) {
       setRecetas(prev => prev.filter(r => r.id !== id))
       if (selectedRecetaId === id) setSelectedRecetaId(null)
+    }
+  }
+
+  const getRecipeTotalCost = (receta: Receta) => {
+    if (!receta.receta_insumos) return 0
+    return receta.receta_insumos.reduce((acc, insumo) => {
+      const prod = productos.find(p => p.id === insumo.producto_id)
+      const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha_desde || b.created_at || b.fecha).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha).getTime())[0]
+      const costPerBase = latestPrice?.costo_unidad_base || 0
+      return acc + (insumo.cantidad_necesaria * costPerBase)
+    }, 0)
+  }
+
+  const handleDownloadSingleExcel = (receta: Receta) => {
+    try {
+      const cost = getRecipeTotalCost(receta)
+      const profitability = cost > 0 ? (((receta.precio_venta_sugerido / cost) - 1) * 100).toFixed(0) + "%" : "0%"
+      
+      const rows = [
+        ["FICHA TÉCNICA DE PRODUCCIÓN"],
+        [],
+        ["Receta:", receta.nombre],
+        ["Rubro:", receta.rubros_comida?.nombre || 'Sin Rubro'],
+        ["Precio de Venta Sugerido:", formatMoneyAR(receta.precio_venta_sugerido)],
+        ["Costo Unitario Base:", formatMoneyAR(cost)],
+        ["Rentabilidad Sugerida:", profitability],
+        [],
+        ["DESGLOSE DE INSUMOS"],
+        ["Insumo / Producto", "Unidad", "Cantidad Neta", "Costo Unitario Base", "Costo Parcial"],
+      ]
+      
+      if (receta.receta_insumos && receta.receta_insumos.length > 0) {
+        receta.receta_insumos.forEach(insumo => {
+          const prod = productos.find(p => p.id === insumo.producto_id)
+          const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha_desde || b.created_at || b.fecha).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha).getTime())[0]
+          const uCost = latestPrice?.costo_unidad_base || 0
+          const partialCost = insumo.cantidad_necesaria * uCost
+          
+          rows.push([
+            prod?.nombre || "Desconocido",
+            prod?.unidad_medida || "-",
+            insumo.cantidad_necesaria.toString(),
+            formatMoneyAR(uCost),
+            formatMoneyAR(partialCost)
+          ])
+        })
+      } else {
+        rows.push(["No hay ingredientes cargados en esta receta", "", "", "", ""])
+      }
+      
+      rows.push([])
+      rows.push(["TOTAL COSTO", "", "", "", formatMoneyAR(cost)])
+
+      const ws = XLSX.utils.aoa_to_sheet(rows)
+      
+      ws["!cols"] = [
+        { wch: 35 },
+        { wch: 10 },
+        { wch: 15 },
+        { wch: 20 },
+        { wch: 20 }
+      ]
+
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, "Ficha Técnica")
+      XLSX.writeFile(wb, `Ficha_Tecnica_${receta.nombre.replace(/[^a-zA-Z0-9]/g, "_")}.xlsx`)
+    } catch (err) {
+      console.error("Error al exportar receta:", err)
+      alert("Error al exportar la receta a Excel.")
+    }
+  }
+
+  const handleDownloadAllExcel = () => {
+    try {
+      const wb = XLSX.utils.book_new()
+      
+      // --- SHEET 1: RESUMEN GENERAL ---
+      const resumenRows = [
+        ["RESUMEN DE RECETAS - ESCANDALLO MASTER"],
+        [],
+        ["Receta", "Rubro", "Costo Unitario Base", "Precio Venta Sugerido", "Rentabilidad Sugerida"]
+      ]
+      
+      recetas.forEach(receta => {
+        const cost = getRecipeTotalCost(receta)
+        const profitability = cost > 0 ? (((receta.precio_venta_sugerido / cost) - 1) * 100).toFixed(0) + "%" : "0%"
+        resumenRows.push([
+          receta.nombre,
+          receta.rubros_comida?.nombre || 'Sin Rubro',
+          formatMoneyAR(cost),
+          formatMoneyAR(receta.precio_venta_sugerido),
+          profitability
+        ])
+      })
+      
+      const wsResumen = XLSX.utils.aoa_to_sheet(resumenRows)
+      wsResumen["!cols"] = [
+        { wch: 35 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 20 },
+        { wch: 20 }
+      ]
+      XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen General")
+
+      // --- SHEET 2: DETALLE DE FICHAS ---
+      const detalleRows: any[][] = [
+        ["DESGLOSE DETALLADO DE TODAS LAS FICHAS TÉCNICAS"],
+        []
+      ]
+
+      recetas.forEach((receta, index) => {
+        const cost = getRecipeTotalCost(receta)
+        const profitability = cost > 0 ? (((receta.precio_venta_sugerido / cost) - 1) * 100).toFixed(0) + "%" : "0%"
+        
+        if (index > 0) {
+          detalleRows.push([], [], [])
+        }
+        
+        detalleRows.push(
+          [`FICHA TÉCNICA: ${receta.nombre.toUpperCase()}`],
+          ["Rubro:", receta.rubros_comida?.nombre || 'Sin Rubro'],
+          ["Precio de Venta Sugerido:", formatMoneyAR(receta.precio_venta_sugerido)],
+          ["Costo Unitario Base:", formatMoneyAR(cost)],
+          ["Rentabilidad Sugerida:", profitability],
+          [],
+          ["Insumo / Producto", "Unidad", "Cantidad Neta", "Costo Unitario Base", "Costo Parcial"]
+        )
+
+        if (receta.receta_insumos && receta.receta_insumos.length > 0) {
+          receta.receta_insumos.forEach(insumo => {
+            const prod = productos.find(p => p.id === insumo.producto_id)
+            const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha_desde || b.created_at || b.fecha).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha).getTime())[0]
+            const uCost = latestPrice?.costo_unidad_base || 0
+            const partialCost = insumo.cantidad_necesaria * uCost
+            
+            detalleRows.push([
+              prod?.nombre || "Desconocido",
+              prod?.unidad_medida || "-",
+              insumo.cantidad_necesaria.toString(),
+              formatMoneyAR(uCost),
+              formatMoneyAR(partialCost)
+            ])
+          })
+        } else {
+          detalleRows.push(["No hay ingredientes cargados en esta receta", "", "", "", ""])
+        }
+        
+        detalleRows.push(["TOTAL COSTO", "", "", "", formatMoneyAR(cost)])
+      })
+
+      const wsDetalle = XLSX.utils.aoa_to_sheet(detalleRows)
+      wsDetalle["!cols"] = [
+        { wch: 35 },
+        { wch: 10 },
+        { wch: 15 },
+        { wch: 20 },
+        { wch: 20 }
+      ]
+      XLSX.utils.book_append_sheet(wb, wsDetalle, "Fichas Técnicas")
+
+      XLSX.writeFile(wb, `Recetario_Master_${new Date().toISOString().split('T')[0]}.xlsx`)
+    } catch (err) {
+      console.error("Error al exportar todo:", err)
+      alert("Error al exportar el recetario a Excel.")
     }
   }
 
@@ -493,12 +659,21 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
         <div className="p-8 border-b border-slate-50 flex flex-col gap-4">
           <div className="flex justify-between items-center">
             <h2 className="text-xl font-bold text-slate-900 uppercase italic">Recetario Master</h2>
-            <button 
-              onClick={() => setShowAddReceta(true)}
-              className="p-3 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-500 transition shadow-lg shadow-indigo-100"
-            >
-              <Plus size={20} />
-            </button>
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={handleDownloadAllExcel}
+                className="p-3 bg-slate-100 text-slate-600 rounded-2xl hover:bg-slate-200 transition shadow-sm active:scale-95"
+                title="Descargar todas las recetas en Excel"
+              >
+                <Download size={20} />
+              </button>
+              <button 
+                onClick={() => setShowAddReceta(true)}
+                className="p-3 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-500 transition shadow-lg shadow-indigo-100 active:scale-95"
+              >
+                <Plus size={20} />
+              </button>
+            </div>
           </div>
           <div className="relative">
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
@@ -558,6 +733,13 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
                     >
                       {isDuplicating ? <Loader2 size={14} className="animate-spin" /> : <Copy size={14} />}
                       Duplicar Base
+                    </button>
+                    <button 
+                      onClick={() => handleDownloadSingleExcel(selectedReceta)}
+                      className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-xs font-bold uppercase tracking-widest hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 active:scale-95"
+                    >
+                      <Download size={14} />
+                      Exportar Ficha
                     </button>
                     <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
                      <Package size={14} className="text-slate-300" /> Venta: {formatMoneyAR(selectedReceta.precio_venta_sugerido)}

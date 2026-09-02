@@ -28,7 +28,7 @@ export default async function RecetasPage() {
   // We sub-query to get only products that have at least one price
   const { data: productos } = await supabase
     .from("productos")
-    .select("*, proveedores(nombre), familias(nombre), precios_historicos(*)")
+    .select("*, proveedores!productos_proveedor_id_fkey(nombre), familias(nombre), precios_historicos(*)")
     .order("nombre")
 
   return (

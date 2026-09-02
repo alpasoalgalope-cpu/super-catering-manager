@@ -29,13 +29,18 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
       iva_pct: 21.0,
       unidad_medida: 'gr',
       gramos_por_unidad: 1000,
-      precio_neto: 0
+      precio_neto: 0,
+      proveedores_ids: []
     }
   })
 
   // Cargar datos cuando entra en modo edición
   useEffect(() => {
     if (initialData) {
+      const additionalIds = (initialData.producto_proveedores || [])
+        .filter((pp: any) => pp.proveedor_id !== initialData.proveedor_id)
+        .map((pp: any) => pp.proveedor_id)
+
       reset({
         nombre: initialData.nombre,
         familia_id: initialData.familia_id,
@@ -44,7 +49,8 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
         factor_merma: initialData.factor_merma * 100, // Convertir 0.9 a 90 para el input
         gramos_por_unidad: initialData.gramos_por_unidad,
         iva_pct: initialData.iva_pct,
-        precio_neto: initialData.precio_neto || 0
+        precio_neto: initialData.precio_neto || 0,
+        proveedores_ids: additionalIds
       })
     } else {
       reset({
@@ -52,7 +58,8 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
         iva_pct: 21.0,
         unidad_medida: 'gr',
         gramos_por_unidad: 1000,
-        precio_neto: 0
+        precio_neto: 0,
+        proveedores_ids: []
       })
     }
   }, [initialData, reset])
@@ -163,7 +170,7 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
               </div>
 
               <div className="space-y-2">
-                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Proveedor</label>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Proveedor Principal</label>
                 <select 
                   {...register("proveedor_id")}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl outline-none text-slate-800 font-bold focus:border-indigo-400 focus:bg-white transition"
@@ -174,6 +181,57 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
                 {errors.proveedor_id && <span className="text-xs font-bold text-rose-500">{errors.proveedor_id.message}</span>}
               </div>
             </div>
+
+            {/* Additional Providers Selection */}
+            <div className="space-y-2 col-span-1 md:col-span-2">
+              <label className="text-xs font-bold text-slate-500 uppercase tracking-wider block">Proveedores Adicionales (Opcional)</label>
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 p-4 bg-slate-50 border border-slate-200 rounded-2xl max-h-48 overflow-y-auto">
+                {proveedores
+                  .filter(p => p.id !== watch("proveedor_id"))
+                  .map(p => (
+                    <label key={p.id} className="flex items-center gap-2 bg-white px-3 py-2 rounded-xl border border-slate-200 hover:border-indigo-200 transition cursor-pointer select-none shadow-sm text-xs font-bold text-slate-700">
+                      <input 
+                        type="checkbox"
+                        value={p.id}
+                        {...register("proveedores_ids")}
+                        className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4 border-slate-300 cursor-pointer"
+                      />
+                      <span className="truncate">{p.nombre}</span>
+                    </label>
+                  ))}
+              </div>
+              {errors.proveedores_ids && <span className="text-xs font-bold text-rose-500 block">{errors.proveedores_ids.message}</span>}
+            </div>
+          </div>
+
+          {/* Otros Proveedores Habilitados */}
+          <div className="space-y-2">
+            <label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Otros Proveedores Habilitados</label>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-50 border border-slate-200 rounded-xl max-h-40 overflow-y-auto">
+              {proveedores.map(p => {
+                if (p.id === watch("proveedor_id")) return null
+                return (
+                  <label key={p.id} className="flex items-center gap-2 text-xs font-bold text-slate-700 cursor-pointer hover:text-indigo-600 transition">
+                    <input 
+                      type="checkbox"
+                      value={p.id}
+                      checked={watch("proveedores_ids")?.includes(p.id) || false}
+                      onChange={(e) => {
+                        const currentIds = watch("proveedores_ids") || []
+                        if (e.target.checked) {
+                          setValue("proveedores_ids", [...currentIds, p.id])
+                        } else {
+                          setValue("proveedores_ids", currentIds.filter(id => id !== p.id))
+                        }
+                      }}
+                      className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 w-4 h-4"
+                    />
+                    {p.nombre}
+                  </label>
+                )
+              })}
+            </div>
+            {errors.proveedores_ids && <span className="text-xs font-bold text-rose-500 block">{errors.proveedores_ids.message}</span>}
           </div>
 
           <div className="p-6 bg-slate-50 rounded-2xl border border-slate-100 space-y-6">

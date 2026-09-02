@@ -183,6 +183,12 @@ export async function updateEventMasterAction(eventId: string, edits: any) {
       await freezeEventCostsAction(eventId)
     }
 
+    // If status changed to confirmado, auto-create online store
+    if (edits.status?.toLowerCase() === 'confirmado') {
+      const { autoSyncStoresForConfirmedEventsAction } = await import("./online-sales")
+      await autoSyncStoresForConfirmedEventsAction()
+    }
+
     // Sync automatic cash flow entries for logistics/extras
     await syncEventCashMovements(eventId)
 

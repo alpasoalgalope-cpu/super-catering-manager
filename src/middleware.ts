@@ -29,14 +29,16 @@ export async function middleware(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  // 1. If no user and trying to access dashboard -> redirect to login
-  const isPublicPath = request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register')
-  if (!user && !isPublicPath) {
+  // 1. Public and Auth paths
+  const isAuthPage = request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register')
+  const isPublicRoute = isAuthPage || request.nextUrl.pathname.startsWith('/tienda') || request.nextUrl.pathname.startsWith('/api/mercadopago')
+
+  if (!user && !isPublicRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
   // 2. If user is logged in and tries to access login or register -> redirect to home
-  if (user && isPublicPath) {
+  if (user && isAuthPage) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 

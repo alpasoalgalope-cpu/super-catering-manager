@@ -9,7 +9,7 @@ export default async function ProductosMaestroPage() {
     supabase.from("familias").select("*").order("nombre"),
     supabase.from("proveedores").select("*").order("nombre"),
     supabase.from("productos")
-      .select("*, familias(nombre), proveedores(nombre), precios_historicos(*)")
+      .select("*, familias(nombre), proveedores!productos_proveedor_id_fkey(nombre), precios_historicos(*), producto_proveedores(proveedor_id, proveedores!producto_proveedores_proveedor_id_fkey(nombre))")
       .order("nombre")
   ])
 

@@ -6,7 +6,8 @@ import { supabase } from "@/lib/supabase"
 import {
   Plus, Save, Music, Calendar, MapPin, Building2, Users,
   Loader2, CheckCircle2, AlertCircle, Trash2, ChevronDown,
-  ChevronUp, Settings2, Search, X, Truck, DollarSign
+  ChevronUp, Settings2, Search, X, Truck, DollarSign,
+  Store, ExternalLink, Copy, Check, Navigation
 } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import VenueModal from "@/components/forms/VenueModal"
@@ -14,6 +15,7 @@ import CompanyModal from "@/components/forms/CompanyModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
 import FleetModal from "@/components/forms/FleetModal"
 import { updateEventMasterAction } from "@/app/actions/events"
+import { createStoreEventAction } from "@/app/actions/online-sales"
 import { getEventProfitability } from "@/app/actions/events"
 
 // --- Helper Component ---
@@ -156,10 +158,61 @@ export default function MasterEventForm() {
 
   // --- Local edits for existing events ---
   const [localEdits, setLocalEdits] = useState<Record<string, Partial<EventMaster> & { projections?: ProjectionRow[] }>>({})
+  const [onlineStores, setOnlineStores] = useState<any[]>([])
+  const [copiedSlug, setCopiedSlug] = useState<string | null>(null)
+
+  const handleQuickCreateStore = async (ev: any, companyName: string) => {
+    try {
+      // 1. Fetch commercial rules
+      const { data: rule } = await supabase.from('commercial_rules').select('*').ilike('company_name', companyName).maybeSingle()
+      const isVal = companyName.toLowerCase().includes('valbus')
+      const basePrice = rule?.price_base ? Number(rule.price_base) : (isVal ? 8500 : 10000)
+      const stPrice = rule?.price_sintacc_base ? Number(rule.price_sintacc_base) : (isVal ? 10000 : 13000)
+      
+      const cleanSlug = `${ev.show_name}-${companyName}-${ev.event_date}`
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/(^-|-$)+/g, "")
+
+      const res = await createStoreEventAction({
+        event_master_id: ev.id,
+        slug: cleanSlug,
+        title: `${ev.show_name} — ${companyName}`,
+        subtitle: `Viaje al evento ${ev.show_name} @ ${ev.venues?.name || 'Venue'}`,
+        available_dates: [ev.event_date],
+        combo_trad_enabled: true,
+        combo_trad_price: basePrice,
+        combo_trad_name: 'Combo Tradicional + Agua sin Gas',
+        combo_veg_enabled: true,
+        combo_veg_price: basePrice,
+        combo_veg_name: 'Combo Vegetariano + Agua sin Gas',
+        combo_sintacc_enabled: true,
+        combo_sintacc_price: stPrice,
+        combo_sintacc_name: 'Combo Sin TACC + Agua sin Gas',
+        combo_vegan_enabled: true,
+        combo_vegan_price: basePrice,
+        combo_vegan_name: 'Combo Vegano + Agua sin Gas',
+        commercial_rule_id: rule?.id || null
+      })
+
+      if (!res.success) throw new Error(res.error)
+
+      setOnlineStores(prev => {
+        const filtered = prev.filter(s => s.id !== res.data.id && s.slug !== cleanSlug)
+        return [...filtered, res.data]
+      })
+      alert(`¡Tienda online activada con éxito para ${companyName}! URL: /tienda/${cleanSlug}`)
+    } catch (err: any) {
+      console.error("Error creating store:", err)
+      alert("Error al activar la tienda: " + (err.message || 'Error desconocido'))
+    }
+  }
 
   const fetchAll = useCallback(async () => {
     setLoading(true)
-    const [evRes, venRes, coordRes, compRes, vehRes, busRes] = await Promise.all([
+    const [evRes, venRes, coordRes, compRes, vehRes, busRes, storeRes] = await Promise.all([
       supabase.from("events_master")
         .select("*, venues(name), coordinators(name), event_projections(id, company_name, projected_pax)")
         .order("event_date", { ascending: false }),
@@ -167,12 +220,14 @@ export default function MasterEventForm() {
       supabase.from("coordinators").select("id, name, company, phone").order("name"),
       supabase.from("clients").select("id, name, conversion_factor").order("name"),
       supabase.from("vehicles").select("id, internal_name, plate, client_id, vehicle_type").order("internal_name"),
-      supabase.from("event_bus_assignments").select("*")
+      supabase.from("event_bus_assignments").select("*"),
+      supabase.from("online_store_events").select("id, event_master_id, slug, is_active, title")
     ])
     
     setVenues(venRes.data || [])
     setCoordinators(coordRes.data || [])
     setVehicles(vehRes.data || [])
+    setOnlineStores(storeRes.data || [])
     
     const cMap: Record<string, number> = {}
     const idMap: Record<string, string> = {}
@@ -215,12 +270,8 @@ export default function MasterEventForm() {
           setSearchTerm(ev.show_name || "")
         }
       } else {
-        // Auto-expand only the first 5 UPCOMING events (to match default view)
-        const upcomingIds = processedEvents
-          .filter(e => e.event_date >= today)
-          .slice(0, 5)
-          .map(e => e.id)
-        setExpandedIds(new Set(upcomingIds))
+        // Collapsed by default for a clean overview
+        setExpandedIds(new Set())
       }
     }
     setLocalEdits({})
@@ -1118,6 +1169,10 @@ export default function MasterEventForm() {
                        <Truck size={16} />
                        <span className="text-xs">Consolidado</span>
                     </Link>
+                    <Link href={`/despacho/${ev.id}`} target="_blank" className="px-4 py-2 bg-amber-50 text-amber-700 font-black rounded-xl hover:bg-amber-100 transition shadow-sm flex items-center gap-2" title="Abrir Hoja de Despacho y Ruteo de Camioneta">
+                       <Navigation size={16} className="text-amber-600" />
+                       <span className="text-xs">Despacho</span>
+                    </Link>
                     <button onClick={() => {
                       setExpandedIds(prev => {
                         const next = new Set(prev)
@@ -1229,6 +1284,61 @@ export default function MasterEventForm() {
                               <Plus size={14} />
                             </button>
                           </div>
+
+                          {/* Direct Online Store Access */}
+                          {proj.company_name && (() => {
+                            const compSlugPart = (proj.company_name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-")
+                            const store = onlineStores.find(s => {
+                              if (s.event_master_id !== ev.id) return false
+                              const sSlug = (s.slug || "").toLowerCase()
+                              const sTitle = (s.title || "").toLowerCase()
+                              return sSlug.includes(compSlugPart) || sTitle.includes((proj.company_name || "").toLowerCase())
+                            })
+
+                            if (store) {
+                              return (
+                                <div className="flex items-center gap-1">
+                                  <a
+                                    href={`/tienda/${store.slug}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="px-2.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-black flex items-center gap-1.5 transition shadow-xs"
+                                    title={`Abrir Tienda Online de ${proj.company_name}`}
+                                  >
+                                    <Store size={13} className="text-emerald-600" />
+                                    <span className="hidden md:inline">Tienda</span>
+                                    <ExternalLink size={11} className="text-emerald-500" />
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      navigator.clipboard.writeText(`${window.location.origin}/tienda/${store.slug}`)
+                                      setCopiedSlug(store.slug)
+                                      setTimeout(() => setCopiedSlug(null), 2000)
+                                    }}
+                                    className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 rounded-lg transition"
+                                    title="Copiar Link de la Tienda"
+                                  >
+                                    {copiedSlug === store.slug ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                                  </button>
+                                </div>
+                              )
+                            }
+
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCreateStore(ev, proj.company_name)}
+                                className="px-2.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-lg text-xs font-black flex items-center gap-1.5 transition cursor-pointer"
+                                title={`Generar y activar Tienda Online para ${proj.company_name}`}
+                              >
+                                <Store size={13} className="text-indigo-600" />
+                                <span className="hidden md:inline">+ Activar Tienda</span>
+                              </button>
+                            )
+                          })()}
+
                           <div className="flex items-center gap-2 w-28">
                             <Users size={12} className="text-slate-400 shrink-0" />
                             <input type="text" inputMode="numeric"

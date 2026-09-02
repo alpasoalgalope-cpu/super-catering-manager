@@ -23,7 +23,10 @@ export default function ProductManager({ initialProductos, familias, proveedores
   }
 
   const filteredProductos = initialProductos.filter(p => 
-    p.nombre.toLowerCase().includes(searchTerm.toLowerCase())
+    p.nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.familias?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.proveedores?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    p.producto_proveedores?.some((pp: any) => pp.proveedores?.nombre?.toLowerCase().includes(searchTerm.toLowerCase()))
   )
 
   return (
@@ -95,9 +98,19 @@ export default function ProductManager({ initialProductos, familias, proveedores
                         <span className="text-[9px] font-black uppercase text-slate-400 tracking-tighter">
                           {p.familias?.nombre || 'S/F'}
                         </span>
-                        <span className="text-xs font-bold text-slate-600">
-                          {p.proveedores?.nombre || 'S/P'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-slate-600">
+                            {p.proveedores?.nombre || 'S/P'}
+                          </span>
+                          {p.producto_proveedores && p.producto_proveedores.filter((pp: any) => pp.proveedor_id !== p.proveedor_id).length > 0 && (
+                            <span 
+                              className="text-[9px] font-black bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100 shrink-0 cursor-help"
+                              title={`Proveedores adicionales:\n${p.producto_proveedores.filter((pp: any) => pp.proveedor_id !== p.proveedor_id).map((pp: any) => pp.proveedores?.nombre || pp.proveedor_id).join('\n')}`}
+                            >
+                              +{p.producto_proveedores.filter((pp: any) => pp.proveedor_id !== p.proveedor_id).length} otros
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td className="px-6 py-5 font-bold text-slate-600 text-xs">

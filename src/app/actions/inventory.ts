@@ -33,6 +33,19 @@ export async function createProductAction(data: ProductFormData) {
       .eq('producto_id', productId)
       .eq('activo', true)
 
+    // Insertar proveedores adicionales en producto_proveedores (el trigger se encarga del principal)
+    if (data.proveedores_ids && data.proveedores_ids.length > 0) {
+      const additionalIds = data.proveedores_ids.filter(id => id !== data.proveedor_id)
+      if (additionalIds.length > 0) {
+        const relations = additionalIds.map(provId => ({
+          producto_id: productId,
+          proveedor_id: provId
+        }))
+        const { error: syncError } = await supabase.from('producto_proveedores').insert(relations)
+        if (syncError) console.error("Error syncing producto_proveedores:", syncError)
+      }
+    }
+
     // Revalidar caché de servidor de las vistas que listen productos
     revalidatePath("/inventario/productos")
     
@@ -63,6 +76,8 @@ export async function updateProductAction(id: string, data: ProductFormData) {
 
     if (productError) throw productError
 
+
+
     // 2. Lógica de precio: Verificar si el precio cambió para insertar nuevo histórico
     // o si es una corrección del último registro.
     // Por ahora, para simplificar y cumplir con el requisito de "edición operativa",
@@ -82,6 +97,29 @@ export async function updateProductAction(id: string, data: ProductFormData) {
       }])
 
     if (priceError) throw priceError
+
+    // Sincronizar tabla intermedia producto_proveedores
+    // 1. Limpiar las relaciones viejas en la tabla intermedia (excepto la del proveedor principal activo)
+    const { error: deleteError } = await supabase
+      .from('producto_proveedores')
+      .delete()
+      .eq('producto_id', id)
+      .neq('proveedor_id', data.proveedor_id)
+
+    if (deleteError) throw deleteError
+
+    // 2. Insertar las nuevas adicionales
+    if (data.proveedores_ids && data.proveedores_ids.length > 0) {
+      const additionalIds = data.proveedores_ids.filter(provId => provId !== data.proveedor_id)
+      if (additionalIds.length > 0) {
+        const relations = additionalIds.map(provId => ({
+          producto_id: id,
+          proveedor_id: provId
+        }))
+        const { error: syncError } = await supabase.from('producto_proveedores').insert(relations)
+        if (syncError) throw syncError
+      }
+    }
 
     revalidatePath("/inventario/productos")
     revalidatePath("/inventario/catalogo")

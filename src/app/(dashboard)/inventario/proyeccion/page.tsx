@@ -90,21 +90,21 @@ export default function ProyeccionInsumosPage() {
         supabase.from("clients").select("id, name, conversion_factor"),
         supabase.from("recetas").select(`
           id, nombre,
-          receta_insumos (
+          receta_insumos(
             producto_id, 
             cantidad_necesaria, 
-            productos (
+            productos(
               nombre, 
               unidad_medida, 
               gramos_por_unidad,
               stock_actual,
               proveedor_id,
-              familias (nombre),
-              proveedores (nombre)
+              familias(nombre),
+              proveedores!productos_proveedor_id_fkey(nombre)
             )
           )
         `),
-        supabase.from("productos").select("*, familias(nombre), proveedores(nombre)").eq("id", "2e452d5b-9d90-47a7-ae2e-134cc55ef7bd").single(),
+        supabase.from("productos").select("*, familias(nombre), proveedores!productos_proveedor_id_fkey(nombre)").eq("id", "2e452d5b-9d90-47a7-ae2e-134cc55ef7bd").single(),
         supabase.from("vw_stock_en_transito").select("*"),
         getCoordinatorConversionRatesAction()
       ])
