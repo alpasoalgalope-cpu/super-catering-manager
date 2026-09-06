@@ -66,7 +66,7 @@ export default function CatalogManager({ productos, familias, proveedores }: Pro
       <div className="space-y-3">
         {filtered.map((p) => {
           const latestPrice = p.precios_historicos && p.precios_historicos.length > 0
-            ? p.precios_historicos.sort((a: any, b: any) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0]
+            ? p.precios_historicos.sort((a: any, b: any) => new Date(b.fecha_desde || b.created_at || b.fecha || 0).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha || 0).getTime())[0]
             : null
 
           return (

@@ -1,5 +1,6 @@
-"use client"
+"use client";
 
+import MonthlyScheduleCalendar from "@/components/dashboard/MonthlyScheduleCalendar";
 import React, { useEffect, useState } from "react"
 import DashboardCard from "@/components/ui/DashboardCard"
 import { 
@@ -76,7 +77,17 @@ export default function DashboardPage() {
      gastosAEjecutar: 0
   })
 
+  // Kitchen specific production metrics
+  const [kitchenMetrics, setKitchenMetrics] = useState({
+     monthActiveShows: 0,
+     todayViandas: 0,
+     thisWeekPax: 0,
+     thisWeekViandas: 0,
+     thisWeekRevenue: 0
+  })
+
   // Specific Cuts
+  const [allEvents, setAllEvents] = useState<EventData[]>([])
   const [upcoming10Days, setUpcoming10Days] = useState<EventData[]>([])
   const [upcomingCharts, setUpcomingCharts] = useState<EventData[]>([])
   const [executedEvents, setExecutedEvents] = useState<EventData[]>([])
@@ -214,8 +225,17 @@ export default function DashboardPage() {
      async function checkRole() {
        const { data: { user } } = await supabase.auth.getUser()
        if (user) {
-         const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-         if (profile) setRole(profile.role)
+         if (user.email === 'alpaso.algalope@gmail.com' || user.email === 'cocina@supercatering.com') {
+           setRole('cocina')
+         } else {
+           const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+           if (profile?.role) {
+             setRole(profile.role)
+           } else {
+             const roleFromMeta = user.app_metadata?.role || user.user_metadata?.role || 'admin'
+             setRole(roleFromMeta)
+           }
+         }
        }
      }
      checkRole()
@@ -444,6 +464,7 @@ export default function DashboardPage() {
            return evDate >= startOfNextWeek && evDate <= endOfNextWeek
         })
 
+        setAllEvents(allMapped)
         setUpcoming10Days(thisWeekList)
         setUpcomingCharts(nextWeekList)
         setExecutedEvents(allMapped.filter(m => closedStatuses.includes(m.status)).sort((a,b) => safeLocal(b.date, a.date)).slice(0, 15))
@@ -454,6 +475,39 @@ export default function DashboardPage() {
            activeCompanies: clients?.length || 0,
            estimatedRevenue: totalEstimatedRev,
            gastosAEjecutar: totalGastosAEjecutar
+        })
+
+        // Kitchen specific production metrics
+        const currentMonth = today.getMonth()
+        const currentYear = today.getFullYear()
+        const monthActiveShows = masters.filter((m: any) => {
+           if (closedStatuses.includes((m.status || "").toLowerCase())) return false
+           if (!m.event_date) return false
+           const [y, mon] = m.event_date.split('-').map(Number)
+           return y === currentYear && mon === (currentMonth + 1)
+        }).length
+
+        const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+        const todayShows = allMapped.filter(m => m.date === todayStr && !closedStatuses.includes(m.status))
+        const todayViandas = todayShows.reduce((acc, curr) => acc + (curr.sold > 0 ? curr.sold : curr.projected), 0)
+
+        let thisWeekPax = 0
+        thisWeekList.forEach(m => {
+           const orig = masters.find(mast => mast.id === m.id)
+           orig?.event_projections?.forEach((p: any) => {
+              thisWeekPax += (Number(p.projected_pax) || 0)
+           })
+        })
+
+        const thisWeekViandas = thisWeekList.reduce((acc, curr) => acc + curr.projected, 0)
+        const thisWeekRevenue = thisWeekList.reduce((acc, curr) => acc + curr.revenue, 0)
+
+        setKitchenMetrics({
+           monthActiveShows,
+           todayViandas,
+           thisWeekPax,
+           thisWeekViandas,
+           thisWeekRevenue
         })
 
         setTopVenues(
@@ -595,79 +649,116 @@ export default function DashboardPage() {
         }
       `}</style>
 
-      {/* Header Superior con Jerarquía Tipográfica Oficial */}
-      <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4 mb-10">
-        <div>
-          <h2 className="text-5xl md:text-6xl font-black tracking-tight text-slate-900 uppercase leading-none">
-            {role === 'cocina' ? 'Planificación de' : 'Monitor de Control'} <span className="text-indigo-600 bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 font-extrabold italic">{role === 'cocina' ? 'Producción' : '360°'}</span>
-          </h2>
-          <p className="text-xl md:text-2xl text-slate-500 font-medium mt-3">
-            {role === 'cocina' 
-              ? 'Seguimiento de PAX y necesidades de cocina para las próximas semanas.' 
-              : 'Visión estratégica de ventas y planificación logística semanal.'}
-          </p>
-        </div>
-      </div>
-
       {/* Tarjetas de Accesos Rápidos / Métricas en Header */}
-      <div className={`grid grid-cols-2 ${role === 'cocina' ? 'md:grid-cols-3' : 'md:grid-cols-4'} gap-6 mb-10`}>
-        {/* Métrica 1: Shows Activos */}
-        <div className="bg-white hover:bg-indigo-50/20 border border-slate-200 hover:border-indigo-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-100/50 flex items-center gap-4">
-          <div className="w-14 h-14 bg-slate-50 group-hover:bg-indigo-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-indigo-200 shrink-0 shadow-sm transition-all duration-300">
-            <Calendar className="text-slate-500 group-hover:text-indigo-600 transition-colors" size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Shows Activos</p>
-            <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-indigo-900 transition-colors leading-none">{metrics.eventCount}</p>
-          </div>
-        </div>
-
-        {/* Métrica 2: Empresas Activas */}
-        <div className="bg-white hover:bg-emerald-50/20 border border-slate-200 hover:border-emerald-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-100/50 flex items-center gap-4">
-          <div className="w-14 h-14 bg-slate-50 group-hover:bg-emerald-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-emerald-200 shrink-0 shadow-sm transition-all duration-300">
-            <Building2 className="text-slate-500 group-hover:text-emerald-600 transition-colors" size={24} />
-          </div>
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Clientes Activos</p>
-            <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-emerald-900 transition-colors leading-none">{metrics.activeCompanies}</p>
-          </div>
-        </div>
-
-        {/* Métrica 3: Previsión Financiera con Copiloto IA */}
-        {role !== 'cocina' && (
-          <div className="bg-white hover:bg-amber-50/20 border border-slate-200 hover:border-amber-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-amber-100/50 flex flex-col justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 bg-slate-50 group-hover:bg-amber-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-amber-200 shrink-0 shadow-sm transition-all duration-300">
-                <DollarSign className="text-slate-500 group-hover:text-amber-600 transition-colors" size={24} />
-              </div>
-              <div>
-                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Previsión Ventas</p>
-                <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-amber-900 transition-colors leading-none">{formatCurrency(metrics.estimatedRevenue)}</p>
-              </div>
+      {role === 'admin' ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-5">
+          {/* Métrica 1: Shows activos del mes */}
+          <div className="bg-white hover:bg-indigo-50/20 border border-slate-200 hover:border-indigo-300 rounded-[2.5rem] p-5 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-100/50 flex items-center gap-3.5">
+            <div className="w-12 h-12 bg-slate-50 group-hover:bg-indigo-100 rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-indigo-200 shrink-0 shadow-sm transition-all duration-300">
+              <Calendar className="text-slate-500 group-hover:text-indigo-600 transition-colors" size={22} />
             </div>
-
-            <button
-              onClick={handleOpenFinancialDiagnosis}
-              className="mt-4 w-full py-1.5 px-3 bg-gradient-to-r from-amber-500 to-indigo-600 hover:from-amber-600 hover:to-indigo-700 text-white rounded-xl text-[9px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 shadow-xs transition active:scale-95 cursor-pointer"
-            >
-              <Sparkles size={11} className="text-amber-200 animate-pulse" /> Diagnóstico Financiero IA
-            </button>
+            <div className="min-w-0">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5 truncate">Shows Activos Mes</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-indigo-900 transition-colors leading-none">{kitchenMetrics.monthActiveShows}</p>
+            </div>
           </div>
-        )}
 
-        {/* Métrica 4: Gastos a Ejecutar */}
-        <div className="bg-white hover:bg-rose-50/20 border border-slate-200 hover:border-rose-300 rounded-[2.5rem] p-6 transition-all duration-300 group cursor-pointer hover:-translate-y-1 hover:shadow-xl hover:shadow-rose-100/50 flex items-center gap-4">
-          <div className="w-14 h-14 bg-slate-50 group-hover:bg-rose-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-rose-200 shrink-0 shadow-sm transition-all duration-300">
-            <TrendingDown className="text-slate-500 group-hover:text-rose-600 transition-colors" size={24} />
+          {/* Métrica 2: Viandas Proyectadas hoy */}
+          <div className="bg-white hover:bg-amber-50/20 border border-slate-200 hover:border-amber-300 rounded-[2.5rem] p-5 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-amber-100/50 flex items-center gap-3.5">
+            <div className="w-12 h-12 bg-slate-50 group-hover:bg-amber-100 rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-amber-200 shrink-0 shadow-sm transition-all duration-300">
+              <ShoppingBag className="text-slate-500 group-hover:text-amber-600 transition-colors" size={22} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5 truncate">Viandas Proyectadas Hoy</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-amber-900 transition-colors leading-none">{kitchenMetrics.todayViandas} <span className="text-xs font-bold text-slate-400">U.</span></p>
+            </div>
           </div>
-          <div>
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Gastos a Ejecutar</p>
-            <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-rose-900 transition-colors leading-none">{formatCurrency(metrics.gastosAEjecutar)}</p>
+
+          {/* Métrica 3: Pasajeros Estimados esta semana */}
+          <div className="bg-white hover:bg-sky-50/20 border border-slate-200 hover:border-sky-300 rounded-[2.5rem] p-5 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-sky-100/50 flex items-center gap-3.5">
+            <div className="w-12 h-12 bg-slate-50 group-hover:bg-sky-100 rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-sky-200 shrink-0 shadow-sm transition-all duration-300">
+              <Users className="text-slate-500 group-hover:text-sky-600 transition-colors" size={22} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5 truncate">Pasajeros Semana</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-sky-900 transition-colors leading-none">{kitchenMetrics.thisWeekPax} <span className="text-xs font-bold text-slate-400">PAX</span></p>
+            </div>
+          </div>
+
+          {/* Métrica 4: Ventas Proyectadas esta semana (Unidades) */}
+          <div className="bg-white hover:bg-purple-50/20 border border-slate-200 hover:border-purple-300 rounded-[2.5rem] p-5 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-100/50 flex items-center gap-3.5">
+            <div className="w-12 h-12 bg-slate-50 group-hover:bg-purple-100 rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-purple-200 shrink-0 shadow-sm transition-all duration-300">
+              <TrendingUp className="text-slate-500 group-hover:text-purple-600 transition-colors" size={22} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5 truncate">Ventas Proyectadas (U)</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-purple-900 transition-colors leading-none">{kitchenMetrics.thisWeekViandas} <span className="text-xs font-bold text-slate-400">U.</span></p>
+            </div>
+          </div>
+
+          {/* Métrica 5: Ventas Proyectadas esta semana ($) */}
+          <div className="bg-white hover:bg-emerald-50/20 border border-slate-200 hover:border-emerald-300 rounded-[2.5rem] p-5 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-100/50 flex items-center gap-3.5">
+            <div className="w-12 h-12 bg-slate-50 group-hover:bg-emerald-100 rounded-2xl flex items-center justify-center border border-slate-100 group-hover:border-emerald-200 shrink-0 shadow-sm transition-all duration-300">
+              <DollarSign className="text-slate-500 group-hover:text-emerald-600 transition-colors" size={22} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5 truncate">Venta Proyectada ($)</p>
+              <p className="text-2xl font-black text-emerald-600 tabular-nums group-hover:text-emerald-800 transition-colors leading-none">{formatCurrency(kitchenMetrics.thisWeekRevenue)}</p>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          {/* Métrica 1: Shows activos del mes */}
+          <div className="bg-white hover:bg-indigo-50/20 border border-slate-200 hover:border-indigo-300 rounded-[2.5rem] p-6 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-indigo-100/50 flex items-center gap-4">
+            <div className="w-14 h-14 bg-slate-50 group-hover:bg-indigo-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-indigo-200 shrink-0 shadow-sm transition-all duration-300">
+              <Calendar className="text-slate-500 group-hover:text-indigo-600 transition-colors" size={24} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Shows Activos del Mes</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-indigo-900 transition-colors leading-none">{kitchenMetrics.monthActiveShows}</p>
+            </div>
+          </div>
 
-      {/* Grid General con Dos Columnas Estables */}
+          {/* Métrica 2: Viandas Proyectadas hoy */}
+          <div className="bg-white hover:bg-amber-50/20 border border-slate-200 hover:border-amber-300 rounded-[2.5rem] p-6 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-amber-100/50 flex items-center gap-4">
+            <div className="w-14 h-14 bg-slate-50 group-hover:bg-amber-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-amber-200 shrink-0 shadow-sm transition-all duration-300">
+              <ShoppingBag className="text-slate-500 group-hover:text-amber-600 transition-colors" size={24} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Viandas Proyectadas Hoy</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-amber-900 transition-colors leading-none">{kitchenMetrics.todayViandas} <span className="text-xs font-bold text-slate-400">U.</span></p>
+            </div>
+          </div>
+
+          {/* Métrica 3: Pasajeros Estimados esta semana */}
+          <div className="bg-white hover:bg-emerald-50/20 border border-slate-200 hover:border-emerald-300 rounded-[2.5rem] p-6 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-emerald-100/50 flex items-center gap-4">
+            <div className="w-14 h-14 bg-slate-50 group-hover:bg-emerald-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-emerald-200 shrink-0 shadow-sm transition-all duration-300">
+              <Users className="text-slate-500 group-hover:text-emerald-600 transition-colors" size={24} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Pasajeros Estimados Semana</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-emerald-900 transition-colors leading-none">{kitchenMetrics.thisWeekPax} <span className="text-xs font-bold text-slate-400">PAX</span></p>
+            </div>
+          </div>
+
+          {/* Métrica 4: Ventas Proyectadas esta semana */}
+          <div className="bg-white hover:bg-purple-50/20 border border-slate-200 hover:border-purple-300 rounded-[2.5rem] p-6 transition-all duration-300 group hover:-translate-y-1 hover:shadow-xl hover:shadow-purple-100/50 flex items-center gap-4">
+            <div className="w-14 h-14 bg-slate-50 group-hover:bg-purple-100 rounded-3xl flex items-center justify-center border border-slate-100 group-hover:border-purple-200 shrink-0 shadow-sm transition-all duration-300">
+              <TrendingUp className="text-slate-500 group-hover:text-purple-600 transition-colors" size={24} />
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1.5">Ventas Proyectadas Semana</p>
+              <p className="text-2xl font-black text-slate-800 tabular-nums group-hover:text-purple-900 transition-colors leading-none">{kitchenMetrics.thisWeekViandas} <span className="text-xs font-bold text-slate-400">U.</span></p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CRONOGRAMA MENSUAL DE PASAJEROS Y DEMANDA (SEGUNDO LUGAR) */}
+      <MonthlyScheduleCalendar events={allEvents} role={role} />
+
+      {/* Grid General con Dos Columnas Estables: Shows Próximas Semanas + Recibir esta Semana */}
       <div className="grid lg:grid-cols-3 gap-8 items-start">
          
          {/* COLUMNA 1 y 2: SHOWS PRÓXIMAS SEMANAS */}
@@ -794,23 +885,23 @@ export default function DashboardPage() {
                                     
                                     <div className="min-w-0 flex-1">
                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                          {isOverdue && (
-                                             <span className="bg-rose-100 text-rose-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">
-                                                Atrasado
-                                             </span>
-                                          )}
-                                          {isPoToday && (
-                                             <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
-                                                Hoy
-                                             </span>
-                                          )}
-                                          <span className="text-[9px] font-bold text-slate-400">
-                                             {monthName}
-                                          </span>
+                                           {isOverdue && (
+                                              <span className="bg-rose-100 text-rose-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider">
+                                                 Atrasado
+                                              </span>
+                                           )}
+                                           {isPoToday && (
+                                              <span className="bg-emerald-100 text-emerald-800 text-[8px] font-black px-1.5 py-0.5 rounded-full uppercase tracking-wider animate-pulse">
+                                                 Hoy
+                                              </span>
+                                           )}
+                                           <span className="text-[9px] font-bold text-slate-400">
+                                              {monthName}
+                                           </span>
                                        </div>
                                        
                                        <h4 className="font-black text-slate-800 text-sm uppercase mt-0.5 leading-tight truncate" title={po.proveedores?.nombre}>
-                                          {po.proveedores?.nombre || 'Proveedor Eliminado'}
+                                           {po.proveedores?.nombre || 'Proveedor Eliminado'}
                                        </h4>
                                     </div>
                                  </div>
@@ -841,10 +932,12 @@ export default function DashboardPage() {
                               </div>
                               
                               <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-col gap-2">
-                                 <div className="flex justify-between items-center text-[10px]">
-                                    <span className="font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
-                                    <span className="font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
-                                 </div>
+                                 {role === 'admin' && (
+                                   <div className="flex justify-between items-center text-[10px]">
+                                      <span className="font-black text-slate-400 uppercase tracking-widest">Costo Est.</span>
+                                      <span className="font-black text-slate-800 tabular-nums">{formatCurrency(po.costo_total)}</span>
+                                   </div>
+                                 )}
                                  <button
                                     onClick={() => setSelectedPOId(po.id)}
                                     className="w-full bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200/60 py-2 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all shadow-sm flex items-center justify-center gap-1.5 mt-1 active:scale-95"
@@ -871,144 +964,6 @@ export default function DashboardPage() {
           </div>
       </div>
 
-      {/* HISTORICAL CHARTS SECTION */}
-      <h3 className="text-xl font-black mt-10 mb-4 px-2 text-slate-800 flex items-center gap-2"><History size={20}/> Análisis Histórico Contable (Completos/Ejecutados)</h3>
-      <div className="grid gap-8 lg:grid-cols-3 items-start">
-         
-         {/* EXECUTED EVENTS CHART */}
-         <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem]">
-            <h4 className="font-black text-sm text-slate-500 uppercase tracking-widest mb-6">Últimos Eventos Ejecutados</h4>
-            <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
-               {executedEvents.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-10">Sin eventos concluidos.</p>}
-               {executedEvents.map(ev => {
-                  const pct = ev.projected > 0 ? (ev.sold / ev.projected) : 1
-                  return (
-                  <div key={ev.id} className="relative group">
-                     <div className="flex justify-between items-baseline mb-1">
-                        <span className="font-bold text-slate-800 text-xs truncate max-w-[150px]">{ev.show}</span>
-                        {role !== 'cocina' && (
-                           <span className="text-[10px] font-black text-emerald-600">{formatCurrency(ev.revenue)}</span>
-                        )}
-                     </div>
-                     <div className="flex items-center gap-2">
-                        <div className="h-2 flex-1 bg-slate-200 rounded-full overflow-hidden">
-                           <div className="h-full bg-slate-800 rounded-full" style={{ width: `${Math.min(pct * 100, 100)}%` }} />
-                        </div>
-                        <span className="text-[10px] font-bold tabular-nums text-slate-500 min-w-[2.5rem] text-right">{ev.sold} v</span>
-                     </div>
-                  </div>
-               )})}
-            </div>
-         </div>
-
-         {/* TOP VENUES CHART */}
-         <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem]">
-            <h4 className="font-black text-sm text-slate-500 uppercase tracking-widest mb-6 flex items-center gap-2"><MapPin size={16}/> Top Venues</h4>
-            <div className="space-y-5">
-               {topVenues.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-10">Sin datos de recintos.</p>}
-               {topVenues.map((v, i) => {
-                  const maxSold = topVenues[0]?.sold || 1
-                  const pct = (v.sold / maxSold) * 100
-                  return (
-                  <div key={i} className="relative">
-                     <div className="flex justify-between items-baseline mb-1">
-                        <span className="font-bold text-slate-800 text-xs truncate">{v.name}</span>
-                     </div>
-                     <div className="h-6 w-full bg-indigo-50/50 rounded-lg overflow-hidden relative">
-                        <div className="h-full bg-indigo-200 rounded-lg" style={{ width: `${pct}%` }} />
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-black text-indigo-900">{v.sold} vendidas totales</span>
-                     </div>
-                  </div>
-               )})}
-            </div>
-         </div>
-
-         {/* TOP COMPANIES CHART */}
-         <div className="bg-slate-50 border border-slate-200 p-6 rounded-[2rem]">
-            <h4 className="font-black text-sm text-slate-500 uppercase tracking-widest mb-6 flex items-center gap-2"><Building2 size={16}/> Ranking Clientes</h4>
-            <div className="space-y-5">
-               {topCompanies.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-10">Sin ventas a empresas.</p>}
-               {topCompanies.map((c, i) => {
-                  const maxSold = topCompanies[0]?.sold || 1
-                  const pct = (c.sold / maxSold) * 100
-                  return (
-                  <div key={i} className="relative">
-                     <div className="flex justify-between items-baseline mb-1">
-                        <span className="font-bold text-slate-800 text-xs truncate max-w-[200px]">{c.name}</span>
-                     </div>
-                     <div className="h-6 w-full bg-emerald-50/50 rounded-lg overflow-hidden relative border border-emerald-100">
-                        <div className="h-full bg-emerald-400/80 rounded-lg" style={{ width: `${pct}%` }} />
-                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-black text-emerald-900 drop-shadow-sm">{c.sold} viandas acumuladas</span>
-                     </div>
-                  </div>
-               )})}
-            </div>
-         </div>
-
-      </div>
-
-      {/* FUTURE ANALYSIS SECTION */}
-      <h3 className="text-xl font-black mt-16 mb-4 px-2 text-indigo-800 flex items-center gap-2"><TrendingUp size={20}/> Proyecciones Futuras (Estadío / Empresa / Mes)</h3>
-      <div className="grid gap-8 lg:grid-cols-3 items-start pb-10">
-         
-         {/* FUTURE BY MONTH */}
-         <div className="bg-indigo-50/30 border border-indigo-100 p-6 rounded-[2rem]">
-            <h4 className="font-black text-[10px] text-indigo-400 uppercase tracking-widest mb-6">Proyección por Mes</h4>
-            <div className="space-y-4">
-               {futureByMonth.length === 0 && <p className="text-xs font-bold text-slate-400 text-center py-10">Sin proyecciones futuras.</p>}
-               {futureByMonth.map((m, i) => (
-                  <div key={i} className="bg-white p-4 rounded-2xl border border-indigo-50 shadow-sm">
-                     <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1">{m.name}</p>
-                     <p className="text-2xl font-black text-indigo-900 tabular-nums">{m.projected} <span className="text-[10px] text-indigo-400 uppercase tracking-widest ml-1">PAX Total</span></p>
-                  </div>
-               ))}
-            </div>
-         </div>
-
-         {/* FUTURE BY VENUE */}
-         <div className="bg-white border border-slate-200 p-6 rounded-[2rem]">
-            <h4 className="font-black text-[10px] text-slate-400 uppercase tracking-widest mb-6">Top Sedes (Proyectado)</h4>
-            <div className="space-y-4">
-               {futureByVenue.slice(0, 8).map((v, i) => {
-                  const maxVal = futureByVenue[0]?.projected || 1
-                  const pct = (v.projected / maxVal) * 100
-                  return (
-                      <div key={i} className="space-y-1">
-                         <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
-                            <span className="text-slate-600 truncate max-w-[150px]">{v.name}</span>
-                            <span className="text-indigo-600">{v.projected} PAX</span>
-                         </div>
-                         <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${pct}%` }} />
-                         </div>
-                      </div>
-                  )
-               })}
-            </div>
-         </div>
-
-         {/* FUTURE BY COMPANY */}
-         <div className="bg-white border border-slate-200 p-6 rounded-[2rem]">
-            <h4 className="font-black text-[10px] text-slate-400 uppercase tracking-widest mb-6">Top Empresas (Proyectado)</h4>
-            <div className="space-y-4">
-               {futureByCompany.slice(0, 8).map((c, i) => {
-                  const maxVal = futureByCompany[0]?.projected || 1
-                  const pct = (c.projected / maxVal) * 100
-                  return (
-                      <div key={i} className="space-y-1">
-                         <div className="flex justify-between items-center text-[10px] font-black uppercase tracking-widest">
-                            <span className="text-slate-600 truncate max-w-[150px]">{c.name}</span>
-                            <span className="text-indigo-600">{c.projected} PAX</span>
-                         </div>
-                         <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
-                            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${pct}%` }} />
-                         </div>
-                      </div>
-                  )
-               })}
-            </div>
-         </div>
-
       {receivingPoId && (
         <ReceivePOModal
           orderId={receivingPoId}
@@ -1016,8 +971,6 @@ export default function DashboardPage() {
           onSuccess={handlePORecievedSuccess}
         />
       )}
-
-      </div>
 
       {selectedPOId && (
         <ReceivePOModal
@@ -1166,7 +1119,7 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
                     {total_adjusted} <span className="text-white/40 text-lg uppercase tracking-widest ml-1">{footerLabel}</span>
                   </p>
                </div>
-               {role !== 'cocina' && (
+               {role === 'admin' && (
                  <>
                    <div className="hidden md:block w-px h-16 bg-white/20"></div>
                    <div className="w-full md:hidden h-px bg-white/20"></div>
@@ -1300,7 +1253,7 @@ function EffectivenessCard({ show, role, onOpenPlan }: { show: any, role: string
           </div>
         </div>
 
-        {role && role !== 'cocina' && (
+        {role === 'admin' && (
           <div className="pt-3 border-t border-slate-200/60">
             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Facturación Est.</p>
             <p className="text-lg font-black text-slate-700 tabular-nums">{formatCurrencyLocal(show.revenue)}</p>

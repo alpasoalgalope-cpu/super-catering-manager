@@ -2,11 +2,24 @@
 
 import { createClient } from "@/lib/supabase/server"
 import { revalidatePath } from "next/cache"
+import { uploadFileToGoogleDrive } from "@/lib/google-drive"
+
+export interface LegajoDocumento {
+  id: string
+  profile_id: string
+  tipo: 'arca_931' | 'alta_temprana' | 'art' | 'seguro_vida' | 'certificado_medico' | 'otro'
+  titulo: string
+  periodo?: string
+  archivo_url: string
+  archivo_id_drive?: string
+  created_at?: string
+}
 
 // Interfaces de datos
 export interface EmployeeProfile {
   id: string;
   nombre_completo: string;
+  email?: string;
   rol: 'admin' | 'cocina' | 'empleado';
   id_reloj: string | null;
   fecha_ingreso: string;
@@ -330,6 +343,14 @@ export async function getAttendanceReportAction(month: string, profileId?: strin
 export async function getEmployeesListAction(): Promise<{ data?: EmployeeProfile[]; error?: string }> {
   try {
     const supabase = createClient()
+    
+    // Intentar primero con la función RPC que une profiles con auth.users para traer el email
+    const { data: rpcData, error: rpcErr } = await supabase.rpc('obtener_empleados_completos')
+    if (!rpcErr && rpcData) {
+      return { data: rpcData as EmployeeProfile[] }
+    }
+
+    // Fallback estándar a la tabla profiles
     const { data, error } = await supabase
       .from('profiles')
       .select('*')
@@ -342,7 +363,28 @@ export async function getEmployeesListAction(): Promise<{ data?: EmployeeProfile
   }
 }
 
-export async function getEmployeeProfileByIdAction(id?: string): Promise<{ data?: EmployeeProfile; error?: string }> {
+export async function actualizarCredencialesEmpleadoAction(params: {
+  userId: string;
+  nuevoEmail?: string;
+  nuevaPassword?: string;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase.rpc('actualizar_credenciales_empleado', {
+      p_user_id: params.userId,
+      p_nuevo_email: params.nuevoEmail || null,
+      p_nueva_password: params.nuevaPassword || null
+    })
+
+    if (error) throw error
+    revalidatePath("/rrhh")
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+export async function getEmployeeProfileByIdAction(id?: string): Promise<{ data?: EmployeeProfile | null; error?: string }> {
   try {
     const supabase = createClient()
     let targetId = id
@@ -356,10 +398,10 @@ export async function getEmployeeProfileByIdAction(id?: string): Promise<{ data?
       .from('profiles')
       .select('*')
       .eq('id', targetId)
-      .single()
+      .maybeSingle()
 
     if (error) throw error
-    return { data: data as EmployeeProfile }
+    return { data: data as EmployeeProfile | null }
   } catch (err: any) {
     return { error: err.message || "Error al obtener perfil del empleado." }
   }
@@ -766,6 +808,113 @@ export async function crearSaldoVacacionesAction(profileId: string, anio: number
         dias_totales: diasTotales,
         dias_usados: 0
       })
+
+    if (error) throw error
+    revalidatePath("/rrhh")
+    revalidatePath("/rrhh/portal")
+    return { success: true }
+  } catch (err: any) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ------------------------------------------------------------
+// 8. LEGAJO DIGITAL Y DOCUMENTACIÓN EN GOOGLE DRIVE (ARCA, ART, RECIBOS, CERTIFICADOS)
+// ------------------------------------------------------------
+
+export async function subirDocumentoLegajoAction(formData: FormData): Promise<{ success: boolean; error?: string; url?: string }> {
+  try {
+    const file = formData.get('file') as File | null
+    const profileId = formData.get('profileId') as string
+    const employeeName = (formData.get('employeeName') as string) || 'Empleado'
+    const tipo = (formData.get('tipo') as string) || 'otro'
+    const titulo = (formData.get('titulo') as string) || file?.name || 'Documento'
+    const periodo = formData.get('periodo') as string | null
+
+    if (!file || !profileId) {
+      return { success: false, error: "Archivo o perfil no especificado." }
+    }
+
+    const arrayBuffer = await file.arrayBuffer()
+    const buffer = Buffer.from(arrayBuffer)
+    const mimeType = file.type || 'application/pdf'
+    const fileName = `${Date.now()}_${file.name.replace(/\s+/g, '_')}`
+
+    let subfolder = '03_Legajo_Legal_ARCA_931'
+    if (tipo === 'recibo') subfolder = '01_Recibos_Sueldo'
+    else if (tipo === 'certificado_medico') subfolder = '02_Certificados_Medicos'
+
+    const driveRes = await uploadFileToGoogleDrive({
+      buffer,
+      fileName,
+      mimeType,
+      pathSegments: ['RRHH', employeeName, subfolder]
+    })
+
+    const supabase = createClient()
+
+    if (tipo === 'recibo') {
+      const { error: recErr } = await supabase
+        .from('recibos_sueldo')
+        .insert({
+          profile_id: profileId,
+          periodo: periodo || new Date().toISOString().slice(0, 7),
+          archivo_url: driveRes.webViewLink
+        })
+      if (recErr) throw recErr
+    } else {
+      const { error: docErr } = await supabase
+        .from('legajos_documentos')
+        .insert({
+          profile_id: profileId,
+          tipo,
+          titulo,
+          periodo,
+          archivo_url: driveRes.webViewLink,
+          archivo_id_drive: driveRes.fileId
+        })
+      if (docErr) throw docErr
+    }
+
+    revalidatePath("/rrhh")
+    revalidatePath("/rrhh/portal")
+    return { success: true, url: driveRes.webViewLink }
+  } catch (err: any) {
+    console.error("Error en subirDocumentoLegajoAction:", err)
+    return { success: false, error: err.message || "Error al subir documento a Google Drive." }
+  }
+}
+
+export async function getEmployeeLegajosAction(profileId?: string): Promise<{ data?: LegajoDocumento[]; error?: string }> {
+  try {
+    const supabase = createClient()
+    let targetId = profileId
+    if (!targetId) {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return { error: "No autenticado" }
+      targetId = user.id
+    }
+
+    const { data, error } = await supabase
+      .from('legajos_documentos')
+      .select('*')
+      .eq('profile_id', targetId)
+      .order('created_at', { ascending: false })
+
+    if (error) throw error
+    return { data: data as LegajoDocumento[] }
+  } catch (err: any) {
+    return { error: err.message }
+  }
+}
+
+export async function eliminarDocumentoLegajoAction(docId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = createClient()
+    const { error } = await supabase
+      .from('legajos_documentos')
+      .delete()
+      .eq('id', docId)
 
     if (error) throw error
     revalidatePath("/rrhh")

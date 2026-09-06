@@ -1,8 +1,9 @@
-"use client"
+"use client";
 
-import React, { useState, useEffect } from "react"
-import { createClient } from "@/lib/supabase/client"
-import { X, Loader2, CheckCircle2, FileText, Landmark, Percent, AlertCircle } from "lucide-react"
+import React, { useState, useEffect } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { parseInvoiceDocumentAction, ParsedInvoiceData } from "@/app/actions/invoice-ocr";
+import { X, Loader2, CheckCircle2, FileText, Landmark, Percent, AlertCircle, Sparkles, UploadCloud, CheckCircle } from "lucide-react";
 
 interface ReceivePOModalProps {
   orderId: string
@@ -26,6 +27,108 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
   const [percepcionIibb, setPercepcionIibb] = useState<number | "">(0)
   const [percepcionGanancias, setPercepcionGanancias] = useState<number | "">(0)
   const [impuestosInternos, setImpuestosInternos] = useState<number | "">(0)
+  const [caeNumber, setCaeNumber] = useState("")
+  const [isScanningInvoice, setIsScanningInvoice] = useState(false)
+  const [aiParsedBanner, setAiParsedBanner] = useState<any | null>(null)
+  const [uploadedDriveUrl, setUploadedDriveUrl] = useState<string>("")
+  const [uploadedDriveId, setUploadedDriveId] = useState<string>("")
+  const [dragOver, setDragOver] = useState(false)
+
+  const handleFileUpload = async (file: File) => {
+    if (!file) return
+    setIsScanningInvoice(true)
+    setAiParsedBanner(null)
+
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+
+      const res = await parseInvoiceDocumentAction(
+        await new Promise((resolve) => {
+          const reader = new FileReader()
+          reader.onload = (e) => resolve(e.target?.result as string)
+          reader.readAsDataURL(file)
+        }),
+        file.type || "image/jpeg"
+      )
+
+      // Also try saving to Google Drive via server action if configured
+      try {
+        const { procesarFacturaOCRAction } = await import("@/app/actions/compras-ocr")
+        const driveRes = await procesarFacturaOCRAction(formData)
+        if (driveRes.driveUrl) {
+          setUploadedDriveUrl(driveRes.driveUrl)
+          setUploadedDriveId(driveRes.driveId || "")
+        }
+      } catch (dErr) {
+        console.warn("Drive upload fallback:", dErr)
+      }
+
+      if (!res.success || !res.data) {
+        alert("No se pudo extraer la información del comprobante: " + (res.error || "Error desconocido"))
+        setIsScanningInvoice(false)
+        return
+      }
+
+      const data = res.data
+
+      // Autocomplete Header Fields
+      if (data.tipo_documento) setTipoDocumento(data.tipo_documento)
+      if (data.nro_comprobante) setNroComprobante(data.nro_comprobante)
+      if (data.cae) setCaeNumber(data.cae)
+      if (data.fecha_vto_cae) setFechaVencimientoPago(data.fecha_vto_cae)
+      else if (data.fecha_emision) setFechaVencimientoPago(data.fecha_emision)
+
+      // Autocomplete Taxes / Perceptions
+      if (data.percepcion_iibb !== undefined && data.percepcion_iibb > 0) setPercepcionIibb(data.percepcion_iibb)
+      if (data.percepcion_iva !== undefined && data.percepcion_iva > 0) setPercepcionIva(data.percepcion_iva)
+      if (data.percepcion_ganancias !== undefined && data.percepcion_ganancias > 0) setPercepcionGanancias(data.percepcion_ganancias)
+      if (data.impuestos_internos !== undefined && data.impuestos_internos > 0) setImpuestosInternos(data.impuestos_internos)
+
+      // Autocomplete / Match Items in PO
+      if (data.items && data.items.length > 0) {
+        setItems(prevItems => {
+          return prevItems.map(poItem => {
+            const poProdName = (poItem.productos?.nombre || '').toLowerCase()
+            
+            // Find matching item by description similarity or code
+            const matchedAiItem = data.items.find((aiItem: any) => {
+              const aiDesc = (aiItem.descripcion || '').toLowerCase()
+              const aiCode = (aiItem.codigo || '').toLowerCase()
+              return (
+                (aiCode && poProdName.includes(aiCode)) ||
+                aiDesc.includes(poProdName) ||
+                poProdName.includes(aiDesc.split(' ')[0])
+              )
+            }) || data.items[0] // Fallback to first item if single item PO
+
+            if (matchedAiItem) {
+              const bultos = matchedAiItem.cantidad || poItem.bultos || 1
+              const unitsPerPkg = matchedAiItem.unidades_por_bulto || poItem.unidadesPorBulto || 1
+              const unitCost = matchedAiItem.precio_unitario || poItem.costoUnitario || 0
+              const costTotal = matchedAiItem.subtotal || (unitCost * bultos)
+
+              return {
+                ...poItem,
+                bultos: bultos,
+                unidadesPorBulto: unitsPerPkg,
+                costoUnitario: unitCost,
+                costoTotal: costTotal
+              }
+            }
+            return poItem
+          })
+        })
+      }
+
+      setAiParsedBanner(data)
+      setIsScanningInvoice(false)
+    } catch (err: any) {
+      console.error("Error reading invoice file:", err)
+      alert("Error al procesar el archivo: " + err.message)
+      setIsScanningInvoice(false)
+    }
+  }
 
   const supabase = createClient()
 
@@ -82,19 +185,14 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
 
   // Recalculate prices if tipoDocumento changes
   useEffect(() => {
-    // When changing document type, we reset the numeric inputs of items to match their scale
-    // If switching from factura to remito, items prices are final (net * (1+iva))
-    // If switching from remito to factura, items prices are net (final / (1+iva))
     setItems(prevItems => prevItems.map(item => {
       const totalQty = (Number(item.bultos) || 0) * (Number(item.unidadesPorBulto) || 0)
       const ivaFactor = 1 + (Number(item.iva_pct) || 0) / 100
 
       let newUnitCost = item.costoUnitario
       if (tipoDocumento === 'remito') {
-        // Convert to IVA included
         newUnitCost = Number((item.costoUnitario * ivaFactor).toFixed(4))
       } else {
-        // Convert to net
         newUnitCost = Number((item.costoUnitario / ivaFactor).toFixed(4))
       }
       
@@ -139,7 +237,6 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
       const ivaPct = Number(item.iva_pct) || 0
 
       if (tipoDocumento === 'remito') {
-        // Entered total is final price (with IVA). We strip the IVA.
         const itemNetTotal = enteredCostTotal / (1 + ivaPct / 100)
         const itemIvaTotal = enteredCostTotal - itemNetTotal
 
@@ -147,7 +244,6 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
         totalIvaEstimado += itemIvaTotal
         totalMercaderiaFinal += enteredCostTotal
       } else {
-        // Entered total is net price (without IVA). We add the IVA.
         const itemIvaTotal = enteredCostTotal * (ivaPct / 100)
         const itemFinalTotal = enteredCostTotal + itemIvaTotal
 
@@ -163,7 +259,7 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
     const impInt = Number(impuestosInternos) || 0
 
     const totalCargasAdicionales = pIva + pIibb + pGan + impInt
-    const totalFinanciero = (tipoDocumento === 'factura' ? totalMercaderiaFinal : totalMercaderiaFinal) + totalCargasAdicionales
+    const totalFinanciero = totalMercaderiaFinal + totalCargasAdicionales
 
     return {
       subtotalMercaderiaNeto,
@@ -177,7 +273,6 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Validation: Enforce prices!
     if (items.some(i => i.costoTotal <= 0)) {
       alert("Por favor, ingresá el costo real de todos los insumos recibidos para poder valorizar el stock.")
       return
@@ -196,17 +291,14 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
     setSaving(true)
 
     try {
-      // 1. Update purchase_order_items with final quantities and NET costs
       for (const item of items) {
         const totalQty = Number(item.bultos) * Number(item.unidadesPorBulto)
         
         let unitCostNet = 0
         if (tipoDocumento === 'remito') {
-          // Entered price has IVA. Strip it!
           const totalCostNet = Number(item.costoTotal) / (1 + (Number(item.iva_pct) || 0) / 100)
           unitCostNet = totalQty > 0 ? totalCostNet / totalQty : 0
         } else {
-          // Entered price is net already
           unitCostNet = totalQty > 0 ? Number(item.costoTotal) / totalQty : 0
         }
 
@@ -221,7 +313,6 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
         if (itemErr) throw itemErr
       }
 
-      // 2. Update purchase_orders with financial details and accounting fields
       const { error: poErr } = await supabase
         .from("purchase_orders")
         .update({
@@ -234,13 +325,14 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
           impuestos_internos: tipoDocumento === 'factura' ? Number(impuestosInternos) || 0 : 0,
           facturado: tipoDocumento === 'factura',
           desvio_inflacion: 0,
-          fecha_vencimiento_pago: fechaVencimientoPago || null
+          fecha_vencimiento_pago: fechaVencimientoPago || null,
+          comprobante_url: uploadedDriveUrl || null,
+          comprobante_drive_id: uploadedDriveId || null
         })
         .eq("id", orderId)
 
       if (poErr) throw poErr
 
-      // 3. Call RPC to finalize reception and update physical stock
       const { error: rpcErr } = await supabase.rpc('recepcionar_orden_compra', { p_po_id: orderId })
       
       if (rpcErr) throw rpcErr
@@ -282,6 +374,76 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
         ) : (
           <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
             
+            {/* SECCIÓN OCR & GOOGLE DRIVE */}
+            <div 
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={(e) => {
+                e.preventDefault()
+                setDragOver(false)
+                if (e.dataTransfer.files?.[0]) handleFileUpload(e.dataTransfer.files[0])
+              }}
+              className={`p-6 rounded-[2rem] border-2 border-dashed transition-all ${
+                dragOver 
+                  ? 'border-emerald-500 bg-emerald-50/50' 
+                  : uploadedDriveUrl 
+                    ? 'border-emerald-200 bg-emerald-50/30' 
+                    : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+                    uploadedDriveUrl ? 'bg-emerald-100 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
+                  }`}>
+                    {isScanningInvoice ? (
+                      <Loader2 className="animate-spin" size={24} />
+                    ) : uploadedDriveUrl ? (
+                      <CheckCircle size={24} />
+                    ) : (
+                      <Sparkles size={24} />
+                    )}
+                  </div>
+                  <div>
+                    <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      Escanear Factura / Remito con Inteligencia Artificial (OCR)
+                    </h4>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                      {isScanningInvoice 
+                        ? 'Analizando comprobante con Google Gemini Vision...' 
+                        : uploadedDriveUrl 
+                          ? 'Comprobante escaneado y guardado en Google Drive' 
+                          : 'Arrastra o sube una foto de la factura para autocompletar ítems y montos'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {uploadedDriveUrl && (
+                    <a
+                      href={uploadedDriveUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="px-3 py-2 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-xl text-[10px] font-black uppercase tracking-wider transition"
+                    >
+                      Ver en Drive
+                    </a>
+                  )}
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider px-4 py-2.5 rounded-xl transition flex items-center gap-2">
+                    <UploadCloud size={14} /> Subir Imagen / PDF
+                    <input 
+                      type="file" 
+                      accept="image/*,application/pdf" 
+                      className="hidden" 
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleFileUpload(e.target.files[0])
+                      }} 
+                    />
+                  </label>
+                </div>
+              </div>
+            </div>
+
             {/* 1. SECCIÓN: DATOS DE COMPROBANTE */}
             <div className="bg-slate-50 border border-slate-200/60 rounded-[2rem] p-6 space-y-6 shadow-inner">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200/80 pb-4">
@@ -435,7 +597,7 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
               <h3 className="text-xs font-black text-slate-800 uppercase tracking-widest border-b border-slate-100 pb-2">
                 Detalle de Insumos Recibidos
               </h3>
-              
+
               <div className="space-y-3">
                 {items.map((item, idx) => {
                   const totalQty = (Number(item.bultos) || 0) * (Number(item.unidadesPorBulto) || 0)
@@ -446,11 +608,9 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
                   let previewValue = 0
 
                   if (tipoDocumento === 'remito') {
-                    // Entered is final. Preview is Net.
                     previewLabel = "Neto Estimado Stock"
                     previewValue = item.costoUnitario / (1 + ivaPct / 100)
                   } else {
-                    // Entered is Net. Preview is Final (with IVA).
                     previewLabel = "Costo con IVA"
                     previewValue = item.costoUnitario * (1 + ivaPct / 100)
                   }

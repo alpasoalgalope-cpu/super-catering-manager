@@ -32,8 +32,28 @@ const formatCurrency = (amount: number) => {
 }
 
 export default function OnlineSalesDashboard({ initialStores, initialOrders, initialEvents, rules = [] }: Props) {
+  const [userRole, setUserRole] = useState<string>('admin')
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<'tiendas' | 'pedidos' | 'clientes'>('pedidos')
+
+  React.useEffect(() => {
+    async function loadRole() {
+      try {
+        const { createClient } = await import('@/lib/supabase/client')
+        const sb = createClient()
+        const { data: { user } } = await sb.auth.getUser()
+        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
+          setUserRole('cocina')
+        } else {
+          setUserRole(user?.app_metadata?.role || user?.user_metadata?.role || 'admin')
+        }
+      } catch (e) {
+        console.error(e)
+      }
+    }
+    loadRole()
+  }, [])
+
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingStore, setEditingStore] = useState<any | null>(null)
   
@@ -575,7 +595,11 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
               <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
                 <div>
                   <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-0.5">Recaudación Pagada</div>
-                  <div className="text-lg font-black text-emerald-600">{formatCurrency(revenue)}</div>
+                  {userRole === 'cocina' ? (
+                    <div className="text-sm font-black text-indigo-600">{paidOrders.length} pedidos pagados</div>
+                  ) : (
+                    <div className="text-lg font-black text-emerald-600">{formatCurrency(revenue)}</div>
+                  )}
                 </div>
 
                 <button
@@ -729,8 +753,14 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
               </div>
             </div>
             <div className="text-right">
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Recaudación Filtrada</p>
-              <p className="text-lg font-black text-emerald-600">{formatCurrency(productionMetrics.totalRevenue)}</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">
+                {userRole === 'cocina' ? 'Viandas Pagadas' : 'Recaudación Filtrada'}
+              </p>
+              {userRole === 'cocina' ? (
+                <p className="text-lg font-black text-indigo-600">{productionMetrics.totalViandas} viandas</p>
+              ) : (
+                <p className="text-lg font-black text-emerald-600">{formatCurrency(productionMetrics.totalRevenue)}</p>
+              )}
             </div>
           </div>
 
@@ -799,7 +829,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                   <th className="px-6 py-4">Evento / Tienda</th>
                   <th className="px-6 py-4">Viaje / Micro</th>
                   <th className="px-6 py-4 text-center">Combos</th>
-                  <th className="px-6 py-4 whitespace-nowrap">Total</th>
+                  {userRole !== 'cocina' && <th className="px-6 py-4 whitespace-nowrap">Total</th>}
                   <th className="px-6 py-4 text-center">Estado</th>
                   <th className="px-6 py-4 text-right">Acciones</th>
                 </tr>
@@ -835,9 +865,11 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                           ))}
                         </div>
                       </td>
-                      <td className="px-6 py-4 font-black text-slate-800 whitespace-nowrap">
-                        {formatCurrency(Number(order.total_amount))}
-                      </td>
+                      {userRole !== 'cocina' && (
+                        <td className="px-6 py-4 font-black text-slate-800 whitespace-nowrap">
+                          {formatCurrency(Number(order.total_amount))}
+                        </td>
+                      )}
                       <td className="px-6 py-4 text-center">
                         {order.status === 'paid' ? (
                           <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
@@ -878,7 +910,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                 })}
                 {filteredOrders.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center text-slate-500">
+                    <td colSpan={userRole === 'cocina' ? 7 : 8} className="px-6 py-12 text-center text-slate-500">
                       No se encontraron pedidos con los filtros seleccionados.
                     </td>
                   </tr>
@@ -922,7 +954,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                   <th className="px-6 py-4">Email</th>
                   <th className="px-6 py-4">Teléfono</th>
                   <th className="px-6 py-4 text-center">Total Pedidos</th>
-                  <th className="px-6 py-4 text-right">Total Gastado</th>
+                  {userRole !== 'cocina' && <th className="px-6 py-4 text-right">Total Gastado</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 text-sm">
@@ -944,15 +976,17 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                       <td className="px-6 py-4 text-center font-bold text-indigo-600">
                         {paidCount}
                       </td>
-                      <td className="px-6 py-4 text-right font-black text-emerald-600">
-                        {formatCurrency(totalSpent)}
-                      </td>
+                      {userRole !== 'cocina' && (
+                        <td className="px-6 py-4 text-right font-black text-emerald-600">
+                          {formatCurrency(totalSpent)}
+                        </td>
+                      )}
                     </tr>
                   )
                 })}
                 {filteredCustomers.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="px-6 py-12 text-center text-slate-500">
+                    <td colSpan={userRole === 'cocina' ? 4 : 5} className="px-6 py-12 text-center text-slate-500">
                       No se encontraron clientes.
                     </td>
                   </tr>

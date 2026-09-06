@@ -1,10 +1,53 @@
-import Link from "next/link"
-import { Calculator, CalendarDays, DollarSign, BarChart3, ChefHat, ShoppingCart, Store } from "lucide-react"
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { Calculator, CalendarDays, DollarSign, BarChart3, ChefHat, ShoppingCart, Store, PanelLeft, PanelLeftClose } from "lucide-react";
+import { useSidebar } from "./SidebarContext";
 
 export default function Topbar() {
+  const [role, setRole] = useState<string | null>(null);
+  const { isOpen, toggleSidebar } = useSidebar();
+  const supabase = createClient();
+
+  useEffect(() => {
+    async function loadUser() {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        if (user.email === 'fschottenfeld@gmail.com') {
+          setRole('admin');
+        } else if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') {
+          setRole('cocina');
+        } else {
+          setRole(user.app_metadata?.role || user.user_metadata?.role || 'cocina');
+        }
+      }
+    }
+    loadUser();
+  }, []);
+
+  const isCocina = role === 'cocina';
+
   return (
-    <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur-sm px-6 flex items-center justify-between shadow-xs sticky top-0 z-10">
+    <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur-sm px-4 md:px-6 flex items-center justify-between shadow-xs sticky top-0 z-10">
       <div className="flex items-center min-w-0 flex-1 mr-4">
+        {/* Toggle Sidebar Button */}
+        <button
+          onClick={toggleSidebar}
+          className="mr-3 p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-black shrink-0 shadow-2xs group"
+          title={isOpen ? "Ocultar menú lateral" : "Mostrar menú lateral"}
+        >
+          {isOpen ? (
+            <PanelLeftClose size={18} className="text-slate-500 group-hover:text-indigo-600 transition-colors" />
+          ) : (
+            <PanelLeft size={18} className="text-indigo-600 animate-pulse" />
+          )}
+          <span className="hidden sm:inline text-[10px] font-black uppercase tracking-wider text-slate-600 group-hover:text-indigo-600">
+            {isOpen ? 'Ocultar' : 'Menú'}
+          </span>
+        </button>
+
         {/* Favourites Buttons in 1 single clean row */}
         <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none flex-nowrap">
           <Link 
@@ -21,13 +64,7 @@ export default function Topbar() {
           >
             <ShoppingCart size={13} /> Órdenes de Compra
           </Link>
-          <Link 
-            href="/informes" 
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 text-violet-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-violet-100 hover:bg-violet-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"
-            title="Central de Informes"
-          >
-            <BarChart3 size={13} /> Central de Informes
-          </Link>
+
           <Link 
             href="/inventario/proyeccion" 
             className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 text-indigo-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-indigo-100 hover:bg-indigo-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"
@@ -35,6 +72,7 @@ export default function Topbar() {
           >
             <Calculator size={13} /> Proyección de Insumos
           </Link>
+
           <Link 
             href="/settings/eventos" 
             className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-emerald-100 hover:bg-emerald-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"
@@ -42,6 +80,7 @@ export default function Topbar() {
           >
             <CalendarDays size={13} /> Gestión de Eventos
           </Link>
+
           <Link 
             href="/ventas-online" 
             className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-50 text-teal-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-teal-100 hover:bg-teal-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"
@@ -49,6 +88,7 @@ export default function Topbar() {
           >
             <Store size={13} /> Ventas Online
           </Link>
+
           <Link 
             href="/ventas-evento" 
             className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 text-amber-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-amber-100 hover:bg-amber-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"
@@ -56,6 +96,16 @@ export default function Topbar() {
           >
             <DollarSign size={13} /> Ventas por Evento
           </Link>
+
+          {!isCocina && (
+            <Link 
+              href="/informes" 
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-violet-50 text-violet-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-violet-100 hover:bg-violet-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"
+              title="Central de Informes"
+            >
+              <BarChart3 size={13} /> Central de Informes
+            </Link>
+          )}
         </div>
       </div>
 
@@ -64,9 +114,9 @@ export default function Topbar() {
           <span className="text-sm">🔔</span>
         </button>
         <div className="h-9 w-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-black text-xs shadow-md shadow-slate-300 select-none">
-          AD
+          {isCocina ? 'COC' : 'AD'}
         </div>
       </div>
     </header>
-  )
+  );
 }

@@ -8,7 +8,8 @@ export interface ReportRow {
   evento: string;
   venue: string;
   empresa: string;
-  pax_proyectado: number;
+  pax_total: number; // cantidad de pasajeros que viajan
+  pax_proyectado: number; // venta proyectada
   unidades_vendidas: number;
   unidades_liberadas: number;
   total_unidades: number;
@@ -118,6 +119,7 @@ export async function getReportsDataAction(): Promise<{ data?: ReportRow[], erro
         evento: event.show_name || header.show_name || 'S/D',
         venue: event.venues?.name || header.venue_name || header.venue || 'S/D',
         empresa: client?.name || header.company_name || header.company || 'S/D',
+        pax_total: Number(header.pax_projected) || 0,
         pax_proyectado: (Number(header.pax_projected) || 0) * factor,
         unidades_vendidas: sold,
         unidades_liberadas: liberated,

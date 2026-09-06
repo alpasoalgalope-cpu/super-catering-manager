@@ -1,10 +1,14 @@
 import { supabase } from "@/lib/supabase"
 import RecipesModule from "@/components/inventory/RecipesModule"
+import { syncAllProductBaseCostsAction } from "@/app/actions/inventory"
 import { ChefHat } from "lucide-react"
 
 export const dynamic = "force-dynamic"
 
 export default async function RecetasPage() {
+  // Asegurar que los costos base de todos los insumos estén actualizados y sincronizados con merma
+  await syncAllProductBaseCostsAction()
+
   // Fetch Rubros
   const { data: rubros } = await supabase
     .from("rubros_comida")

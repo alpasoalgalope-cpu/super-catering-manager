@@ -67,6 +67,26 @@ export default function CompanyModal({ isOpen, onClose, onSuccess }: CompanyModa
         return
       }
     }
+    const priceBase = form.price_base ? parseFloat(form.price_base) : null
+    const priceSintacc = form.special_sintacc_price ? parseFloat(form.special_sintacc_price) : priceBase
+    const limitPct = form.sintacc_limit_pct ? parseFloat(form.sintacc_limit_pct) : 10
+
+    // Upsert into clients table as well
+    try {
+      await supabase.from("clients").upsert([{
+        name: form.company_name.trim(),
+        company: form.company_name.trim(),
+        vianda_price: priceBase,
+        sintacc_price: priceSintacc,
+        sintacc_included_pct: limitPct,
+        cuit: form.cuit?.trim() || null,
+        localidad: form.city?.trim() || null,
+        provincia: form.province?.trim() || null
+      }], { onConflict: "name" })
+    } catch (cErr) {
+      console.error("Error upserting client:", cErr)
+    }
+
     if (form.price_base) {
       syncClientPricesToFutureStoresAction(form.company_name.trim(), parseFloat(form.price_base), form.special_sintacc_price ? parseFloat(form.special_sintacc_price) : null).catch(console.error)
     }

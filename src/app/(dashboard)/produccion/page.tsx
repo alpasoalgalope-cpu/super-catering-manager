@@ -201,29 +201,46 @@ export default function ProduccionPage() {
           units = uData || []
         }
 
-        // 3. Find all paid Online Orders for these events (Tienda Online)
+        // 3. Find any pending Online Orders for informational purposes only
         const { data: storeEvents } = await supabase
           .from("online_store_events")
           .select("id, title, slug, event_master_id")
           .in("event_master_id", eventIds)
 
         const storeIds = (storeEvents || []).map((s: any) => s.id)
-        let onlineOrders: any[] = []
+        let pendingOnlineOrders: any[] = []
         if (storeIds.length > 0) {
           const { data: oOrders } = await supabase
             .from("online_orders")
             .select("*, online_store_events(title, slug)")
             .eq("status", "paid")
             .in("store_event_id", storeIds)
-          onlineOrders = oOrders || []
+          pendingOnlineOrders = oOrders || []
         }
 
-        if (currentHeaders.length === 0 && onlineOrders.length === 0) {
-          setConsolidado({ total: 0, items: [], specials: {}, companies: [], headerCount: 0, headers: [], units: [] })
+        if (currentHeaders.length === 0) {
+          setConsolidado({ 
+            total: 0, 
+            sold: 0, 
+            liberated: 0, 
+            items: [
+              { key: "traditional", label: "TRADICIONAL", qty: 0, color: "bg-slate-900" },
+              { key: "vegetarian", label: "VEGETARIANA", qty: 0, color: "bg-emerald-600" },
+              { key: "vegana", label: "VEGANA", qty: 0, color: "bg-emerald-500" },
+              { key: "sin_tacc", label: "SIN TACC", qty: 0, color: "bg-indigo-600" },
+              { key: "water", label: "AGUA MINERAL", qty: 0, color: "bg-sky-500" },
+            ], 
+            specials: { traditional: [], vegetarian: [], vegana: [], sin_tacc: [] }, 
+            companies: [], 
+            headerCount: 0, 
+            headers: [], 
+            units: [],
+            pendingOnlineOrdersCount: pendingOnlineOrders.length
+          })
           return
         }
 
-        // 4. Aggregation
+        // 4. Aggregation ONLY from Ventas por Evento (event_sales_units)
         const specialsMap: Record<string, { qty: number; note: string }[]> = {
           traditional: [], vegetarian: [], vegana: [], sin_tacc: []
         }
@@ -254,29 +271,6 @@ export default function ProduccionPage() {
 
         const uniqueCompanies = Array.from(new Set(currentHeaders.map((h: any) => h.company_name || h.company).filter(Boolean)))
 
-        // Add online orders to totals
-        onlineOrders.forEach((o: any) => {
-          const t = Number(o.qty_tradicional) || 0
-          const v = Number(o.qty_vegetariano) || 0
-          const vg = Number(o.qty_vegano) || 0
-          const st = Number(o.qty_sintacc) || 0
-          const orderViandas = t + v + vg + st
-
-          totals.trad += t
-          totals.veg += v
-          totals.vegan += vg
-          totals.st += st
-          totals.water += orderViandas
-          totals.sold += orderViandas
-
-          const storeTitle = o.online_store_events?.title || ''
-          const parts = storeTitle.split('—').map((s: string) => s.trim())
-          const comp = parts.length > 1 ? parts[1] : storeTitle
-          if (comp && !uniqueCompanies.includes(comp)) {
-            uniqueCompanies.push(comp)
-          }
-        })
-
         const items = [
           { key: "traditional", label: "TRADICIONAL", qty: totals.trad, color: "bg-slate-900" },
           { key: "vegetarian", label: "VEGETARIANA", qty: totals.veg, color: "bg-emerald-600" },
@@ -292,9 +286,10 @@ export default function ProduccionPage() {
           items,
           specials: specialsMap,
           companies: uniqueCompanies,
-          headerCount: currentHeaders.length + onlineOrders.length,
+          headerCount: currentHeaders.length,
           headers: currentHeaders,
-          units
+          units,
+          pendingOnlineOrdersCount: pendingOnlineOrders.length
         })
       } catch (err) {
         console.error("Error consolidando producción:", err)

@@ -137,11 +137,44 @@ export default function ClientModal({
       return
     }
 
+    const saved = data?.[0]
+
+    // Auto-sync with commercial_rules
+    if (form.name && form.vianda_price != null) {
+      const compName = form.name.trim()
+      const { data: existingRule } = await supabase
+        .from("commercial_rules")
+        .select("id")
+        .ilike("company_name", compName)
+        .maybeSingle()
+
+      if (existingRule) {
+        await supabase
+          .from("commercial_rules")
+          .update({
+            price_base: form.vianda_price,
+            price_sintacc_base: form.sintacc_price ?? form.vianda_price,
+            sintacc_limit_pct: form.sintacc_included_pct ?? 10,
+            client_id: saved?.id || client?.id || null,
+          })
+          .eq("id", existingRule.id)
+      } else {
+        await supabase
+          .from("commercial_rules")
+          .insert([{
+            company_name: compName,
+            price_base: form.vianda_price,
+            price_sintacc_base: form.sintacc_price ?? form.vianda_price,
+            sintacc_limit_pct: form.sintacc_included_pct ?? 10,
+            client_id: saved?.id || client?.id || null,
+          }])
+      }
+    }
+
     // Auto-sync prices to future stores (> today)
     if (form.vianda_price != null) {
       syncClientPricesToFutureStoresAction(form.name, form.vianda_price, form.sintacc_price).catch(console.error)
     }
-    const saved = data?.[0]
     if (onSuccess && saved) onSuccess(saved.id, saved.name)
     router.refresh()
     onClose()

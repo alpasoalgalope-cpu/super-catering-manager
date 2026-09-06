@@ -77,13 +77,13 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
   const nMerma = Number(wMerma) || 0
   const nIvaPct = Number(wIvaPct) || 0
 
-  // Lógica de divisor: 1000 para peso/volumen, 1 para unidades
+  // Lógica de divisor: 1000 para peso/volumen (gr/ml), 1 para unidades
   const divisor = (wUnidad === 'un') ? 1 : 1000
 
-  // CALCULO 1: Costo Operativo Neto Real (Para Recetas)
-  // Formula: Precio Total / (Cantidad Comprada * Rinde)
-  const realTimeCostBase = (nPrecioNeto > 0 && nGramaje > 0 && nMerma > 0) 
-    ? (nPrecioNeto / (nGramaje * (nMerma / 100))) 
+  // CALCULO 1: Costo Operativo Neto Real (Para Recetas, por gramo/ml o por unidad)
+  // Formula: (Precio Neto / Divisor) / (Rinde / 100)
+  const realTimeCostBase = (nPrecioNeto > 0 && nMerma > 0) 
+    ? (nPrecioNeto / divisor) / (nMerma / 100) 
     : 0
 
   // CALCULO 2: Total Bulto con IVA (Punto de Control vs Factura)
@@ -274,7 +274,9 @@ export default function ProductForm({ familias, proveedores, initialData, onSucc
               </div>
 
               <div className="space-y-2">
-                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Precio Neto (Unit)</label>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                  {wUnidad === 'un' ? 'Precio Neto Unitario ($)' : 'Precio Neto x Kg/Lt ($)'}
+                </label>
                 <div className="relative">
                   <input 
                     type="text"

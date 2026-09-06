@@ -16,7 +16,7 @@ export default function InformesPage() {
 
   // Filters for the detailed table
   const [searchTerm, setSearchTerm] = useState("")
-  const [sortBy, setSortBy] = useState<'fecha' | 'venta_total' | 'pax_proyectado'>('fecha')
+  const [sortBy, setSortBy] = useState<'fecha' | 'venta_total' | 'pax_proyectado' | 'pax_total'>('fecha')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   useEffect(() => {
@@ -55,7 +55,7 @@ export default function InformesPage() {
     return filtered
   }, [data, searchTerm, sortBy, sortOrder])
 
-  const toggleSort = (field: 'fecha' | 'venta_total' | 'pax_proyectado') => {
+  const toggleSort = (field: 'fecha' | 'venta_total' | 'pax_proyectado' | 'pax_total') => {
     if (sortBy === field) setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')
     else { setSortBy(field); setSortOrder('desc') }
   }
@@ -73,7 +73,8 @@ export default function InformesPage() {
         'Evento': r.evento,
         'Venue': r.venue,
         'Empresa': r.empresa,
-        'PAX Proyectado': r.pax_proyectado,
+        'PAX Proyectados': r.pax_total,
+        'Venta Proyectada': r.pax_proyectado,
         'Unidades Vendidas': r.unidades_vendidas,
         'Unidades Liberadas': r.unidades_liberadas,
         'Total Unidades': r.total_unidades,
@@ -246,7 +247,8 @@ export default function InformesPage() {
                     <th className="p-4">Coordinador</th>
                     <th className="p-4">Evento</th>
                     <th className="p-4">Empresa</th>
-                    <th className="p-4 text-center">PAX Proy.</th>
+                    <th className="p-4 text-center cursor-pointer" onClick={() => toggleSort('pax_total')}>PAX Proyectados</th>
+                    <th className="p-4 text-center cursor-pointer" onClick={() => toggleSort('pax_proyectado')}>Venta Proyectada</th>
                     <th className="p-4 text-center text-indigo-600">Total Un.</th>
                     <th className="p-4 pr-6 text-right text-emerald-600 cursor-pointer" onClick={() => toggleSort('venta_total')}>Venta ($)</th>
                   </tr>
@@ -260,6 +262,7 @@ export default function InformesPage() {
                       <td className="p-4">
                         <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-[10px] font-black uppercase">{row.empresa}</span>
                       </td>
+                      <td className="p-4 text-center font-bold text-slate-700">{row.pax_total}</td>
                       <td className="p-4 text-center font-bold text-slate-400">{row.pax_proyectado}</td>
                       <td className="p-4 text-center font-black text-indigo-600">{row.total_unidades}</td>
                       <td className="p-4 pr-6 text-right font-black text-emerald-600">{formatCurrency(row.venta_total)}</td>

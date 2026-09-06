@@ -28,6 +28,3 @@ yarn-error.log*
 .DS_Store
 Thumbs.db
 *.pem
-
-# Local Netlify folder
-.netlify

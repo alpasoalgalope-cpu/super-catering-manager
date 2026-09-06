@@ -1,7 +1,9 @@
-"use client"
+"use client";
 
+import { generateAndDownloadSalesPdf } from '@/lib/pdf-generator';
 import React, { useState, useMemo, useEffect, useCallback } from "react"
-import { supabase } from "@/lib/supabase"
+import { createClient } from "@/lib/supabase/client"
+import { supabase as defaultSupabase } from "@/lib/supabase"
 import {
   Calculator, Truck, Users, Plus, Trash2, Calendar,
   ClipboardList, MapPin, AlertCircle, CheckCircle2,
@@ -49,11 +51,31 @@ const newUnit = (name: string): UnitRecord => ({
 })
 
 export default function EventSalesForm({ initialEventId, initialCompany, commercialRules = [], coordinators: initCoordinators = [], vehicles: initVehicles = [], clients = [] }: any) {
+  const supabase = createClient()
   // Master event selection
   const [events, setEvents] = useState<EventMaster[]>([])
   const [selectedEventId, setSelectedEventId] = useState(initialEventId || "")
   const [selectedCompany, setSelectedCompany] = useState(initialCompany || "")
   const [loadingEvents, setLoadingEvents] = useState(true)
+  const [userRole, setUserRole] = useState<string>('admin')
+
+  useEffect(() => {
+    async function loadRole() {
+      try {
+        const clientSupabase = createClient()
+        const { data: { user } } = await clientSupabase.auth.getUser()
+        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
+          setUserRole('cocina')
+        } else {
+          const r = user?.app_metadata?.role || user?.user_metadata?.role || 'admin'
+          setUserRole(r)
+        }
+      } catch (e) {
+        console.error("Error loading role in EventSalesForm:", e)
+      }
+    }
+    loadRole()
+  }, [])
 
   // Modals state
   const [fleetModal, setFleetModal] = useState(false)
@@ -183,38 +205,45 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   }, [selectedEventId])
 
   
-  const applyOnlineSalesToUnits = (salesInfo: any) => {
+  const applyOnlineSalesToUnits = (salesInfo: any, fallbackAssignedBuses: any[] = []) => {
     if (!salesInfo || !salesInfo.ordersByBus) return
 
     const busKeys = Object.keys(salesInfo.ordersByBus)
     if (busKeys.length === 0) return
 
-    const generatedUnits: UnitRecord[] = busKeys.map((busName, idx) => {
-      const b = salesInfo.ordersByBus[busName]
-      const totalViandas = (b.trad || 0) + (b.veg || 0) + (b.vegan || 0) + (b.st || 0)
-      
-      return {
-        id: crypto.randomUUID(),
-        name: busName || `Micro ${idx + 1}`,
-        vehicle_id: "",
-        coordinator_id: "",
-        sold: totalViandas,
-        liberated: 0,
-        traditional: b.trad || 0,
-        vegetarian: b.veg || 0,
-        vegana: b.vegan || 0,
-        sin_tacc: b.st || 0,
-        water: totalViandas,
-        observations: `Importado de Tienda Online (${salesInfo.totalOrders} pedidos)`,
-        details: [],
-        isExpanded: true
-      }
+    setUnits(prevUnits => {
+      return busKeys.map((busName, idx) => {
+        const b = salesInfo.ordersByBus[busName]
+        const totalViandas = (b.trad || 0) + (b.veg || 0) + (b.vegan || 0) + (b.st || 0)
+        
+        // Preserve already assigned vehicle and coordinator if set, or pick from assignedBuses
+        const existingU = prevUnits[idx] || prevUnits[0]
+        const fallbackBus = fallbackAssignedBuses[idx] || fallbackAssignedBuses[0]
+        const vId = existingU?.vehicle_id || fallbackBus?.vehicle_id || ""
+        const cId = existingU?.coordinator_id || fallbackBus?.coordinator_id || ""
+
+        return {
+          id: existingU?.id || crypto.randomUUID(),
+          name: busName || existingU?.name || `Micro ${idx + 1}`,
+          vehicle_id: vId,
+          coordinator_id: cId,
+          sold: totalViandas,
+          liberated: existingU?.liberated || 0,
+          traditional: b.trad || 0,
+          vegetarian: b.veg || 0,
+          vegana: b.vegan || 0,
+          sin_tacc: b.st || 0,
+          water: totalViandas,
+          observations: `Importado de Tienda Online (${salesInfo.totalOrders} pedidos)`,
+          details: existingU?.details || [],
+          isExpanded: true
+        }
+      })
     })
 
-    setUnits(generatedUnits)
     setMessage({
       type: 'success',
-      text: `¡Se importaron con éxito ${salesInfo.totalViandas} viandas desde la Tienda Online!`
+      text: `¡Se importaron con éxito ${salesInfo.totalViandas} viandas desde la Tienda Online conservando chofer y coordinador!`
     })
   }
 
@@ -242,7 +271,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
            if (ab) assignedBuses = ab
         }
 
-        // 2. FETCH ONLINE STORE ORDERS FOR THIS EVENT & COMPANY
+        // 2. FETCH ONLINE STORE ORDERS FOR THIS EVENT & COMPANY (Resilient multi-store search)
         let detectedOnlineSales: any = null
         try {
           const { data: stores } = await supabase
@@ -250,16 +279,22 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             .select('id, title, slug')
             .eq('event_master_id', selectedEventId)
 
-          const matchedStore = (stores || []).find(s => 
-            s.title?.toLowerCase().includes(selectedCompany.toLowerCase()) ||
-            s.slug?.toLowerCase().includes(selectedCompany.toLowerCase().replace(/\s+/g, '-'))
-          )
+          const cleanSelected = (selectedCompany || '').toLowerCase().trim().normalize('NFD').replace(/[̀-ͯ]/g, '')
+          const matchedStores = (stores || []).filter(s => {
+            const sTitle = (s.title || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+            const sSlug = (s.slug || '').toLowerCase()
+            const sClean = cleanSelected.replace(/[^a-z0-9]/g, '')
+            const sSlugComp = cleanSelected.replace(/\s+/g, '-')
+            return sTitle.includes(cleanSelected) || sSlug.includes(sSlugComp) || (sClean && sSlug.includes(sClean))
+          })
 
-          if (matchedStore) {
+          const storeIds = matchedStores.map(s => s.id)
+
+          if (storeIds.length > 0) {
             const { data: oOrders } = await supabase
               .from('online_orders')
               .select('*, online_customers(*)')
-              .eq('store_event_id', matchedStore.id)
+              .in('store_event_id', storeIds)
               .eq('status', 'paid')
               .order('created_at', { ascending: true })
 
@@ -268,7 +303,8 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
               let trad = 0, veg = 0, vegan = 0, st = 0
 
               oOrders.forEach(o => {
-                const bName = o.bus_identifier?.trim() || "Micro Único"
+                const rawBus = o.bus_identifier?.trim()
+                const bName = (!rawBus || rawBus.toUpperCase() === 'N/A' || rawBus === '') ? "Micro 1" : rawBus
                 if (!ordersByBus[bName]) {
                   ordersByBus[bName] = { trad: 0, veg: 0, vegan: 0, st: 0, total: 0 }
                 }
@@ -290,7 +326,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
               })
 
               detectedOnlineSales = {
-                storeTitle: matchedStore.title,
+                storeTitle: matchedStores[0]?.title || selectedCompany,
                 totalOrders: oOrders.length,
                 totalViandas: trad + veg + vegan + st,
                 trad, veg, vegan, stacc: st,
@@ -390,7 +426,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           // NO HAY CABECERA MANUAL GUARDADA
           setSavedHeaderId(null)
           if (detectedOnlineSales && detectedOnlineSales.totalViandas > 0) {
-            applyOnlineSalesToUnits(detectedOnlineSales)
+            applyOnlineSalesToUnits(detectedOnlineSales, assignedBuses)
           } else if (assignedBuses.length > 0) {
             setUnits(assignedBuses.map((ab, idx) => ({
               ...newUnit(`Micro ${idx + 1}`),
@@ -412,7 +448,6 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     fetchExistingSale()
     setPaxOverride(null)
   }, [selectedEventId, selectedCompany, clients])
-
   // --- Commercial Rule ---
   const activeRule = useMemo(() => {
     if (!selectedCompany) return null
@@ -425,18 +460,55 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     
     let rule = cRule ? { ...cRule } : null
 
-    // Fallback simplificado si no hay regla
+    // Fallback si no hay regla en commercial_rules pero existe cliente
     if (!rule && cRecord) {
       rule = {
         company_name: cRecord.name,
-        price_base: 0, // Indicará que no hay regla válida
-        noRuleFound: true
+        price_base: cRecord.vianda_price || 8500,
+        price_sintacc_base: cRecord.sintacc_price || cRecord.vianda_price || 8500,
+        price_sintacc_threshold: 10000,
+        sintacc_limit_pct: cRecord.sintacc_included_pct || 5,
+        free_unit_step: cRecord.free_unit_step || null,
+        coordinator_included: true,
+        driver_included: true,
+        includes_water: true,
+        noRuleFound: false
       }
+    }
+
+    if (rule) {
+      // Load custom tier config from localStorage if available
+      let customConfig: any = {}
+      if (typeof window !== 'undefined') {
+        try {
+          const raw = localStorage.getItem(`commercial_tier_config_${rule.id}`) || 
+                      localStorage.getItem(`commercial_tier_config_${selectedCompany.trim().toLowerCase()}`)
+          if (raw) customConfig = JSON.parse(raw)
+        } catch (e) {
+          console.error(e)
+        }
+      }
+
+      const isMayoristaDefault = Boolean(
+        selectedCompany?.toLowerCase().includes("rock") || 
+        selectedCompany?.toLowerCase().includes("terco") || 
+        cRecord?.sale_type?.toLowerCase() === 'mayorista'
+      )
+
+      rule.is_mayorista = customConfig.is_mayorista ?? isMayoristaDefault
+      rule.tier_10_enabled = customConfig.tier_10_enabled ?? rule.coordinator_included ?? true
+      rule.tier_10_water = customConfig.tier_10_water ?? false
+      rule.tier_30_enabled = customConfig.tier_30_enabled ?? rule.driver_included ?? true
+      rule.tier_50_enabled = customConfig.tier_50_enabled ?? rule.includes_water ?? true
+      rule.tier_70_enabled = customConfig.tier_70_enabled ?? true
+      rule.tier_70_bonus = customConfig.tier_70_bonus !== undefined ? Number(customConfig.tier_70_bonus) : 10000
+      rule.commission_per_unit = customConfig.commission_per_unit !== undefined ? Number(customConfig.commission_per_unit) : 1000
     }
 
     // Terco Tour NUNCA incluye agua
     if (rule && (selectedCompany.toLowerCase().includes("terco tour") || rule.company_name?.toLowerCase().includes("terco tour"))) {
       rule.includes_water = false
+      rule.tier_50_enabled = false
     }
 
     return rule
@@ -458,14 +530,26 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       }
 
       if (field === 'sold' || field === 'liberated') {
-        const isTerco = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
-        const isRV = selectedCompany?.toLowerCase().includes("rv traslados") || activeRule?.company_name?.toLowerCase().includes("rv traslados")
+        const isNoWater = selectedCompany?.toLowerCase().includes("terco") || (activeRule && activeRule.includes_water === false)
+        const isMayorista = Boolean(activeRule?.is_mayorista) || selectedCompany?.toLowerCase().includes("rock") || selectedCompany?.toLowerCase().includes("terco")
         const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
         const soldNum = Number(updated.sold) || 0
         const libNum = Number(updated.liberated) || 0
         const ocupationPct = pax > 0 ? (soldNum / pax) * 100 : 0
         
-        updated.water = isTerco ? 0 : ((isRV && ocupationPct < 50) ? soldNum : (soldNum + libNum))
+        if (isNoWater) {
+          updated.water = 0
+        } else if (isMayorista) {
+          updated.water = soldNum + libNum
+        } else {
+          // Minorista por escala
+          if (ocupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
+            updated.water = soldNum + libNum
+          } else {
+            const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && ocupationPct >= 10 && libNum > 0 ? 1 : 0
+            updated.water = soldNum + coordiWater
+          }
+        }
       }
       return updated
     }))
@@ -473,15 +557,29 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
   // Recalcular agua si cambia la regla o la ocupación
   useEffect(() => {
-    const isTerco = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
-    const isRV = selectedCompany?.toLowerCase().includes("rv traslados") || activeRule?.company_name?.toLowerCase().includes("rv traslados")
+    const isNoWater = selectedCompany?.toLowerCase().includes("terco") || (activeRule && activeRule.includes_water === false)
+    const isMayorista = Boolean(activeRule?.is_mayorista) || selectedCompany?.toLowerCase().includes("rock") || selectedCompany?.toLowerCase().includes("terco")
     const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
 
     setUnits(prev => prev.map(u => {
       const soldNum = Number(u.sold) || 0
       const libNum = Number(u.liberated) || 0
       const ocupationPct = pax > 0 ? (soldNum / pax) * 100 : 0
-      const expectedWater = isTerco ? 0 : ((isRV && ocupationPct < 50) ? soldNum : (soldNum + libNum))
+
+      let expectedWater = 0
+      if (isNoWater) {
+        expectedWater = 0
+      } else if (isMayorista) {
+        expectedWater = soldNum + libNum
+      } else {
+        // Minorista por escala
+        if (ocupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
+          expectedWater = soldNum + libNum
+        } else {
+          const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && ocupationPct >= 10 && libNum > 0 ? 1 : 0
+          expectedWater = soldNum + coordiWater
+        }
+      }
       
       if (u.water !== expectedWater) return { ...u, water: expectedWater }
       return u
@@ -511,6 +609,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     const isValBus = selectedCompany?.toLowerCase().includes("valbus") || activeRule?.company_name?.toLowerCase().includes("valbus")
     const isRockEnLasVenas = selectedCompany?.toLowerCase().includes("rock") || activeRule?.company_name?.toLowerCase().includes("rock")
     const isTercoTour = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
+    const isMayorista = Boolean(activeRule?.is_mayorista) || isRockEnLasVenas || isTercoTour
 
     const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
     const ocupationPct = pax > 0 ? (consolidated.sold / pax) * 100 : 0
@@ -518,18 +617,56 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     let CupoGratis = 0
     let SinTaccExcedentes = 0
     let SinTaccFacturables = 0
-    let price_base = Number(activeRule?.price_base || 7000)
-    let price_sintacc_effective = Number(activeRule?.price_sintacc_base || price_base)
-    let price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold || 10000)
+    let price_base = Number(activeRule?.price_base) || (isRVTraslados || isProximaEstacion ? 10000 : isValBus ? 8500 : isRockEnLasVenas ? 7000 : isTercoTour ? 6000 : 7000)
+    let price_sintacc_effective = Number(activeRule?.price_sintacc_base) || (isRVTraslados || isProximaEstacion ? 13000 : isValBus ? 10000 : price_base)
+    let price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold) || 10000
 
     let amount = 0
     let rvValidationErrors: string[] = []
 
-    if (isRVTraslados || isProximaEstacion) {
-      price_base = 10000
-      price_sintacc_effective = 13000
-      price_sintacc_threshold = 13000
+    // Dynamic scale settings from activeRule / localStorage
+    const tier10Enabled = activeRule?.tier_10_enabled ?? true
+    const tier10Water = Boolean(activeRule?.tier_10_water)
+    const tier30Enabled = activeRule?.tier_30_enabled ?? true
+    const tier50Enabled = activeRule?.tier_50_enabled ?? (!isTercoTour)
+    const tier70Enabled = activeRule?.tier_70_enabled ?? true
+    const tier70Bonus = activeRule?.tier_70_bonus !== undefined ? Number(activeRule.tier_70_bonus) : 10000
+    const commissionPerUnit = activeRule?.commission_per_unit !== undefined ? Number(activeRule.commission_per_unit) : 1000
+    const commissionAmount = (consolidated.sold * commissionPerUnit) + (tier70Enabled && ocupationPct >= 70 ? tier70Bonus : 0)
 
+    if (isMayorista) {
+      // MAYORISTA: Tripulación SIEMPRE liberada (1 a 3 por coche sin umbral de ocupación)
+      const commonViandas = consolidated.trad + consolidated.veg + consolidated.vegan
+
+      // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
+      if (consolidated.liberated > commonViandas) {
+        rvValidationErrors.push(
+          `Las viandas Sin TACC no pueden liberarse. Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
+        )
+      }
+
+      const totalUnitsCount = units.length
+      const maxLiberadasAllowed = totalUnitsCount * 3
+
+      if (consolidated.liberated > maxLiberadasAllowed) {
+        rvValidationErrors.push(
+          `Se liberan únicamente tripulación (máximo 3 por coche: ${maxLiberadasAllowed} para ${totalUnitsCount} coche(s)). Tenés ${consolidated.liberated} asignadas.`
+        )
+      }
+
+      // Cupo Sin TACC % de tolerancia:
+      SinTaccFacturables = consolidated.st
+      const limitPct = Number(activeRule?.sintacc_limit_pct || 5)
+      CupoGratis = Math.ceil(pax * (limitPct / 100))
+      SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
+      const sinTaccEnCupo = Math.min(SinTaccFacturables, CupoGratis)
+
+      const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
+      amount = (commonFacturables * price_base) + 
+               (sinTaccEnCupo * price_base) + 
+               (SinTaccExcedentes * price_sintacc_threshold)
+
+    } else if (isRVTraslados || isProximaEstacion) {
       const companyLabel = isProximaEstacion ? 'Próxima Estación' : 'RV Traslados'
 
       // 1. Common viandas (Trad + Veg + Vegan)
@@ -538,15 +675,15 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
       if (consolidated.liberated > commonViandas) {
         rvValidationErrors.push(
-          `En ${companyLabel} las viandas Sin TACC no pueden liberarse ($13.000 c/u). Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
+          `En ${companyLabel} las viandas Sin TACC no pueden liberarse ($${price_sintacc_effective.toLocaleString('es-AR')} c/u). Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
         )
       }
 
       // 2. Occupation scale limit:
       let maxLiberadasAllowed = 0
-      if (ocupationPct >= 30) {
+      if (tier30Enabled && ocupationPct >= 30) {
         maxLiberadasAllowed = 3
-      } else if (ocupationPct >= 10) {
+      } else if (tier10Enabled && ocupationPct >= 10) {
         maxLiberadasAllowed = 1
       }
 
@@ -564,23 +701,19 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       CupoGratis = 0
 
     } else if (isValBus) {
-      price_base = 8500
-      price_sintacc_effective = 10000
-      price_sintacc_threshold = 10000
-
       // 1. Common viandas (Trad + Veg + Vegan)
       const commonViandas = consolidated.trad + consolidated.veg + consolidated.vegan
 
       // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
       if (consolidated.liberated > commonViandas) {
         rvValidationErrors.push(
-          `En ValBus las viandas Sin TACC no pueden liberarse ($10.000 c/u). Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
+          `En ValBus las viandas Sin TACC no pueden liberarse ($${price_sintacc_effective.toLocaleString('es-AR')} c/u). Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
         )
       }
 
       // 2. Max 1 liberada per vehicle at >=10% occupation (no coordinators, driver only)
       const totalUnitsCount = units.length
-      const maxLiberadasAllowed = ocupationPct >= 10 ? totalUnitsCount : 0
+      const maxLiberadasAllowed = (tier10Enabled && ocupationPct >= 10) ? totalUnitsCount : 0
 
       if (consolidated.liberated > maxLiberadasAllowed) {
         if (ocupationPct < 10) {
@@ -600,47 +733,6 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       SinTaccFacturables = consolidated.st
       SinTaccExcedentes = 0
       CupoGratis = 0
-
-    } else if (isRockEnLasVenas || isTercoTour) {
-      const isRock = isRockEnLasVenas
-      price_base = isRock ? 7000 : 6000
-      price_sintacc_effective = price_base
-      price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold) > 0 ? Number(activeRule.price_sintacc_threshold) : 10000
-
-      const companyLabel = isRock ? 'Rock en las Venas' : 'Terco Tour'
-
-      // 1. Common viandas (Trad + Veg + Vegan)
-      const commonViandas = consolidated.trad + consolidated.veg + consolidated.vegan
-
-      // Check if liberadas exceeds common viandas (Sin TACC cannot be liberated!)
-      if (consolidated.liberated > commonViandas) {
-        rvValidationErrors.push(
-          `En ${companyLabel} las viandas Sin TACC no pueden liberarse. Tenés ${consolidated.liberated} liberadas pero solo ${commonViandas} viandas comunes (Trad/Veg/Vegan) para absorberlas.`
-        )
-      }
-
-      // 2. Liberaciones fijas de tripulación (1 a 3 por coche)
-      const totalUnitsCount = units.length
-      const maxLiberadasAllowed = totalUnitsCount * 3
-
-      if (consolidated.liberated > maxLiberadasAllowed) {
-        rvValidationErrors.push(
-          `En ${companyLabel} se liberan únicamente choferes y coordinadores (máximo 3 por coche: ${maxLiberadasAllowed} para ${totalUnitsCount} coche(s)). Tenés ${consolidated.liberated} asignadas.`
-        )
-      }
-
-      // 3. Cupo Sin TACC % de tolerancia:
-      // Sin TACC facturables = TOTAL de Sin TACC cargadas (nunca entran en liberados)
-      SinTaccFacturables = consolidated.st
-      const limitPct = Number(activeRule?.sintacc_limit_pct || 5)
-      CupoGratis = Math.ceil(pax * (limitPct / 100))
-      SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
-      const sinTaccEnCupo = Math.min(SinTaccFacturables, CupoGratis)
-
-      const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
-      amount = (commonFacturables * price_base) + 
-               (sinTaccEnCupo * price_base) + 
-               (SinTaccExcedentes * price_sintacc_threshold)
 
     } else {
       // Standard calculation for other companies
@@ -665,10 +757,19 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
     return {
       ...consolidated,
+      totalViandas: consolidated.sold + consolidated.liberated,
       CupoGratis,
       SinTaccExcedentes,
       SinTaccFacturables,
       amount,
+      commissionAmount,
+      commissionPerUnit,
+      tier10Enabled,
+      tier10Water,
+      tier30Enabled,
+      tier50Enabled,
+      tier70Enabled,
+      tier70Bonus,
       allValid,
       unitsValidity,
       price_base,
@@ -680,6 +781,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       isValBus,
       isRockEnLasVenas,
       isTercoTour,
+      isMayorista,
       pax,
       ocupationPct,
       rvValidationErrors
@@ -878,171 +980,107 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     }
   }
 
-  // --- PDF Print ---
-  const handlePrint = () => {
-    if (!selectedEvent) return
-    const venueName = selectedEvent.venues?.name || "S/D"
-    const dateStr = selectedEvent.event_date?.replace(/-/g, '') || "SinFecha"
-    const docFileTitle = `${dateStr} - ${venueName} - ${selectedCompany}`
+  // --- PDF Export Controller (Direct Instant Vector Download) ---
+  const [downloadingPdf, setDownloadingPdf] = useState<string | null>(null)
 
-    const printWindow = window.open('', '_blank')
-    if (!printWindow) return
+  const handlePrint = async (mode: any = 'all') => {
+    const selectedMode: 'all' | 'remito' | 'passengers' = (mode === 'remito' || mode === 'passengers') ? mode : 'all'
 
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>${docFileTitle}</title>
-          <style>
-            @page { margin: 10mm; }
-            body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 0; color: #000; line-height: 1.2; }
-            .page-break { page-break-after: always; padding: 20px; }
-            .page-break:last-child { page-break-after: auto; }
-            
-            .header-title { border-bottom: 4px solid #000; padding-bottom: 5px; margin-bottom: 15px; }
-            .header-title h1 { margin: 0; font-size: 26px; font-weight: 900; color: #000; text-transform: uppercase; letter-spacing: -1px; }
-            .header-title p { margin: 0; font-size: 18px; font-weight: 900; color: #1e40af; text-transform: uppercase; }
-            
-            .info-grid { 
-              display: grid; 
-              grid-template-columns: 1.2fr 1fr; 
-              gap: 12px; 
-              background: #f1f5f9; 
-              padding: 15px; 
-              border-radius: 12px; 
-              margin-bottom: 20px;
-              border: 2px solid #cbd5e1;
-            }
-            .info-item b { display: block; text-transform: uppercase; font-size: 10px; color: #475569; margin-bottom: 1px; font-weight: 900; }
-            .info-item span { font-weight: 900; font-size: 17px; color: #000; }
+    if (!selectedEvent) {
+      alert("Por favor selecciona un evento primero.")
+      return
+    }
 
-            .section-title { font-size: 14px; font-weight: 900; text-transform: uppercase; color: #000; border-bottom: 2px solid #000; padding-bottom: 4px; margin: 20px 0 10px 0; }
-            
-            .data-table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
-            .data-table th { background: #000; text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; color: #fff; }
-            .data-table td { padding: 10px 12px; font-size: 18px; font-weight: 900; border-bottom: 1px solid #cbd5e1; color: #000; }
-            .data-table .qty-cell { text-align: right; width: 100px; font-size: 22px; }
-            .total-row { background: #e2e8f0; color: #000; }
-            .total-row td { padding: 12px; font-size: 20px; font-weight: 900; border: 2px solid #000; }
-            .total-row .qty-cell { font-size: 28px; background: #000; color: #fff; }
+    setDownloadingPdf(selectedMode)
 
-            .obs-box { 
-              margin-top: 20px; 
-              border: 3px dashed #000; 
-              border-radius: 12px; 
-              padding: 15px; 
-              min-height: 60px;
-            }
-            .obs-box h4 { margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; color: #000; font-weight: 900; }
-            .obs-content { font-size: 16px; color: #000; font-weight: 800; font-style: italic; }
-            
-            .footer { margin-top: 20px; text-align: center; font-size: 10px; color: #64748b; border-top: 1px solid #cbd5e1; padding-top: 8px; font-weight: 700; }
-          </style>
-        </head>
-        <body>
-          ${units.map((u, idx) => {
-            const v = vehicles.find((v: any) => v.id === u.vehicle_id)
-            const c = coordinators.find((c: any) => c.id === u.coordinator_id)
-            const solidsTotal = (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
-            const liquidsTotal = Number(u.water) || 0
+    try {
+      // Fetch all paid online orders directly from database for absolute certainty
+      let onlineOrdersList: any[] = []
+      if (selectedEventId && selectedCompany) {
+        try {
+          const { data: stores } = await supabase
+            .from('online_store_events')
+            .select('id, title, slug')
+            .eq('event_master_id', selectedEventId)
 
-            return `
-              <div class="page-break">
-                <div class="header-title">
-                  <h1>Remito de Descarga por Empresa</h1>
-                  <p>Unidad: ${u.name}</p>
-                </div>
+          const cleanSelected = (selectedCompany || '').toLowerCase().trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+          const matchedStores = (stores || []).filter(s => {
+            const sTitle = (s.title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            const sSlug = (s.slug || '').toLowerCase()
+            const sClean = cleanSelected.replace(/[^a-z0-9]/g, '')
+            const sSlugComp = cleanSelected.replace(/\s+/g, '-')
+            return sTitle.includes(cleanSelected) || sSlug.includes(sSlugComp) || (sClean && sSlug.includes(sClean))
+          })
 
-                <div class="info-grid">
-                  <div class="info-item"><b>Empresa de Transporte</b><span>${selectedCompany}</span></div>
-                  <div class="info-item"><b>Evento / Show</b><span>${selectedEvent.show_name}</span></div>
-                  <div class="info-item"><b>Vehículo / Patente</b><span>${v?.internal_name || 'S/D'} ${v?.plate ? `(${v.plate})` : ''}</span></div>
-                  <div class="info-item"><b>Fecha</b><span>${new Date(selectedEvent.event_date + 'T12:00:00').toLocaleDateString('es-AR')}</span></div>
-                  <div class="info-item"><b>Coordinador / Responsable</b><span>${c?.name || 'S/D'}</span></div>
-                  <div class="info-item"><b>Horario de Descarga</b><span>${deliveryTime || 'S/D'}</span></div>
-                  <div class="info-item"><b>Teléfono Coordinador</b><span>${c?.phone || 'S/D'}</span></div>
-                  <div class="info-item"><b>Punto de Entrega / Venue</b><span>${venueName} - ${deliveryPoint || 'S/D'}</span></div>
-                </div>
+          const storeIds = matchedStores.map(s => s.id)
+          if (storeIds.length > 0) {
+            const { data: oOrders } = await supabase
+              .from('online_orders')
+              .select('*, online_customers(*)')
+              .in('store_event_id', storeIds)
+              .eq('status', 'paid')
+              .order('created_at', { ascending: true })
 
-                <div class="section-title">1. Detalle de Viandas (Sólidos)</div>
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>Tipo de Menú</th>
-                      <th class="qty-cell">Cantidad</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr><td>Menú Tradicional</td><td class="qty-cell">${u.traditional || 0}</td></tr>
-                    <tr><td>Menú Vegetariano</td><td class="qty-cell">${u.vegetarian || 0}</td></tr>
-                    <tr><td>Menú Vegano</td><td class="qty-cell">${u.vegana || 0}</td></tr>
-                    <tr><td>Menú Sin TACC</td><td class="qty-cell">${u.sin_tacc || 0}</td></tr>
-                    <tr class="total-row">
-                      <td>TOTAL SANDWICHES</td>
-                      <td class="qty-cell">${solidsTotal}</td>
-                    </tr>
-                  </tbody>
-                </table>
+            if (oOrders) onlineOrdersList = oOrders
+          }
+        } catch (e) {
+          console.error("Error fetching online orders for PDF:", e)
+        }
+      }
 
-                <div class="section-title">2. Detalle de Bebidas (Líquidos)</div>
-                <table class="data-table">
-                  <thead>
-                    <tr>
-                      <th>Tipo de Bebida</th>
-                      <th class="qty-cell">Cantidad</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr><td>Agua Sin Gas (500ml)</td><td class="qty-cell">${u.water || 0}</td></tr>
-                    <tr class="total-row">
-                      <td>TOTAL BEBIDAS</td>
-                      <td class="qty-cell">${liquidsTotal}</td>
-                    </tr>
-                  </tbody>
-                </table>
+      if (selectedMode === 'passengers' && onlineOrdersList.length === 0) {
+        alert(`No se encontraron pedidos online pagados para ${selectedCompany} en este evento.`)
+        setDownloadingPdf(null)
+        return
+      }
 
-                <div class="obs-box">
-                  <h4>Observaciones Operativas</h4>
-                  <div class="obs-content">
-                    ${u.observations || 'Sin observaciones...'}
-                    ${u.details && u.details.length > 0 ? `
-                      <div style="margin-top: 8px; font-size: 11px; font-style: normal;">
-                        ${u.details.filter((d:any) => d.qty > 0).map((d:any) => `<div>• ${d.qty}x ${d.category} - ${d.obs}</div>`).join('')}
-                      </div>
-                    ` : ''}
-                  </div>
-                </div>
-
-                <div class="footer">
-                  Página ${idx + 1} de ${units.length} | Generado por Super Catering Manager — ${new Date().toLocaleString('es-AR')}
-                </div>
-              </div>
-            `
-          }).join('')}
-
-          <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
-          <script>
-            window.onload = function() {
-              var element = document.body;
-              var opt = {
-                margin:       0,
-                filename:     '${docFileTitle}.pdf',
-                image:        { type: 'jpeg', quality: 0.98 },
-                html2canvas:  { scale: 2 },
-                jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
-              };
-              html2pdf().set(opt).from(element).save();
-            };
-          </script>
-        </body>
-      </html>
-    `)
-    printWindow.document.close()
+      // Generate and trigger direct instant browser download!
+      generateAndDownloadSalesPdf({
+        mode: selectedMode,
+        selectedEvent,
+        selectedCompany,
+        deliveryTime,
+        deliveryPoint,
+        units,
+        vehicles,
+        coordinators,
+        onlineOrders: onlineOrdersList
+      })
+    } catch (err: any) {
+      console.error("Error generating PDF:", err)
+      alert("Error al generar PDF: " + (err.message || 'Error desconocido'))
+    } finally {
+      setDownloadingPdf(null)
+    }
   }
 
-
-  // --- Render ---
   return (
     <div className="flex flex-col gap-8 pb-32">
+
+      {/* BANNER DE IMPORTACIÓN DESDE TIENDA ONLINE */}
+      {onlineSalesData && (
+        <div id="online-sales-import-banner" className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 text-white rounded-[2rem] p-6 shadow-lg shadow-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in slide-in-from-top-2">
+          <div className="space-y-1">
+            <span className="text-[10px] font-black uppercase tracking-[0.2em] bg-white/20 px-2.5 py-0.5 rounded-md">
+              🛒 Tienda Online Detectada
+            </span>
+            <h3 className="text-xl font-black uppercase tracking-tight">
+              {onlineSalesData.totalOrders} Pedidos Pagados ({onlineSalesData.totalViandas} Viandas Totales)
+            </h3>
+            <p className="text-xs font-semibold text-white/90">
+              Desglose: 🥪 {onlineSalesData.trad} Tradicionales | 🥗 {onlineSalesData.veg} Veg | 🌾 {onlineSalesData.stacc} Sin TACC | 🌱 {onlineSalesData.vegan} Veganas
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => applyOnlineSalesToUnits(onlineSalesData)}
+            className="px-5 py-3 bg-white hover:bg-slate-50 text-amber-900 rounded-2xl text-xs font-black uppercase tracking-wider shadow-md transition active:scale-95 cursor-pointer shrink-0 flex items-center gap-2"
+          >
+            <span>⚡ Importar / Cargar a Unidades</span>
+          </button>
+        </div>
+      )}
 
       {/* SECTION 1: EVENTO + EMPRESA */}
       <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200">
@@ -1169,15 +1207,17 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
               <p className="text-[9px] font-bold text-slate-400 uppercase">Venue</p>
               <p className="text-sm font-bold text-slate-700">{selectedEvent.venues?.name || "S/D"}</p>
             </div>
-            <div>
-              <p className="text-[9px] font-bold text-slate-400 uppercase">Precio Sin TACC</p>
-              <p className="text-sm font-bold text-slate-700 flex items-center gap-1">
-                {totals?.price_sintacc_effective ? `$${Number(totals.price_sintacc_effective).toLocaleString('es-AR')}` : '—'}
-                {totals?.hasSpecialSinTaccPrice && (
-                  <span className="text-[8px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold uppercase">especial</span>
-                )}
-              </p>
-            </div>
+            {userRole !== 'cocina' && (
+              <div>
+                <p className="text-[9px] font-bold text-slate-400 uppercase">Precio Sin TACC</p>
+                <p className="text-sm font-bold text-slate-700 flex items-center gap-1">
+                  {totals?.price_sintacc_effective ? `$${Number(totals.price_sintacc_effective).toLocaleString('es-AR')}` : '—'}
+                  {totals?.hasSpecialSinTaccPrice && (
+                    <span className="text-[8px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded font-bold uppercase">especial</span>
+                  )}
+                </p>
+              </div>
+            )}
           </div>
         )}
 
@@ -1321,9 +1361,11 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                               value={(u as any)[key]}
                               onChange={e => updateUnit(u.id, key as any, parseInt(e.target.value.replace(/\D/g, '')) || 0)}
                               onFocus={e => e.target.select()} />
-                            <p className="text-[8px] font-bold text-slate-400 text-center uppercase tracking-tighter">
-                               ${Number(price || 0).toLocaleString('es-AR')} c/u
-                            </p>
+                            {userRole !== 'cocina' && (
+                              <p className="text-[8px] font-bold text-slate-400 text-center uppercase tracking-tighter">
+                                 ${Number(price || 0).toLocaleString('es-AR')} c/u
+                              </p>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -1437,14 +1479,18 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
               <div className="flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex items-center gap-6">
                   <div>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">Total a Liquidar</p>
-                    <p className="text-3xl font-bold text-slate-900">${totals?.amount.toLocaleString("es-AR")}</p>
+                    <p className="text-[10px] font-bold text-slate-400 uppercase mb-1">
+                      {userRole === 'cocina' ? 'Total Viandas' : 'Total a Liquidar'}
+                    </p>
+                    <p className="text-3xl font-bold text-slate-900">
+                      {userRole === 'cocina' ? `${totals?.totalViandas || 0} u.` : `$${totals?.amount.toLocaleString("es-AR")}`}
+                    </p>
                   </div>
                   <div className="h-10 w-px bg-slate-200 hidden md:block" />
                   <div>
                     <span className={`text-xs font-bold flex items-center gap-2 ${totals?.allValid ? 'text-emerald-600' : 'text-rose-500'}`}>
                       {totals?.allValid ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                      {totals?.allValid ? 'Datos Validados' : (totals?.rvValidationErrors?.length ? 'Bloqueo Regla RV' : 'Error en Distribución')}
+                      {totals?.allValid ? 'Datos Validados' : (totals?.rvValidationErrors?.length ? 'Bloqueo Regla Comercial' : 'Error en Distribución')}
                     </span>
                     <p className="text-[10px] text-slate-400">
                       {totals?.allValid ? 'Listo para persistir' : 'Revisá las advertencias rojas arriba'}
@@ -1458,9 +1504,16 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                        <Trash2 size={16} /> ELIMINAR CARGA
                      </button>
                   )}
-                  <button onClick={handlePrint}
-                    className="px-5 py-2.5 border border-slate-200 bg-white rounded-xl text-slate-600 font-bold hover:bg-slate-50 transition flex items-center justify-center text-sm shadow-sm gap-2">
-                    <Printer size={16} /> REMITO PDF
+                  {/* BOTÓN DE DESCARGA DIRECTA PACK COMPLETO PDF */}
+                  <button 
+                    type="button"
+                    onClick={() => handlePrint('all')}
+                    disabled={downloadingPdf !== null}
+                    className="px-5 py-3 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl transition flex items-center justify-center text-xs uppercase tracking-wider shadow-md gap-2 cursor-pointer active:scale-95 disabled:opacity-50"
+                    title="Descargar directamente el Pack Completo (Remito + Planilla de Pasajeros) en PDF"
+                  >
+                    {downloadingPdf ? <Loader2 size={16} className="animate-spin text-white" /> : <Printer size={16} />}
+                    <span>{downloadingPdf ? 'Generando PDF...' : 'Pack Completo PDF'}</span>
                   </button>
                   <button onClick={saveAll} disabled={!totals?.allValid || loading}
                     className={`px-8 py-3 rounded-xl font-black text-sm transition-all flex items-center justify-center gap-2 shadow-lg ${totals?.allValid ? 'bg-emerald-600 text-white hover:bg-emerald-500 hover:shadow-emerald-600/30 hover:-translate-y-0.5' : 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'}`}>
@@ -1477,7 +1530,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             <div className="bg-[#1e293b] text-white p-8 rounded-[3rem] shadow-2xl space-y-6">
               <div className="flex items-center gap-3 border-b border-white/10 pb-4">
                 <Calculator className="text-indigo-400" />
-                <h2 className="text-xl font-bold">Liquidación Global</h2>
+                <h2 className="text-xl font-bold">{userRole === 'cocina' ? 'Resumen de Viandas' : 'Liquidación Global'}</h2>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
@@ -1491,176 +1544,166 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                 </div>
               </div>
 
-              {totals?.isRVTraslados ? (
-                <div className="bg-indigo-950/60 p-5 rounded-2xl border border-indigo-500/30 space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                    <span className="text-indigo-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas RV Traslados</span>
-                    <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Minorista</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Ocupación Pax</span>
-                    <span className="font-bold text-white">{totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Máx. Liberadas permitidas</span>
-                    <span className="font-bold text-emerald-400">
-                      {totals.ocupationPct >= 30 ? '3 viandas (≥30%)' : totals.ocupationPct >= 10 ? '1 vianda (≥10%)' : '0 viandas (<10%)'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Sin TACC (Fija $13.000)</span>
-                    <span className="font-bold text-amber-300">{totals.st} un. (${(totals.st * 13000).toLocaleString('es-AR')})</span>
-                  </div>
-                  <div className="flex justify-between border-t border-white/10 pt-2">
-                    <span className="text-white/60">Comisión Coordinador</span>
-                    <span className="font-bold text-sky-300">
-                      ${((totals.sold * 1000) + (totals.ocupationPct >= 70 ? 10000 : 0)).toLocaleString('es-AR')}
-                      {totals.ocupationPct >= 70 && <span className="text-[9px] text-emerald-400 block font-normal">(+$10.000 Bonus ≥70%)</span>}
-                    </span>
-                  </div>
-                </div>
-              ) : totals?.isValBus ? (
-                <div className="bg-emerald-950/60 p-5 rounded-2xl border border-emerald-500/30 space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                    <span className="text-emerald-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas ValBus</span>
-                    <span className="bg-emerald-500/20 text-emerald-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Minorista</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Ocupación Pax</span>
-                    <span className="font-bold text-white">{totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Máx. Liberadas (1/coche)</span>
-                    <span className="font-bold text-emerald-400">
-                      {totals.ocupationPct >= 10 ? `${units.length} vianda(s) (≥10%)` : '0 viandas (<10%)'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Precios Base / Sin TACC</span>
-                    <span className="font-bold text-white">$8.500 / $10.000</span>
-                  </div>
-                  <div className="flex justify-between border-t border-white/10 pt-2">
-                    <span className="text-white/60">Coordinador / Comisión</span>
-                    <span className="font-bold text-slate-400">Sin Coordi ($0)</span>
-                  </div>
-                </div>
-              ) : totals?.isProximaEstacion ? (
-                <div className="bg-sky-950/60 p-5 rounded-2xl border border-sky-500/30 space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                    <span className="text-sky-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas Próxima Estación</span>
-                    <span className="bg-sky-500/20 text-sky-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Combo</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Ocupación Pax</span>
-                    <span className="font-bold text-white">{totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Máx. Liberadas permitidas</span>
-                    <span className="font-bold text-emerald-400">
-                      {totals.ocupationPct >= 30 ? '3 viandas (≥30%)' : totals.ocupationPct >= 10 ? '1 vianda (≥10%)' : '0 viandas (<10%)'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Sin TACC (Fija $13.000)</span>
-                    <span className="font-bold text-amber-300">{totals.st} un. (${(totals.st * 13000).toLocaleString('es-AR')})</span>
-                  </div>
-                  <div className="flex justify-between border-t border-white/10 pt-2">
-                    <span className="text-white/60">Comisión Empresa</span>
-                    <span className="font-bold text-sky-300">
-                      ${(totals.sold * 1000).toLocaleString('es-AR')} ($1.000 c/u)
-                    </span>
-                  </div>
-                </div>
-              ) : totals?.isRockEnLasVenas ? (
-                <div className="bg-purple-950/60 p-5 rounded-2xl border border-purple-500/30 space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                    <span className="text-purple-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas Rock en las Venas</span>
-                    <span className="bg-purple-500/20 text-purple-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Mayorista</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Precio Vianda (Combo)</span>
-                    <span className="font-bold text-emerald-400">$7.000 (Incluye agua)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Liberaciones Tripulación</span>
-                    <span className="font-bold text-white">Chofer/es + Coordi (1-3/coche)</span>
-                  </div>
-                  <div className="flex justify-between border-t border-white/10 pt-2">
-                    <span className="text-white/60">Cupo libre ({activeRule?.sintacc_limit_pct || 5}% de {totals.pax})</span>
-                    <span className="font-bold text-emerald-400">{totals.CupoGratis} un.</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60 italic">Facturables / Excedentes</span>
-                    <span className="font-bold text-rose-400">{totals.SinTaccFacturables} / {totals.SinTaccExcedentes} un.</span>
-                  </div>
-                  {totals.SinTaccExcedentes > 0 && (
-                    <div className="flex justify-between text-amber-300 font-bold border-t border-white/10 pt-1.5">
-                      <span>Excedente Sin TACC ($10.000 c/u)</span>
-                      <span>+${(totals.SinTaccExcedentes * totals.price_sintacc_threshold).toLocaleString('es-AR')}</span>
-                    </div>
-                  )}
-                </div>
-              ) : totals?.isTercoTour ? (
-                <div className="bg-amber-950/60 p-5 rounded-2xl border border-amber-500/30 space-y-2.5 text-xs">
-                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                    <span className="text-amber-300 font-extrabold uppercase text-[9px] tracking-widest">Reglas Terco Tour</span>
-                    <span className="bg-amber-500/20 text-amber-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Mayorista</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Precio Vianda (Solo vianda)</span>
-                    <span className="font-bold text-amber-400">$6.000 (Sin agua)</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Liberaciones Tripulación</span>
-                    <span className="font-bold text-white">Chofer/es + Coordi (1-3/coche)</span>
-                  </div>
-                  <div className="flex justify-between border-t border-white/10 pt-2">
-                    <span className="text-white/60">Cupo libre ({activeRule?.sintacc_limit_pct || 5}% de {totals.pax})</span>
-                    <span className="font-bold text-emerald-400">{totals.CupoGratis} un.</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60 italic">Facturables / Excedentes</span>
-                    <span className="font-bold text-rose-400">{totals.SinTaccFacturables} / {totals.SinTaccExcedentes} un.</span>
-                  </div>
-                  {totals.SinTaccExcedentes > 0 && (
-                    <div className="flex justify-between text-amber-300 font-bold border-t border-white/10 pt-1.5">
-                      <span>Excedente Sin TACC ($10.000 c/u)</span>
-                      <span>+${(totals.SinTaccExcedentes * totals.price_sintacc_threshold).toLocaleString('es-AR')}</span>
-                    </div>
-                  )}
-                </div>
-              ) : activeRule ? (
-                <div className="bg-white/5 p-5 rounded-2xl border border-white/10 space-y-2 text-xs">
-                  <div className="flex justify-between items-center pb-2 border-b border-white/10">
-                    <span className="text-white/60 font-bold uppercase text-[9px] tracking-widest">Detalle Sin TACC</span>
-                    {totals?.hasSpecialSinTaccPrice && (
-                      <span className="bg-purple-500/30 text-purple-300 text-[8px] font-bold px-2 py-0.5 rounded uppercase">Precio especial</span>
-                    )}
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Precio aplicado (c/u)</span>
-                    <span className="font-bold text-white">${Number(totals?.price_sintacc_effective || 0).toLocaleString('es-AR')}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60">Cupo libre ({activeRule.sintacc_limit_pct}% de {totals.pax})</span>
-                    <span className="font-bold text-emerald-400">{totals?.CupoGratis} un.</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-white/60 italic">Facturables / Excedentes</span>
-                    <span className="font-bold text-rose-400">{totals?.SinTaccFacturables} / {totals?.SinTaccExcedentes} un.</span>
-                  </div>
-                </div>
-              ) : null}
+              {userRole !== 'cocina' && (
+                <>
+                  {activeRule ? (
+                    <div className="bg-indigo-950/70 p-5 rounded-2xl border border-indigo-500/30 space-y-3 text-xs">
+                      <div className="flex justify-between items-center pb-2 border-b border-white/10">
+                        <span className="text-indigo-300 font-extrabold uppercase text-[9px] tracking-widest">
+                          {activeRule.company_name || selectedCompany}
+                        </span>
+                        <span className={`text-[8px] font-bold px-2 py-0.5 rounded uppercase ${
+                          totals.isMayorista ? 'bg-purple-500/30 text-purple-300' : 'bg-emerald-500/20 text-emerald-300'
+                        }`}>
+                          {totals.isMayorista ? 'Mayorista' : 'Minorista'}
+                        </span>
+                      </div>
 
-              <div className="pt-4 border-t border-white/10 text-center">
-                <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Monto Total</p>
-                <p className="text-6xl font-bold tracking-tighter text-white">
-                  ${totals?.amount.toLocaleString("es-AR")}
-                </p>
-              </div>
+                      {/* Ocupación */}
+                      <div className="flex justify-between">
+                        <span className="text-white/60">Ocupación Pax</span>
+                        <span className="font-bold text-white">
+                          {totals.ocupationPct.toFixed(1)}% ({totals.sold} / {totals.pax})
+                        </span>
+                      </div>
+
+                      {/* Escala de Liberados & Bonificaciones */}
+                      <div className="bg-black/30 p-2.5 rounded-xl space-y-1.5 border border-white/5">
+                        <div className="text-[9px] font-black uppercase text-indigo-400 tracking-wider mb-1">
+                          {totals.isMayorista ? 'Régimen Mayorista' : 'Escala Comercial Alcanzada'}
+                        </div>
+
+                        {totals.isMayorista ? (
+                          <div className="space-y-1.5 text-[10px]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                ✓ Tripulación:
+                              </span>
+                              <span className="font-bold text-emerald-400">
+                                SIEMPRE LIBERADA
+                              </span>
+                            </div>
+                            <p className="text-[9px] text-white/50">Hasta 3 viandas (choferes + coordis) por coche incluidas.</p>
+                            
+                            <div className="flex justify-between items-center pt-1 border-t border-white/5">
+                              <span className="text-white/70">Cupo Sin TACC ({activeRule.sintacc_limit_pct || 5}%):</span>
+                              <span className="font-bold text-white">{totals.CupoGratis} un.</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            {/* 10% Venta */}
+                            {totals.tier10Enabled && (
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-white/70 flex items-center gap-1">
+                                  {totals.ocupationPct >= 10 ? (
+                                    <span className="text-emerald-400 font-bold">✓ 10% Venta:</span>
+                                  ) : (
+                                    <span className="text-white/40">○ 10% Venta:</span>
+                                  )}
+                                  <span>Libera Coordi ({totals.tier10Water ? 'Vianda + Agua' : 'Solo Vianda'})</span>
+                                </span>
+                                <span className={`font-bold ${totals.ocupationPct >= 10 ? 'text-emerald-400' : 'text-white/40'}`}>
+                                  {totals.ocupationPct >= 10 ? '1 vianda' : 'Bloqueado'}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* 30% Venta */}
+                            {totals.tier30Enabled && (
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-white/70 flex items-center gap-1">
+                                  {totals.ocupationPct >= 30 ? (
+                                    <span className="text-emerald-400 font-bold">✓ 30% Venta:</span>
+                                  ) : (
+                                    <span className="text-white/40">○ 30% Venta:</span>
+                                  )}
+                                  <span>Libera Chofer/es</span>
+                                </span>
+                                <span className={`font-bold ${totals.ocupationPct >= 30 ? 'text-emerald-400' : 'text-white/40'}`}>
+                                  {totals.ocupationPct >= 30 ? '1-2 viandas' : 'Bloqueado'}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* 50% Venta */}
+                            {totals.tier50Enabled && (
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-white/70 flex items-center gap-1">
+                                  {totals.ocupationPct >= 50 ? (
+                                    <span className="text-blue-400 font-bold">✓ 50% Venta:</span>
+                                  ) : (
+                                    <span className="text-white/40">○ 50% Venta:</span>
+                                  )}
+                                  <span>Aguas Bonificadas</span>
+                                </span>
+                                <span className={`font-bold ${totals.ocupationPct >= 50 ? 'text-blue-400' : 'text-white/40'}`}>
+                                  {totals.ocupationPct >= 50 ? '100% Gratis' : 'Solo Vendidas'}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* 70% Venta */}
+                            {totals.tier70Enabled && (
+                              <div className="flex justify-between items-center text-[10px]">
+                                <span className="text-white/70 flex items-center gap-1">
+                                  {totals.ocupationPct >= 70 ? (
+                                    <span className="text-amber-400 font-bold">✓ 70% Venta:</span>
+                                  ) : (
+                                    <span className="text-white/40">○ 70% Venta:</span>
+                                  )}
+                                  <span>Bono Extra Alto Rend.</span>
+                                </span>
+                                <span className={`font-bold ${totals.ocupationPct >= 70 ? 'text-amber-300' : 'text-white/40'}`}>
+                                  {totals.ocupationPct >= 70 ? `+$${(totals.tier70Bonus || 10000).toLocaleString('es-AR')}` : 'Sin Bono'}
+                                </span>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Sin TACC Detalle */}
+                      <div className="flex justify-between text-amber-300">
+                        <span className="text-white/60">Sin TACC ($/un)</span>
+                        <span className="font-bold">${Number(totals.price_sintacc_effective).toLocaleString('es-AR')}</span>
+                      </div>
+
+                      {/* Comisiones */}
+                      <div className="flex justify-between border-t border-white/10 pt-2">
+                        <span className="text-white/60">Comisión Total</span>
+                        <div className="text-right">
+                          <span className="font-bold text-sky-300 text-sm">
+                            ${totals.commissionAmount.toLocaleString('es-AR')}
+                          </span>
+                          <span className="text-[9px] text-white/50 block font-normal">
+                            (${totals.commissionPerUnit.toLocaleString('es-AR')} / vianda vendida)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              )}
+
+              {userRole === 'cocina' ? (
+                <div className="pt-4 border-t border-white/10 text-center">
+                  <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Total Viandas a Producir</p>
+                  <p className="text-6xl font-bold tracking-tighter text-emerald-400">
+                    {totals?.totalViandas || 0}
+                  </p>
+                  <p className="text-[10px] text-slate-400 font-bold uppercase mt-1">Unidades Totales</p>
+                </div>
+              ) : (
+                <div className="pt-4 border-t border-white/10 text-center">
+                  <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest mb-2">Monto Total</p>
+                  <p className="text-6xl font-bold tracking-tighter text-white">
+                    ${totals?.amount.toLocaleString("es-AR")}
+                  </p>
+                </div>
+              )}
             </div>
 
-            {/* Kitchen Summary */}
             <div className="bg-indigo-50 p-6 rounded-[2rem] border border-indigo-100 space-y-4">
               <h4 className="text-xs font-bold text-indigo-400 uppercase tracking-widest border-b border-indigo-200 pb-3">Resumen Cocina</h4>
               <div className="space-y-2">
@@ -1684,7 +1727,6 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           </div>
         </div>
       )}
-
       {/* Empty State */}
       {(!selectedEventId || !selectedCompany) && (
         <div className="text-center py-24 bg-slate-50 rounded-[4rem] border-4 border-dashed border-slate-200">

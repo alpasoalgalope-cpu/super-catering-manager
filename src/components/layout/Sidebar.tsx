@@ -39,8 +39,10 @@ import {
   PieChart,
   ShieldCheck,
   Sliders,
-  Utensils
+  Utensils,
+  PanelLeftClose
 } from "lucide-react"
+import { useSidebar } from "./SidebarContext"
 
 const sections = [
   {
@@ -131,6 +133,7 @@ export default function Sidebar() {
   const [role, setRole] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
+  const { isOpen, toggleSidebar } = useSidebar()
 
   useEffect(() => {
     async function loadRole() {
@@ -177,9 +180,14 @@ export default function Sidebar() {
         const restricted = [
           '/crm', '/clients', '/coordinadores', '/buses', 
           '/settings/reglas-precios', '/reglas-liberados', '/informes',
-          '/settings', '/vehicle-defaults', '/inventario/recetas',
+          '/vehicle-defaults', '/inventario/recetas',
           '/rrhh', '/finanzas/tesoreria', '/finanzas/categorias', '/informes/financieros'
         ]
+        // Allow Gestión de Eventos, Ventas por Evento y Ventas Online for cocina
+        if (item.href === '/settings/eventos') return true
+        if (item.href === '/ventas-evento') return true
+        if (item.href === '/ventas-online') return true
+        if (item.href === '/settings') return false
         return !restricted.includes(item.href)
       })
       if (allowedItems.length === 0) return null
@@ -203,22 +211,31 @@ export default function Sidebar() {
   }).filter(s => s !== null) as typeof sections
 
   return (
-    <aside className="w-64 h-screen bg-[#0f172a] border-r border-slate-800/50 flex flex-col shadow-2xl z-20 flex-shrink-0 overflow-hidden">
+    <aside className={`h-screen bg-[#0f172a] border-r border-slate-800/50 flex flex-col shadow-2xl z-30 flex-shrink-0 transition-all duration-300 ease-in-out ${
+      isOpen ? "w-64 opacity-100" : "w-0 opacity-0 pointer-events-none -translate-x-full overflow-hidden"
+    }`}>
       {/* Top Logo Button - Always redirects to Home */}
-      <div className="p-6 pb-4 flex-shrink-0 border-b border-slate-800/60">
-        <Link href="/" className="flex items-center gap-3 group cursor-pointer" title="Ir al Inicio">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:bg-indigo-500 group-hover:scale-105 transition-all">
+      <div className="p-6 pb-4 flex-shrink-0 border-b border-slate-800/60 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-3 group cursor-pointer min-w-0" title="Ir al Inicio">
+          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-500/20 group-hover:bg-indigo-500 group-hover:scale-105 transition-all shrink-0">
             <Warehouse className="text-white" size={20} />
           </div>
-          <div>
-            <h2 className="text-white font-black text-lg tracking-tighter uppercase italic leading-tight group-hover:text-indigo-400 transition-colors">
+          <div className="truncate">
+            <h2 className="text-white font-black text-lg tracking-tighter uppercase italic leading-tight group-hover:text-indigo-400 transition-colors truncate">
               Super Catering
             </h2>
-            <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-[0.2em]">
+            <p className="text-[10px] font-bold text-indigo-400 uppercase tracking-[0.2em] truncate">
               Management System
             </p>
           </div>
         </Link>
+        <button
+          onClick={toggleSidebar}
+          className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800/80 rounded-lg transition cursor-pointer shrink-0 ml-1"
+          title="Ocultar menú lateral"
+        >
+          <PanelLeftClose size={18} />
+        </button>
       </div>
 
       {/* Nav List */}

@@ -70,7 +70,7 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
     if (!selectedReceta?.receta_insumos) return 0
     return selectedReceta.receta_insumos.reduce((acc, insumo) => {
       const prod = productos.find(p => p.id === insumo.producto_id)
-      const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0]
+      const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha_desde || b.created_at || b.fecha || 0).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha || 0).getTime())[0]
       const costPerBase = latestPrice?.costo_unidad_base || 0
       return acc + (insumo.cantidad_necesaria * costPerBase)
     }, 0)
@@ -96,7 +96,7 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
     
     const existing = (receta.receta_insumos || []).map(i => {
       const prod = productos.find(p => p.id === i.producto_id)
-      const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0]
+      const latestPrice = prod?.precios_historicos?.sort((a,b) => new Date(b.fecha_desde || b.created_at || b.fecha || 0).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha || 0).getTime())[0]
       return {
         tempId: i.id,
         producto_id: i.producto_id,
@@ -166,7 +166,7 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
   }
 
   const handleSelectProduct = (tempId: string, prod: Producto) => {
-    const latestPrice = prod.precios_historicos?.sort((a,b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime())[0]
+    const latestPrice = prod.precios_historicos?.sort((a,b) => new Date(b.fecha_desde || b.created_at || b.fecha || 0).getTime() - new Date(a.fecha_desde || a.created_at || a.fecha || 0).getTime())[0]
     updateRow(tempId, {
       producto_id: prod.id,
       nombre: prod.nombre,

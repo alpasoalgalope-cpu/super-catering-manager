@@ -56,17 +56,22 @@ export async function middleware(request: NextRequest) {
     }
 
     if (role === 'cocina') {
+      const isSettingsEventos = request.nextUrl.pathname.startsWith('/settings/eventos')
+      
       const restrictedPaths = [
         '/informes',
         '/clients',
         '/coordinadores',
         '/crm',
-        '/settings',
+        '/settings/reglas-precios',
         '/reglas-liberados',
-        '/buses'
+        '/buses',
+        '/finanzas',
+        '/rrhh'
       ]
       
-      const isRestricted = restrictedPaths.some(path => request.nextUrl.pathname.startsWith(path))
+      const isRestricted = (restrictedPaths.some(path => request.nextUrl.pathname.startsWith(path)) || 
+        (request.nextUrl.pathname.startsWith('/settings') && !isSettingsEventos))
       
       if (isRestricted) {
         // Redirect to a safe page for cocina
@@ -80,13 +85,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * Feel free to modify this pattern to include more paths.
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

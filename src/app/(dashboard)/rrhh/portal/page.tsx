@@ -1,6 +1,7 @@
 "use client"
 
 import React, { useState, useEffect } from "react"
+import Link from "next/link"
 import { 
   getEmployeeProfileByIdAction, 
   getAttendanceReportAction, 
@@ -9,17 +10,22 @@ import {
   getEmployeeRecibosAction, 
   getEmployeeExtrasAction, 
   solicitarVacacionesAction,
+  subirDocumentoLegajoAction,
+  getEmployeeLegajosAction,
+  crearIncidenciaAction,
   EmployeeProfile, 
   DailyAttendance, 
   VacacionesSaldo, 
   VacacionesSolicitud, 
   ReciboSueldo, 
   ValeAdelanto, 
-  EntregaUniforme 
+  EntregaUniforme,
+  LegajoDocumento
 } from "@/app/actions/rrhh"
 import { 
   CalendarDays, Download, Calendar, ShieldAlert, Award, FileSpreadsheet, 
-  CreditCard, Shirt, AlertCircle, Loader2, ArrowRight
+  CreditCard, Shirt, AlertCircle, Loader2, ArrowRight, UserCheck, Users, LayoutDashboard,
+  FileText, UploadCloud, Plus, ExternalLink
 } from "lucide-react"
 
 export default function EmployeePortalPage() {
@@ -30,12 +36,21 @@ export default function EmployeePortalPage() {
   const [recibos, setRecibos] = useState<ReciboSueldo[]>([])
   const [vales, setVales] = useState<ValeAdelanto[]>([])
   const [uniformes, setUniformes] = useState<EntregaUniforme[]>([])
+  const [legajos, setLegajos] = useState<LegajoDocumento[]>([])
   
   // Mes seleccionado para el presentismo (YYYY-MM)
   const [selectedMonth, setSelectedMonth] = useState<string>("")
   const [loading, setLoading] = useState(true)
   const [loadingAttendance, setLoadingAttendance] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Formulario de certificado médico
+  const [showCertModal, setShowCertModal] = useState(false)
+  const [certFile, setCertFile] = useState<File | null>(null)
+  const [certTitulo, setCertTitulo] = useState("")
+  const [certFechaInicio, setCertFechaInicio] = useState("")
+  const [certFechaFin, setCertFechaFin] = useState("")
+  const [uploadingCert, setUploadingCert] = useState(false)
 
   // Formulario de solicitud de vacaciones
   const [vacStart, setVacStart] = useState("")
@@ -79,12 +94,13 @@ export default function EmployeePortalPage() {
         setProfile(emp)
 
         // Cargas paralelas para el empleado
-        const [attRes, saldosRes, solRes, recibosRes, extrasRes] = await Promise.all([
+        const [attRes, saldosRes, solRes, recibosRes, extrasRes, legajosRes] = await Promise.all([
           getAttendanceReportAction(selectedMonth, emp.id),
           getEmployeeSaldosAction(emp.id),
           getEmployeeSolicitudesAction(emp.id),
           getEmployeeRecibosAction(emp.id),
-          getEmployeeExtrasAction(emp.id)
+          getEmployeeExtrasAction(emp.id),
+          getEmployeeLegajosAction(emp.id)
         ])
 
         if (attRes.data) setAttendance(attRes.data)
@@ -93,6 +109,7 @@ export default function EmployeePortalPage() {
         if (recibosRes.data) setRecibos(recibosRes.data)
         if (extrasRes.vales) setVales(extrasRes.vales)
         if (extrasRes.uniformes) setUniformes(extrasRes.uniformes)
+        if (legajosRes.data) setLegajos(legajosRes.data)
       }
     } catch (err: any) {
       setError(err.message || "Error al cargar la información del portal.")
@@ -100,6 +117,50 @@ export default function EmployeePortalPage() {
       setLoading(false)
       setLoadingAttendance(false)
     }
+  }
+
+  // Subir Certificado Médico a Google Drive
+  const handleSubmitCertificado = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!profile || !certFile || !certFechaInicio || !certFechaFin) {
+      alert("Por favor completa los campos y selecciona la foto o PDF del certificado.")
+      return
+    }
+
+    setUploadingCert(true)
+
+    const formData = new FormData()
+    formData.append('file', certFile)
+    formData.append('profileId', profile.id)
+    formData.append('employeeName', profile.nombre_completo)
+    formData.append('tipo', 'certificado_medico')
+    formData.append('titulo', certTitulo || `Certificado Médico (${certFechaInicio} al ${certFechaFin})`)
+    formData.append('periodo', `${certFechaInicio} al ${certFechaFin}`)
+
+    const res = await subirDocumentoLegajoAction(formData)
+
+    if (res.success) {
+      // Registrar incidencia automática como carpeta médica
+      await crearIncidenciaAction(
+        profile.id,
+        certFechaInicio,
+        certFechaFin,
+        'carpeta_medica',
+        `Certificado Médico: ${certTitulo || 'Presentado por el empleado'} - Comprobante: ${res.url}`
+      )
+
+      setShowCertModal(false)
+      setCertFile(null)
+      setCertTitulo("")
+      setCertFechaInicio("")
+      setCertFechaFin("")
+      alert("Certificado médico subido con éxito y notificado a RRHH.")
+      loadProfileAndData()
+    } else {
+      alert(`Error al subir certificado: ${res.error}`)
+    }
+
+    setUploadingCert(false)
   }
 
   // Enviar solicitud de vacaciones
@@ -159,10 +220,59 @@ export default function EmployeePortalPage() {
     )
   }
 
-  if (error || !profile) {
+  if (error) {
     return (
-      <div className="p-8 max-w-lg mx-auto bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl font-bold">
-        {error || "No se pudo recuperar la información de tu perfil de usuario."}
+      <div className="p-8 max-w-lg mx-auto bg-rose-50 border border-rose-100 text-rose-600 rounded-3xl font-bold flex items-center gap-3">
+        <AlertCircle size={24} className="flex-shrink-0" />
+        <span>{error}</span>
+      </div>
+    )
+  }
+
+  if (!profile) {
+    return (
+      <div className="max-w-xl mx-auto py-16 px-6 text-center space-y-6">
+        <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-3xl mx-auto flex items-center justify-center shadow-inner">
+          <Users size={36} />
+        </div>
+        
+        <div className="space-y-2">
+          <h2 className="text-2xl font-black text-slate-800 uppercase italic tracking-tight">
+            Portal de Empleado no Vinculado
+          </h2>
+          <p className="text-slate-500 text-sm font-medium">
+            Tu usuario actual no tiene un legajo de empleado asociado en la base de datos de RRHH.
+          </p>
+        </div>
+
+        <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-5 text-left text-xs font-medium text-slate-600 space-y-3">
+          <p className="font-bold text-slate-700">
+            📌 ¿Qué debes hacer según tu rol?
+          </p>
+          <ul className="space-y-2 list-disc pl-4 text-slate-600">
+            <li>
+              <strong>Si eres Administrador:</strong> Puedes crear y gestionar los legajos de los empleados desde el panel central.
+            </li>
+            <li>
+              <strong>Si eres Empleado:</strong> Solicita al responsable de RRHH o administración que cree tu cuenta desde el Panel de RRHH.
+            </li>
+          </ul>
+        </div>
+
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+          <Link
+            href="/rrhh"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-black uppercase tracking-wider rounded-xl transition shadow-md shadow-indigo-100"
+          >
+            <Users size={16} /> Ir al Panel Admin de RRHH
+          </Link>
+          <Link
+            href="/"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-6 py-3.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-black uppercase tracking-wider rounded-xl transition"
+          >
+            <LayoutDashboard size={16} /> Ir al Inicio
+          </Link>
+        </div>
       </div>
     )
   }
@@ -170,11 +280,20 @@ export default function EmployeePortalPage() {
   return (
     <div className="p-4 sm:p-8 max-w-[1400px] mx-auto space-y-8 pb-32">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter uppercase italic flex items-center gap-3">
-          Mi Portal de <span className="text-indigo-600">Recursos Humanos</span>
-        </h1>
-        <p className="text-slate-500 text-sm font-medium italic">Acceso personal a tu legajo, presentismo, recibos y solicitudes.</p>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tighter uppercase italic flex items-center gap-3">
+            Mi Portal de <span className="text-indigo-600">Recursos Humanos</span>
+          </h1>
+          <p className="text-slate-500 text-sm font-medium italic">Acceso personal a tu legajo, presentismo, recibos y solicitudes.</p>
+        </div>
+
+        <button
+          onClick={() => setShowCertModal(true)}
+          className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider py-3.5 px-5 rounded-2xl shadow-md shadow-indigo-100 flex items-center gap-2 transition"
+        >
+          <UploadCloud size={16} /> Subir Certificado Médico
+        </button>
       </div>
 
       {/* Grid Superior: Ficha Personal y Saldos Vacaciones */}
@@ -588,6 +707,176 @@ export default function EmployeePortalPage() {
         </div>
 
       </div>
+
+      {/* Panel de Documentación y Legajo Legal (Google Drive) */}
+      <div className="bg-white p-6 sm:p-8 rounded-[2.5rem] border border-slate-200 shadow-sm space-y-6">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h3 className="font-black text-sm uppercase tracking-widest text-slate-500 flex items-center gap-2">
+              <FileText size={18} className="text-indigo-600" /> Mi Legajo & Certificados (Google Drive)
+            </h3>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-1">
+              Documentos laborales, comprobantes y certificados médicos almacenados
+            </p>
+          </div>
+
+          <button
+            onClick={() => setShowCertModal(true)}
+            className="bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-black text-xs uppercase tracking-wider py-2.5 px-4 rounded-xl flex items-center gap-2 transition"
+          >
+            <Plus size={16} /> Subir Certificado Médico
+          </button>
+        </div>
+
+        <div className="overflow-hidden border border-slate-100 rounded-2xl">
+          <table className="w-full text-left border-collapse">
+            <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
+              <tr>
+                <th className="p-4 pl-6">Documento</th>
+                <th className="p-4">Tipo</th>
+                <th className="p-4">Período</th>
+                <th className="p-4">Fecha Carga</th>
+                <th className="p-4 text-right pr-6">Acción</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50 text-xs font-bold text-slate-700">
+              {legajos.map(doc => (
+                <tr key={doc.id} className="hover:bg-slate-50/60 transition">
+                  <td className="p-4 pl-6 font-black text-slate-800 flex items-center gap-2">
+                    <FileText size={16} className="text-slate-400" />
+                    {doc.titulo}
+                  </td>
+                  <td className="p-4">
+                    <span className={`px-2.5 py-1 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                      doc.tipo === 'certificado_medico' ? 'bg-amber-50 text-amber-600 border border-amber-150' :
+                      doc.tipo === 'arca_931' ? 'bg-emerald-50 text-emerald-600 border border-emerald-150' :
+                      doc.tipo === 'alta_temprana' ? 'bg-indigo-50 text-indigo-600 border border-indigo-150' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>
+                      {doc.tipo === 'certificado_medico' ? 'Certificado Médico' :
+                       doc.tipo === 'arca_931' ? 'Formulario F.931 ARCA' :
+                       doc.tipo === 'alta_temprana' ? 'Alta Temprana' :
+                       doc.tipo.toUpperCase()}
+                    </span>
+                  </td>
+                  <td className="p-4 text-slate-500">{doc.periodo || '—'}</td>
+                  <td className="p-4 text-slate-400 text-[11px]">{doc.created_at ? new Date(doc.created_at).toLocaleDateString('es-AR') : '—'}</td>
+                  <td className="p-4 text-right pr-6">
+                    <a
+                      href={doc.archivo_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-xl transition text-[11px] font-black uppercase"
+                    >
+                      <ExternalLink size={13} /> Ver en Drive
+                    </a>
+                  </td>
+                </tr>
+              ))}
+
+              {legajos.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-center p-12 text-slate-400 italic">
+                    No tienes documentos de legajo o certificados médicos cargados en el sistema.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal Subir Certificado Médico */}
+      {showCertModal && (
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex justify-between items-center">
+              <div>
+                <h3 className="text-lg font-black text-slate-800 uppercase italic">Subir Certificado Médico</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Se guardará en Google Drive y notificará a RRHH</p>
+              </div>
+              <button
+                onClick={() => setShowCertModal(false)}
+                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 flex items-center justify-center text-sm font-black transition"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmitCertificado} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Título o Motivo</label>
+                <input
+                  type="text"
+                  placeholder="Ej: Licencia médica por cuadro gripal"
+                  value={certTitulo}
+                  onChange={(e) => setCertTitulo(e.target.value)}
+                  className="w-full bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Fecha Desde *</label>
+                  <input
+                    type="date"
+                    value={certFechaInicio}
+                    onChange={(e) => setCertFechaInicio(e.target.value)}
+                    required
+                    className="w-full bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Fecha Hasta *</label>
+                  <input
+                    type="date"
+                    value={certFechaFin}
+                    onChange={(e) => setCertFechaFin(e.target.value)}
+                    required
+                    className="w-full bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Archivo / Foto del Certificado (PDF o Imagen) *</label>
+                <input
+                  type="file"
+                  accept="image/*,application/pdf"
+                  required
+                  onChange={(e) => setCertFile(e.target.files?.[0] || null)}
+                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer bg-slate-50 p-2 rounded-xl"
+                />
+              </div>
+
+              <div className="pt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowCertModal(false)}
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs uppercase tracking-wider rounded-xl transition"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadingCert || !certFile || !certFechaInicio || !certFechaFin}
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-md shadow-indigo-100"
+                >
+                  {uploadingCert ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Subiendo a Drive...
+                    </>
+                  ) : (
+                    <>
+                      <UploadCloud size={16} /> Subir Certificado
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
     </div>
   )

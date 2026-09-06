@@ -14,12 +14,11 @@ import VenueModal from "@/components/forms/VenueModal"
 import CompanyModal from "@/components/forms/CompanyModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
 import FleetModal from "@/components/forms/FleetModal"
-import { updateEventMasterAction } from "@/app/actions/events"
+import { updateEventMasterAction, getEventProfitability } from "@/app/actions/events"
 import { createStoreEventAction } from "@/app/actions/online-sales"
-import { getEventProfitability } from "@/app/actions/events"
 
 // --- Helper Component ---
-function EventProfitabilityBadge({ eventId, status, refreshKey }: { eventId: string, status?: string, refreshKey?: number }) {
+function EventProfitabilityBadge({ eventId, status, refreshKey, userRole }: { eventId: string, status?: string, refreshKey?: number, userRole?: string }) {
   const [data, setData] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
@@ -30,6 +29,9 @@ function EventProfitabilityBadge({ eventId, status, refreshKey }: { eventId: str
       setLoading(false)
     })
   }, [eventId, refreshKey])
+
+  // Omit profitability badge completely for cocina role
+  if (userRole === 'cocina') return null
 
   if (loading) return <div className="text-[10px] text-slate-400 font-bold flex items-center gap-1 mt-1"><Loader2 size={12} className="animate-spin" /> Calculando...</div>
   if (!data) return null
@@ -62,9 +64,8 @@ function EventProfitabilityBadge({ eventId, status, refreshKey }: { eventId: str
   )
 }
 
-// --- Types ---
 interface Venue { id: string; name: string; address?: string; meeting_point?: string }
-interface Coordinator { id: string; name: string; company: string; phone?: string }
+interface Coordinator { id: string; name: string; company?: string; phone?: string }
 interface Vehicle { id: string; internal_name: string; plate?: string; client_id: string; vehicle_type?: string }
 interface BusAssignment { 
   id?: string; 
@@ -96,12 +97,27 @@ interface EventMaster {
 export default function MasterEventForm() {
   const searchParams = useSearchParams()
   const eventIdFromUrl = searchParams.get('eventId')
+  const dateFromUrl = searchParams.get('date')
 
   const [events, setEvents] = useState<EventMaster[]>([])
   const [venues, setVenues] = useState<Venue[]>([])
   const [coordinators, setCoordinators] = useState<Coordinator[]>([])
   const [vehicles, setVehicles] = useState<Vehicle[]>([])
   const [companies, setCompanies] = useState<string[]>([])
+  const [userRole, setUserRole] = useState<string>('admin')
+
+  useEffect(() => {
+    async function checkRole() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
+        setUserRole('cocina')
+      } else {
+        const roleFromMeta = user?.app_metadata?.role || user?.user_metadata?.role || 'admin'
+        setUserRole(roleFromMeta)
+      }
+    }
+    checkRole()
+  }, [])
   const [conversionMap, setConversionMap] = useState<Record<string, number>>({})
   const [clientIdMap, setClientIdMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -1072,7 +1088,7 @@ export default function MasterEventForm() {
           const month = evDate.toLocaleDateString('es-AR', { month: 'short' }).toUpperCase().replace('.','')
 
           return (
-            <div key={ev.id} className={`bg-white rounded-3xl border shadow-sm transition-all hover:shadow-md ${isDirty ? 'border-indigo-400 ring-2 ring-indigo-50' : 'border-slate-200'} overflow-hidden`}>
+            <div key={ev.id} id={`event-card-${ev.id}`} data-event-date={state.event_date} className={`bg-white rounded-3xl border shadow-sm transition-all hover:shadow-md ${isDirty ? 'border-indigo-400 ring-2 ring-indigo-50' : 'border-slate-200'} overflow-hidden`}>
               {/* Event Card Layout: [Date] -> [Artist/Venue] -> [PAX] -> [Status/Action] */}
               <div className="p-4 sm:p-6 flex flex-col md:flex-row items-start md:items-center gap-6">
 
@@ -1118,7 +1134,7 @@ export default function MasterEventForm() {
                     return null
                   })()}
                   {state.event_date === today && (
-                    <EventProfitabilityBadge eventId={ev.id} status={state.status} refreshKey={refreshCounter} />
+                    <EventProfitabilityBadge eventId={ev.id} status={state.status} refreshKey={refreshCounter} userRole={userRole} />
                   )}
                 </div>
 

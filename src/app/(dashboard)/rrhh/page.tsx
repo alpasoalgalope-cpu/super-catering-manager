@@ -18,17 +18,22 @@ import {
   crearEmpleadoAction,
   eliminarEmpleadoAction,
   actualizarPerfilAction,
+  actualizarCredencialesEmpleadoAction,
+  subirDocumentoLegajoAction,
+  getEmployeeLegajosAction,
+  eliminarDocumentoLegajoAction,
   EmployeeProfile,
   VacacionesSolicitud,
   ValeAdelanto,
   EntregaUniforme,
   ReciboSueldo,
-  Incidencia
+  Incidencia,
+  LegajoDocumento
 } from "@/app/actions/rrhh"
 import { 
   UploadCloud, AlertTriangle, Check, X, Users, Calendar, 
   DollarSign, Shirt, Plus, CalendarDays, Eye, Loader2, Download, Trash2, ShieldAlert,
-  Pencil, UserPlus
+  Pencil, UserPlus, KeyRound, Mail, Lock, FileText, ExternalLink, FileSpreadsheet
 } from "lucide-react"
 
 export default function RrhhAdminPage() {
@@ -49,6 +54,7 @@ export default function RrhhAdminPage() {
   const [empUniformes, setEmpUniformes] = useState<EntregaUniforme[]>([])
   const [empRecibos, setEmpRecibos] = useState<ReciboSueldo[]>([])
   const [empIncidencias, setEmpIncidencias] = useState<Incidencia[]>([])
+  const [empLegajos, setEmpLegajos] = useState<LegajoDocumento[]>([])
   const [loadingEmpDetails, setLoadingEmpDetails] = useState(false)
 
   // Formularios de carga para el empleado seleccionado
@@ -61,7 +67,16 @@ export default function RrhhAdminPage() {
 
   const [showReciboModal, setShowReciboModal] = useState(false)
   const [reciboPeriodo, setReciboPeriodo] = useState("")
-  const [reciboUrl, setReciboUrl] = useState("")
+  const [reciboFile, setReciboFile] = useState<File | null>(null)
+  const [uploadingRecibo, setUploadingRecibo] = useState(false)
+
+  // Modal Legajo Legal ARCA / Documentos
+  const [showLegalDocModal, setShowLegalDocModal] = useState(false)
+  const [legalDocTipo, setLegalDocTipo] = useState<'arca_931' | 'alta_temprana' | 'art' | 'seguro_vida' | 'otro'>('arca_931')
+  const [legalDocTitulo, setLegalDocTitulo] = useState("")
+  const [legalDocPeriodo, setLegalDocPeriodo] = useState("")
+  const [legalDocFile, setLegalDocFile] = useState<File | null>(null)
+  const [uploadingDoc, setUploadingDoc] = useState(false)
 
   const [showIncidenciaModal, setShowIncidenciaModal] = useState(false)
   const [incFechaInicio, setIncFechaInicio] = useState("")
@@ -99,6 +114,12 @@ export default function RrhhAdminPage() {
   const [editTelefono, setEditTelefono] = useState("")
   const [editDomicilio, setEditDomicilio] = useState("")
 
+  // Modal Credenciales (Asignar/Cambiar Correo y Clave)
+  const [showCredsModal, setShowCredsModal] = useState(false)
+  const [credEmail, setCredEmail] = useState("")
+  const [credPassword, setCredPassword] = useState("")
+  const [savingCreds, setSavingCreds] = useState(false)
+
   useEffect(() => {
     // Inicializar fecha de ingreso por defecto
     setCreateFechaIngreso(new Date().toISOString().split('T')[0])
@@ -126,16 +147,18 @@ export default function RrhhAdminPage() {
   async function loadEmployeeDetails(emp: EmployeeProfile) {
     setSelectedEmp(emp)
     setLoadingEmpDetails(true)
-    const [extrasRes, recibosRes, incRes] = await Promise.all([
+    const [extrasRes, recibosRes, incRes, legajosRes] = await Promise.all([
       getEmployeeExtrasAction(emp.id),
       getEmployeeRecibosAction(emp.id),
-      getEmployeeIncidenciasAction(emp.id)
+      getEmployeeIncidenciasAction(emp.id),
+      getEmployeeLegajosAction(emp.id)
     ])
 
     if (extrasRes.vales) setEmpVales(extrasRes.vales)
     if (extrasRes.uniformes) setEmpUniformes(extrasRes.uniformes)
     if (recibosRes.data) setEmpRecibos(recibosRes.data)
     if (incRes.data) setEmpIncidencias(incRes.data)
+    if (legajosRes.data) setEmpLegajos(legajosRes.data)
 
     setLoadingEmpDetails(false)
   }
@@ -231,15 +254,76 @@ export default function RrhhAdminPage() {
     }
   }
 
-  // Subir Recibo
+  // Subir Recibo de Sueldo a Google Drive
   const handleSubirRecibo = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!selectedEmp) return
-    const res = await subirReciboAction(selectedEmp.id, reciboPeriodo, reciboUrl)
+    if (!selectedEmp || !reciboFile) {
+      alert("Por favor selecciona el archivo PDF del recibo.")
+      return
+    }
+    setUploadingRecibo(true)
+
+    const formData = new FormData()
+    formData.append('file', reciboFile)
+    formData.append('profileId', selectedEmp.id)
+    formData.append('employeeName', selectedEmp.nombre_completo)
+    formData.append('tipo', 'recibo')
+    formData.append('periodo', reciboPeriodo || new Date().toISOString().slice(0, 7))
+
+    const res = await subirDocumentoLegajoAction(formData)
+    setUploadingRecibo(false)
+
     if (res.success) {
       setShowReciboModal(false)
       setReciboPeriodo("")
-      setReciboUrl("")
+      setReciboFile(null)
+      loadEmployeeDetails(selectedEmp)
+      alert("Recibo de sueldo subido con éxito a Google Drive.")
+    } else {
+      alert(`Error al subir recibo: ${res.error}`)
+    }
+  }
+
+  // Subir Documento Legal / ARCA F.931 a Google Drive
+  const handleSubirDocumentoLegal = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedEmp || !legalDocFile) {
+      alert("Por favor selecciona el archivo del documento.")
+      return
+    }
+    setUploadingDoc(true)
+
+    const formData = new FormData()
+    formData.append('file', legalDocFile)
+    formData.append('profileId', selectedEmp.id)
+    formData.append('employeeName', selectedEmp.nombre_completo)
+    formData.append('tipo', legalDocTipo)
+    formData.append('titulo', legalDocTitulo || legalDocFile.name)
+    formData.append('periodo', legalDocPeriodo)
+
+    const res = await subirDocumentoLegajoAction(formData)
+    setUploadingDoc(false)
+
+    if (res.success) {
+      setShowLegalDocModal(false)
+      setLegalDocTitulo("")
+      setLegalDocPeriodo("")
+      setLegalDocFile(null)
+      loadEmployeeDetails(selectedEmp)
+      alert("Documento cargado correctamente en Google Drive.")
+    } else {
+      alert(`Error al subir documento: ${res.error}`)
+    }
+  }
+
+  // Eliminar Documento Legal
+  const handleEliminarDocumentoLegal = async (docId: string) => {
+    if (!selectedEmp) return
+    const confirm = window.confirm("¿Estás seguro de eliminar este documento del legajo?")
+    if (!confirm) return
+
+    const res = await eliminarDocumentoLegajoAction(docId)
+    if (res.success) {
       loadEmployeeDetails(selectedEmp)
     } else {
       alert(`Error: ${res.error}`)
@@ -365,6 +449,46 @@ export default function RrhhAdminPage() {
       loadData()
     } else {
       alert(`Error al eliminar empleado: ${res.error}`)
+    }
+  }
+
+  // ABM: Credenciales (Asignar/Actualizar Correo y Contraseña)
+  const openCredsModal = (emp?: EmployeeProfile) => {
+    const target = emp || selectedEmp
+    if (!target) return
+    setCredEmail(target.email || "")
+    setCredPassword("")
+    setShowCredsModal(true)
+  }
+
+  const handleActualizarCredenciales = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedEmp) return
+    if (!credEmail && !credPassword) {
+      alert("Ingresa al menos un correo o una contraseña nueva.")
+      return
+    }
+
+    setSavingCreds(true)
+    const res = await actualizarCredencialesEmpleadoAction({
+      userId: selectedEmp.id,
+      nuevoEmail: credEmail || undefined,
+      nuevaPassword: credPassword || undefined
+    })
+    setSavingCreds(false)
+
+    if (res.success) {
+      setShowCredsModal(false)
+      alert("Credenciales de acceso actualizadas con éxito.")
+      loadData()
+      if (selectedEmp) {
+        setSelectedEmp({
+          ...selectedEmp,
+          email: credEmail || selectedEmp.email
+        })
+      }
+    } else {
+      alert(`Error al actualizar credenciales: ${res.error}`)
     }
   }
 
@@ -509,6 +633,7 @@ export default function RrhhAdminPage() {
                     <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
                       <tr>
                         <th className="p-4 pl-6">Nombre Empleado</th>
+                        <th className="p-4">Email Acceso</th>
                         <th className="p-4">DNI</th>
                         <th className="p-4">Teléfono</th>
                         <th className="p-4">Domicilio</th>
@@ -521,6 +646,7 @@ export default function RrhhAdminPage() {
                       {employees.map(emp => (
                         <tr key={emp.id} className="hover:bg-slate-50/50 transition">
                           <td className="p-4 pl-6">{emp.nombre_completo}</td>
+                          <td className="p-4 text-slate-600 font-mono text-[11px]">{emp.email || "Sin email asignado"}</td>
                           <td className="p-4 font-semibold text-slate-600">{emp.dni || "-"}</td>
                           <td className="p-4 text-slate-600">{emp.telefono || "-"}</td>
                           <td className="p-4 text-slate-500 max-w-[150px] truncate" title={emp.domicilio || ""}>{emp.domicilio || "-"}</td>
@@ -677,6 +803,8 @@ export default function RrhhAdminPage() {
                           {selectedEmp.nombre_completo}
                         </h2>
                         <div className="flex flex-wrap gap-3 mt-1.5 text-xs font-bold text-slate-400 uppercase">
+                          <span>Email: <span className="text-indigo-600 font-mono font-bold lowercase">{selectedEmp.email || 'Sin vincular'}</span></span>
+                          <span>•</span>
                           <span>Ingreso: <span className="text-slate-600">{new Date(selectedEmp.fecha_ingreso).toLocaleDateString('es-AR')}</span></span>
                           <span>•</span>
                           <span>Estado: <span className="text-slate-600">{selectedEmp.estado_laboral === 'en_blanco' ? 'En blanco' : 'No registrado'}</span></span>
@@ -690,6 +818,13 @@ export default function RrhhAdminPage() {
                       </div>
 
                       <div className="flex flex-wrap gap-2">
+                        <button 
+                          onClick={() => openCredsModal()}
+                          className="bg-amber-50 text-amber-800 hover:bg-amber-600 hover:text-white px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition"
+                          title="Asignar o cambiar email y contraseña"
+                        >
+                          <KeyRound size={12} /> Acceso / Clave
+                        </button>
                         <button 
                           onClick={openEditModal}
                           className="bg-slate-100 text-slate-700 hover:bg-slate-200 px-3 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center gap-1 transition"
@@ -844,6 +979,69 @@ export default function RrhhAdminPage() {
                               )}
                             </div>
                           </div>
+
+                          {/* Legajo Legal & ARCA (Google Drive) */}
+                          <div className="p-6 bg-slate-50 rounded-3xl space-y-4">
+                            <div className="flex justify-between items-center">
+                              <div>
+                                <h3 className="font-black text-xs uppercase tracking-widest text-slate-700 flex items-center gap-1.5">
+                                  <FileText size={14} className="text-indigo-600" /> Legajo Legal & ARCA
+                                </h3>
+                                <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">F.931, Altas, ART y Seguros</p>
+                              </div>
+                              <button 
+                                onClick={() => setShowLegalDocModal(true)}
+                                className="p-1 bg-white border border-slate-200 rounded-lg text-slate-500 hover:bg-indigo-50 hover:text-indigo-600 transition"
+                                title="Subir Documento al Legajo"
+                              >
+                                <Plus size={16} />
+                              </button>
+                            </div>
+
+                            <div className="space-y-2 text-xs font-bold text-slate-700">
+                              {empLegajos.map(doc => (
+                                <div key={doc.id} className="p-3 bg-white rounded-xl border border-slate-100 flex justify-between items-center gap-2">
+                                  <div className="flex flex-col min-w-0">
+                                    <div className="flex items-center gap-1.5">
+                                      <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[9px] font-black uppercase">
+                                        {doc.tipo.replace('_', ' ')}
+                                      </span>
+                                      {doc.periodo && (
+                                        <span className="text-[9px] font-bold text-slate-400">({doc.periodo})</span>
+                                      )}
+                                    </div>
+                                    <span className="text-slate-800 text-xs font-bold mt-1 truncate" title={doc.titulo}>
+                                      {doc.titulo}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-1 flex-shrink-0">
+                                    <a 
+                                      href={doc.archivo_url} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="p-1.5 bg-slate-50 hover:bg-indigo-50 text-slate-600 hover:text-indigo-600 rounded-lg transition"
+                                      title="Abrir en Google Drive"
+                                    >
+                                      <ExternalLink size={14} />
+                                    </a>
+                                    <button
+                                      onClick={() => handleEliminarDocumentoLegal(doc.id)}
+                                      className="p-1.5 bg-slate-50 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition"
+                                      title="Eliminar del Legajo"
+                                    >
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+
+                              {empLegajos.length === 0 && (
+                                <p className="text-slate-400 italic text-[11px] text-center py-4">Sin documentos de ARCA/ART cargados.</p>
+                              )}
+                            </div>
+                          </div>
+
                         </div>
                       </div>
                     )}
@@ -1004,50 +1202,136 @@ export default function RrhhAdminPage() {
         </div>
       )}
 
-      {/* Modal: Recibo */}
+      {/* Modal: Recibo (Subida a Google Drive) */}
       {showReciboModal && selectedEmp && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
           <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl max-w-md w-full space-y-6 animate-in zoom-in-95 duration-200">
             <div>
-              <h3 className="text-lg font-black text-slate-800 uppercase italic">Cargar Recibo de Sueldo</h3>
+              <h3 className="text-lg font-black text-slate-800 uppercase italic">Subir Recibo a Google Drive</h3>
               <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedEmp.nombre_completo}</p>
             </div>
             <form onSubmit={handleSubirRecibo} className="space-y-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Periodo (YYYY-MM)</label>
                 <input 
-                  type="text" 
-                  placeholder="Ej: 2026-03"
+                  type="month" 
                   value={reciboPeriodo}
                   onChange={(e) => setReciboPeriodo(e.target.value)}
                   className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 transition"
                   required
                 />
               </div>
+
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Enlace / URL de archivo</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Archivo PDF del Recibo</label>
                 <input 
-                  type="text" 
-                  placeholder="Ej: https://wfxgl.../recibos/2026-03.pdf"
-                  value={reciboUrl}
-                  onChange={(e) => setReciboUrl(e.target.value)}
-                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 transition"
+                  type="file" 
+                  accept=".pdf,image/*"
+                  onChange={(e) => setReciboFile(e.target.files?.[0] || null)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 transition file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-indigo-50 file:text-indigo-600 cursor-pointer"
                   required
                 />
               </div>
+
               <div className="flex gap-3 pt-2">
                 <button 
                   type="button" 
-                  onClick={() => setShowReciboModal(false)}
+                  onClick={() => { setShowReciboModal(false); setReciboFile(null); }}
                   className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest py-3 rounded-xl transition"
                 >
                   Cancelar
                 </button>
                 <button 
                   type="submit" 
-                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl transition"
+                  disabled={uploadingRecibo || !reciboFile}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl transition shadow-md shadow-indigo-100 flex items-center justify-center gap-2"
                 >
-                  Guardar
+                  {uploadingRecibo ? <Loader2 size={16} className="animate-spin" /> : "Subir a Drive"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Documento Legal / ARCA F.931 (Google Drive) */}
+      {showLegalDocModal && selectedEmp && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white p-8 rounded-[2.5rem] border border-slate-200 shadow-xl max-w-md w-full space-y-6 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center">
+                <FileText size={20} />
+              </div>
+              <div>
+                <h3 className="text-base font-black text-slate-800 uppercase italic">Documento al Legajo</h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{selectedEmp.nombre_completo}</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubirDocumentoLegal} className="space-y-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Tipo de Documento</label>
+                <select 
+                  value={legalDocTipo}
+                  onChange={(e: any) => setLegalDocTipo(e.target.value)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl cursor-pointer hover:bg-slate-100 transition"
+                >
+                  <option value="arca_931">Formulario 931 ARCA</option>
+                  <option value="alta_temprana">Alta Temprana ARCA/AFIP</option>
+                  <option value="art">Constancia Cobertura ART</option>
+                  <option value="seguro_vida">Póliza Seguro de Vida</option>
+                  <option value="otro">Otro Documento Legal</option>
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Título o Descripción</label>
+                <input 
+                  type="text" 
+                  placeholder="Ej: F.931 Período Septiembre 2026"
+                  value={legalDocTitulo}
+                  onChange={(e) => setLegalDocTitulo(e.target.value)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 transition"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Período / Año (Opcional)</label>
+                <input 
+                  type="text" 
+                  placeholder="Ej: 2026-09"
+                  value={legalDocPeriodo}
+                  onChange={(e) => setLegalDocPeriodo(e.target.value)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 transition"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Archivo (PDF o Imagen)</label>
+                <input 
+                  type="file" 
+                  accept=".pdf,image/*"
+                  onChange={(e) => setLegalDocFile(e.target.files?.[0] || null)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500 transition file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-[10px] file:font-black file:uppercase file:bg-indigo-50 file:text-indigo-600 cursor-pointer"
+                  required
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => { setShowLegalDocModal(false); setLegalDocFile(null); }}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest py-3 rounded-xl transition"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={uploadingDoc || !legalDocFile}
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest py-3 rounded-xl transition shadow-md shadow-indigo-100 flex items-center justify-center gap-2"
+                >
+                  {uploadingDoc ? <Loader2 size={16} className="animate-spin" /> : "Guardar en Drive"}
                 </button>
               </div>
             </form>
@@ -1415,6 +1699,79 @@ export default function RrhhAdminPage() {
                   className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-xl transition shadow-md shadow-indigo-100"
                 >
                   Actualizar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Asignar / Cambiar Credenciales de Acceso */}
+      {showCredsModal && selectedEmp && (
+        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6">
+            <div className="flex items-center gap-3 border-b border-slate-100 pb-4">
+              <div className="w-10 h-10 bg-amber-50 text-amber-600 rounded-xl flex items-center justify-center">
+                <KeyRound size={20} />
+              </div>
+              <div>
+                <h3 className="font-black text-base uppercase italic text-slate-800">
+                  Credenciales de Acceso
+                </h3>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                  {selectedEmp.nombre_completo}
+                </p>
+              </div>
+            </div>
+
+            <form onSubmit={handleActualizarCredenciales} className="space-y-4">
+              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl text-xs font-medium text-slate-600 space-y-1">
+                <p className="font-bold text-slate-700">ℹ️ Acceso al Portal</p>
+                <p>
+                  Asigna el correo y contraseña con los que {selectedEmp.nombre_completo} iniciará sesión para entrar a su portal personal.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Mail size={12} /> Correo Electrónico (Login)
+                </label>
+                <input 
+                  type="email" 
+                  placeholder="ej: joni@catering.com"
+                  value={credEmail}
+                  onChange={(e) => setCredEmail(e.target.value)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3.5 rounded-xl focus:ring-2 focus:ring-amber-500 transition font-mono"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <Lock size={12} /> Nueva Contraseña
+                </label>
+                <input 
+                  type="password" 
+                  placeholder="Dejar vacío para no cambiar"
+                  value={credPassword}
+                  onChange={(e) => setCredPassword(e.target.value)}
+                  className="bg-slate-50 border-none outline-none font-bold text-xs p-3.5 rounded-xl focus:ring-2 focus:ring-amber-500 transition"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button 
+                  type="button" 
+                  onClick={() => setShowCredsModal(false)}
+                  className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs uppercase tracking-widest py-3.5 rounded-xl transition"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={savingCreds}
+                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs uppercase tracking-widest py-3.5 rounded-xl transition shadow-md shadow-amber-100 flex items-center justify-center gap-2"
+                >
+                  {savingCreds ? <Loader2 size={16} className="animate-spin" /> : "Guardar Acceso"}
                 </button>
               </div>
             </form>
