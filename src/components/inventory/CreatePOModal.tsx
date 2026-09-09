@@ -6,20 +6,30 @@ import { X, Plus, Trash2, Loader2, Save } from "lucide-react"
 
 interface CreatePOModalProps {
   editOrderId?: string | null
+  initialFechaEsperada?: string
+  initialProveedorId?: string
+  initialItems?: { producto_id: string, bultos: number, unidadesPorBulto: number, costoTotal: number, costoUnitario: number }[]
   onClose: () => void
   onSuccess: () => void
 }
 
-export default function CreatePOModal({ editOrderId, onClose, onSuccess }: CreatePOModalProps) {
+export default function CreatePOModal({ 
+  editOrderId, 
+  initialFechaEsperada, 
+  initialProveedorId, 
+  initialItems, 
+  onClose, 
+  onSuccess 
+}: CreatePOModalProps) {
   const [proveedores, setProveedores] = useState<any[]>([])
   const [productos, setProductos] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
 
   // Form State
-  const [proveedorId, setProveedorId] = useState("")
-  const [fechaEsperada, setFechaEsperada] = useState("")
-  const [items, setItems] = useState<{ producto_id: string, bultos: number, unidadesPorBulto: number, costoTotal: number, costoUnitario: number }[]>([])
+  const [proveedorId, setProveedorId] = useState(initialProveedorId || "")
+  const [fechaEsperada, setFechaEsperada] = useState(initialFechaEsperada || "")
+  const [items, setItems] = useState<{ producto_id: string, bultos: number, unidadesPorBulto: number, costoTotal: number, costoUnitario: number }[]>(initialItems || [])
 
   const supabase = createClient()
 
@@ -59,15 +69,30 @@ export default function CreatePOModal({ editOrderId, onClose, onSuccess }: Creat
           setItems(loadedItems)
         }
       } else {
-        const tomorrow = new Date()
-        tomorrow.setDate(tomorrow.getDate() + 1)
-        setFechaEsperada(tomorrow.toISOString().split('T')[0])
+        if (initialFechaEsperada) {
+          setFechaEsperada(initialFechaEsperada)
+        } else {
+          const tomorrow = new Date()
+          tomorrow.setDate(tomorrow.getDate() + 1)
+          setFechaEsperada(tomorrow.toISOString().split('T')[0])
+        }
+        if (initialProveedorId) {
+          setProveedorId(initialProveedorId)
+        } else if (initialItems && initialItems.length > 0 && initialItems[0].producto_id) {
+          const matchedProd = (prods || []).find((p: any) => p.id === initialItems[0].producto_id)
+          if (matchedProd?.proveedor_id) {
+            setProveedorId(matchedProd.proveedor_id)
+          }
+        }
+        if (initialItems && initialItems.length > 0) {
+          setItems(initialItems)
+        }
       }
       
       setLoading(false)
     }
     fetchData()
-  }, [editOrderId])
+  }, [editOrderId, initialFechaEsperada, initialProveedorId])
 
   const availableProducts = proveedorId 
     ? productos.filter(p => 

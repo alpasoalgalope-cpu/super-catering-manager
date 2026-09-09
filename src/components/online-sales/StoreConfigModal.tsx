@@ -48,7 +48,7 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
     combo_vegan_enabled: true,
     combo_vegan_price: 12000,
     combo_vegan_name: 'Combo Vegano + Agua sin Gas',
-    combo_vegan_desc: 'Sándwich Vegano en Pan de Semillas con Vegetales Salteados + Agua Mineral.'
+    combo_vegan_desc: 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
   })
 
   const [dateInput, setDateInput] = useState('')

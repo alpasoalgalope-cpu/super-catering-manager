@@ -83,7 +83,7 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
         combo_vegan_enabled: store.combo_vegan_enabled ?? true,
         combo_vegan_price: Number(store.combo_vegan_price) || 0,
         combo_vegan_name: store.combo_vegan_name || 'Combo Vegano + Agua sin Gas',
-        combo_vegan_desc: store.combo_vegan_desc || ''
+        combo_vegan_desc: store.combo_vegan_desc || 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
       })
     }
   }, [store])

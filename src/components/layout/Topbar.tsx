@@ -30,26 +30,37 @@ export default function Topbar() {
   const isCocina = role === 'cocina';
 
   return (
-    <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur-sm px-4 md:px-6 flex items-center justify-between shadow-xs sticky top-0 z-10">
-      <div className="flex items-center min-w-0 flex-1 mr-4">
+    <header className="h-16 border-b border-slate-200 bg-white/95 backdrop-blur-sm px-3 md:px-6 flex items-center justify-between shadow-xs sticky top-0 z-30">
+      <div className="flex items-center min-w-0 flex-1 mr-2 md:mr-4">
         {/* Toggle Sidebar Button */}
         <button
           onClick={toggleSidebar}
-          className="mr-3 p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-black shrink-0 shadow-2xs group"
+          className="mr-2.5 p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 border border-slate-200 hover:border-indigo-200 rounded-xl transition-all cursor-pointer flex items-center gap-1.5 text-xs font-black shrink-0 shadow-2xs group"
           title={isOpen ? "Ocultar menú lateral" : "Mostrar menú lateral"}
+          aria-label="Abrir o cerrar menú"
         >
           {isOpen ? (
             <PanelLeftClose size={18} className="text-slate-500 group-hover:text-indigo-600 transition-colors" />
           ) : (
-            <PanelLeft size={18} className="text-indigo-600 animate-pulse" />
+            <PanelLeft size={18} className="text-indigo-600" />
           )}
           <span className="hidden sm:inline text-[10px] font-black uppercase tracking-wider text-slate-600 group-hover:text-indigo-600">
             {isOpen ? 'Ocultar' : 'Menú'}
           </span>
         </button>
 
-        {/* Favourites Buttons in 1 single clean row */}
-        <div className="flex items-center gap-2 overflow-x-auto py-1 scrollbar-none flex-nowrap">
+        {/* Mobile Mini Brand */}
+        <div className="flex md:hidden items-center gap-2 min-w-0">
+          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-black text-xs shadow-xs shrink-0">
+            SC
+          </div>
+          <span className="font-black text-xs tracking-tight text-slate-900 uppercase italic truncate">
+            Super Catering
+          </span>
+        </div>
+
+        {/* Desktop Favourites Buttons in 1 single clean row */}
+        <div className="hidden md:flex items-center gap-2 overflow-x-auto py-1 scrollbar-none flex-nowrap">
           <Link 
             href="/produccion" 
             className="flex items-center gap-1.5 px-3 py-1.5 bg-rose-50 text-rose-700 rounded-xl text-[10px] font-black uppercase tracking-wider border border-rose-100 hover:bg-rose-100 transition-all shadow-2xs shrink-0 whitespace-nowrap"

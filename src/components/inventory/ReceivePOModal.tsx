@@ -313,23 +313,37 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
         if (itemErr) throw itemErr
       }
 
-      const { error: poErr } = await supabase
+      const baseUpdatePayload: any = {
+        costo_total: Number(computedTotals.totalFinanciero.toFixed(2)),
+        tipo_documento: tipoDocumento,
+        nro_comprobante: nroComprobante.trim(),
+        percepcion_iva: tipoDocumento === 'factura' ? Number(percepcionIva) || 0 : 0,
+        percepcion_iibb: tipoDocumento === 'factura' ? Number(percepcionIibb) || 0 : 0,
+        percepcion_ganancias: tipoDocumento === 'factura' ? Number(percepcionGanancias) || 0 : 0,
+        impuestos_internos: tipoDocumento === 'factura' ? Number(impuestosInternos) || 0 : 0,
+        facturado: tipoDocumento === 'factura',
+        desvio_inflacion: 0,
+        fecha_vencimiento_pago: fechaVencimientoPago || null
+      }
+
+      let updatePayload: any = { ...baseUpdatePayload }
+      if (uploadedDriveUrl) updatePayload.comprobante_url = uploadedDriveUrl
+      if (uploadedDriveId) updatePayload.comprobante_drive_id = uploadedDriveId
+
+      let { error: poErr } = await supabase
         .from("purchase_orders")
-        .update({
-          costo_total: Number(computedTotals.totalFinanciero.toFixed(2)),
-          tipo_documento: tipoDocumento,
-          nro_comprobante: nroComprobante.trim(),
-          percepcion_iva: tipoDocumento === 'factura' ? Number(percepcionIva) || 0 : 0,
-          percepcion_iibb: tipoDocumento === 'factura' ? Number(percepcionIibb) || 0 : 0,
-          percepcion_ganancias: tipoDocumento === 'factura' ? Number(percepcionGanancias) || 0 : 0,
-          impuestos_internos: tipoDocumento === 'factura' ? Number(impuestosInternos) || 0 : 0,
-          facturado: tipoDocumento === 'factura',
-          desvio_inflacion: 0,
-          fecha_vencimiento_pago: fechaVencimientoPago || null,
-          comprobante_url: uploadedDriveUrl || null,
-          comprobante_drive_id: uploadedDriveId || null
-        })
+        .update(updatePayload)
         .eq("id", orderId)
+
+      // Fallback: If database table does not have drive columns yet, retry cleanly
+      if (poErr && (poErr.message?.includes("comprobante_drive_id") || poErr.message?.includes("comprobante_url") || poErr.message?.includes("schema cache"))) {
+        console.warn("Retrying PO update with base fields only...", poErr.message)
+        const retryRes = await supabase
+          .from("purchase_orders")
+          .update(baseUpdatePayload)
+          .eq("id", orderId)
+        poErr = retryRes.error
+      }
 
       if (poErr) throw poErr
 
@@ -348,22 +362,22 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/60 backdrop-blur-md p-4">
-      <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] border border-slate-100">
+    <div className="fixed inset-0 z-[60] flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-md p-0 sm:p-4">
+      <div className="bg-white rounded-t-[2rem] sm:rounded-[2.5rem] shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[94vh] sm:max-h-[90vh] border border-slate-100 animate-in slide-in-from-bottom-6 duration-300">
         
         {/* Header */}
-        <div className="px-8 py-6 border-b border-emerald-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 to-teal-50/50">
+        <div className="px-5 sm:px-8 py-4 sm:py-6 border-b border-emerald-100 flex items-center justify-between bg-gradient-to-r from-emerald-50 to-teal-50/50">
           <div>
-            <h2 className="text-2xl font-black text-emerald-950 uppercase italic tracking-tighter flex items-center gap-3">
-              <CheckCircle2 size={28} className="text-emerald-600" />
+            <h2 className="text-lg sm:text-2xl font-black text-emerald-950 uppercase italic tracking-tighter flex items-center gap-2 sm:gap-3">
+              <CheckCircle2 size={22} className="text-emerald-600 sm:w-7 sm:h-7" />
               Recepción de Mercadería
             </h2>
-            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mt-1">
+            <p className="text-[9px] sm:text-[10px] font-bold text-emerald-600 uppercase tracking-widest mt-0.5 sm:mt-1">
               Validá cantidades, discriminá impuestos y valorizá tu stock
             </p>
           </div>
           <button onClick={onClose} className="p-2 hover:bg-emerald-100 rounded-full text-emerald-800 transition-colors">
-            <X size={24} />
+            <X size={20} className="sm:w-6 sm:h-6" />
           </button>
         </div>
 
@@ -372,7 +386,7 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
             <Loader2 className="animate-spin text-emerald-600" size={48} />
           </div>
         ) : (
-          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+          <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8 custom-scrollbar">
             
             {/* SECCIÓN OCR & GOOGLE DRIVE */}
             <div 
@@ -383,7 +397,7 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
                 setDragOver(false)
                 if (e.dataTransfer.files?.[0]) handleFileUpload(e.dataTransfer.files[0])
               }}
-              className={`p-6 rounded-[2rem] border-2 border-dashed transition-all ${
+              className={`p-4 sm:p-6 rounded-2xl sm:rounded-[2rem] border-2 border-dashed transition-all ${
                 dragOver 
                   ? 'border-emerald-500 bg-emerald-50/50' 
                   : uploadedDriveUrl 
@@ -391,46 +405,61 @@ export default function ReceivePOModal({ orderId, onClose, onSuccess }: ReceiveP
                     : 'border-slate-200 bg-slate-50/60 hover:bg-slate-50'
               }`}
             >
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3 sm:gap-4">
+                  <div className={`w-10 h-10 sm:w-12 sm:h-12 rounded-2xl flex items-center justify-center shrink-0 ${
                     uploadedDriveUrl ? 'bg-emerald-100 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
                   }`}>
                     {isScanningInvoice ? (
-                      <Loader2 className="animate-spin" size={24} />
+                      <Loader2 className="animate-spin" size={22} />
                     ) : uploadedDriveUrl ? (
-                      <CheckCircle size={24} />
+                      <CheckCircle size={22} />
                     ) : (
-                      <Sparkles size={24} />
+                      <Sparkles size={22} />
                     )}
                   </div>
                   <div>
                     <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                      Escanear Factura / Remito con Inteligencia Artificial (OCR)
+                      Escanear Factura / Remito con IA (OCR)
                     </h4>
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
+                    <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">
                       {isScanningInvoice 
                         ? 'Analizando comprobante con Google Gemini Vision...' 
                         : uploadedDriveUrl 
                           ? 'Comprobante escaneado y guardado en Google Drive' 
-                          : 'Arrastra o sube una foto de la factura para autocompletar ítems y montos'}
+                          : 'Sube foto o saca con la cámara para autocompletar ítems'}
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
                   {uploadedDriveUrl && (
                     <a
                       href={uploadedDriveUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="px-3 py-2 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-xl text-[10px] font-black uppercase tracking-wider transition"
+                      className="px-3 py-2 bg-emerald-100 text-emerald-800 hover:bg-emerald-200 rounded-xl text-[10px] font-black uppercase tracking-wider transition min-h-[38px] flex items-center"
                     >
                       Ver en Drive
                     </a>
                   )}
-                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider px-4 py-2.5 rounded-xl transition flex items-center gap-2">
-                    <UploadCloud size={14} /> Subir Imagen / PDF
+                  {/* Botón Cámara directo en celular */}
+                  <label className="cursor-pointer bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 min-h-[38px] flex-1 sm:flex-none shadow-xs">
+                    <span>📸</span> Sacar Foto
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      capture="environment"
+                      className="hidden" 
+                      onChange={(e) => {
+                        if (e.target.files?.[0]) handleFileUpload(e.target.files[0])
+                      }} 
+                    />
+                  </label>
+
+                  {/* Botón Archivo/PDF */}
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 text-white text-[10px] font-black uppercase tracking-wider px-3.5 py-2.5 rounded-xl transition flex items-center justify-center gap-1.5 min-h-[38px] flex-1 sm:flex-none shadow-xs">
+                    <UploadCloud size={14} /> Archivo / PDF
                     <input 
                       type="file" 
                       accept="image/*,application/pdf" 

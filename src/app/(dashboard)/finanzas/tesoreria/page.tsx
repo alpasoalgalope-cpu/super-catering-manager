@@ -1644,7 +1644,7 @@ export default function TreasuryPage() {
       </div>
 
       {/* Tabs Selector */}
-      <div className="bg-slate-100 p-1.5 rounded-3xl flex flex-wrap gap-1">
+      <div className="bg-slate-100 p-1.5 rounded-2xl sm:rounded-3xl flex items-center overflow-x-auto scrollbar-none flex-nowrap gap-1">
         {[
           { id: 'kpis', label: 'Resumen' },
           { id: 'calendar', label: 'Calendario Financiero' },
@@ -1657,7 +1657,7 @@ export default function TreasuryPage() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`flex-1 min-w-[120px] py-3.5 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
+            className={`shrink-0 whitespace-nowrap px-4 sm:px-3 sm:flex-1 py-3 rounded-xl sm:rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${
               activeTab === tab.id 
                 ? 'bg-white text-indigo-600 shadow-md font-bold scale-102' 
                 : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'

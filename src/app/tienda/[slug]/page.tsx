@@ -67,7 +67,7 @@ async function resolveStoreBySlug(slug: string) {
       combo_vegan_enabled: true,
       combo_vegan_price: 10000,
       combo_vegan_name: 'Combo Vegano + Agua sin Gas',
-      combo_vegan_desc: 'Sándwich Vegano en Ciabatta con vegetales asados + Agua Mineral.'
+      combo_vegan_desc: 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
     }
 
     const { data: created } = await supabase
@@ -137,7 +137,89 @@ export default async function TiendaPage({ params }: Props) {
     }
   }
 
+  // Fetch bus and coordinator assignments for this event & company
+  let busAssignments: any[] = []
+
+  // Extract company name from store title or slug
+  const title = store.title || ''
+  const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+  const storeCompany = parts.length > 1 ? parts[parts.length - 1] : ''
+
+  const eventIdsToQuery: string[] = []
+  if (store.event_master_id) {
+    eventIdsToQuery.push(store.event_master_id)
+  } else if (store.available_dates && store.available_dates.length > 0) {
+    const showName = (store.title || '').split(/[—–-]/)[0]?.trim()
+    const { data: dateEvents } = await supabase
+      .from('events_master')
+      .select('id, event_date')
+      .in('event_date', store.available_dates)
+      .ilike('show_name', `%${showName}%`)
+
+    if (dateEvents) {
+      dateEvents.forEach(ev => {
+        if (!eventIdsToQuery.includes(ev.id)) {
+          eventIdsToQuery.push(ev.id)
+        }
+      })
+    }
+  }
+
+  if (eventIdsToQuery.length > 0) {
+    const { data: assignments } = await supabase
+      .from('event_bus_assignments')
+      .select(`
+        id,
+        event_id,
+        crew_count,
+        events_master (
+          id,
+          event_date,
+          show_name
+        ),
+        clients (
+          id,
+          name,
+          company
+        ),
+        vehicles (
+          id,
+          internal_name,
+          vehicle_type
+        ),
+        coordinators (
+          id,
+          name,
+          phone,
+          company
+        )
+      `)
+      .in('event_id', eventIdsToQuery)
+
+    if (assignments && assignments.length > 0) {
+      if (storeCompany) {
+        const cleanStoreComp = storeCompany.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const filtered = assignments.filter((a: any) => {
+          const clientObj = Array.isArray(a.clients) ? a.clients[0] : a.clients
+          const coordObj = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
+
+          const clientNameClean = (clientObj?.name || clientObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+          const coordCompClean = (coordObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+          return (
+            (clientNameClean && (clientNameClean.includes(cleanStoreComp) || cleanStoreComp.includes(clientNameClean))) ||
+            (coordCompClean && (coordCompClean.includes(cleanStoreComp) || cleanStoreComp.includes(coordCompClean)))
+          )
+        })
+
+        busAssignments = filtered.length > 0 ? filtered : assignments
+      } else {
+        busAssignments = assignments
+      }
+    }
+  }
+
   return (
-    <PassengerStore store={store} />
+    <PassengerStore store={store} busAssignments={busAssignments} />
   )
 }

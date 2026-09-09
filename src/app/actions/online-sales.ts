@@ -232,7 +232,7 @@ export async function autoSyncStoresForConfirmedEventsAction() {
           combo_vegan_enabled: true,
           combo_vegan_price: prices.vegan,
           combo_vegan_name: "Combo Vegano + Agua sin Gas",
-          combo_vegan_desc: "Sándwich Vegano en Ciabatta con vegetales asados y aderezos vegetales + Agua Mineral.",
+          combo_vegan_desc: "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.",
           commercial_rule_id: prices.ruleId
         }
 
@@ -270,7 +270,7 @@ export async function autoSyncStoresForConfirmedEventsAction() {
           combo_vegan_enabled: true,
           combo_vegan_price: prices.vegan,
           combo_vegan_name: "Combo Vegano + Agua sin Gas",
-          combo_vegan_desc: "Sándwich Vegano en Ciabatta con vegetales asados y aderezos vegetales + Agua Mineral.",
+          combo_vegan_desc: "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.",
           commercial_rule_id: prices.ruleId
         }
 
@@ -282,6 +282,14 @@ export async function autoSyncStoresForConfirmedEventsAction() {
       }
     }
   }
+
+  // Guarantee all existing stores have updated vegan combo descriptions
+  await supabase
+    .from("online_store_events")
+    .update({
+      combo_vegan_desc: "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral."
+    })
+    .or("combo_vegan_desc.ilike.%vegetales asados%,combo_vegan_desc.ilike.%salteados%")
 
   return { success: true, createdCount }
 }

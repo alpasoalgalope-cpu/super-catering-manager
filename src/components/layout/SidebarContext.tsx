@@ -6,22 +6,29 @@ interface SidebarContextType {
   isOpen: boolean;
   toggleSidebar: () => void;
   setIsOpen: (open: boolean) => void;
+  closeSidebar: () => void;
+  openSidebar: () => void;
 }
 
 const SidebarContext = createContext<SidebarContextType>({
   isOpen: true,
   toggleSidebar: () => {},
   setIsOpen: () => {},
+  closeSidebar: () => {},
+  openSidebar: () => {},
 });
 
 export function SidebarProvider({ children }: { children: React.ReactNode }) {
-  const [isOpen, setIsOpen] = useState(true);
+  const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("sidebar_open");
-      if (saved !== null) {
-        setIsOpen(saved === "true");
+      const isMobile = window.innerWidth < 768;
+      if (isMobile) {
+        setIsOpen(false);
+      } else {
+        const saved = localStorage.getItem("sidebar_open");
+        setIsOpen(saved !== null ? saved === "true" : true);
       }
     } catch {
       // Ignore
@@ -32,7 +39,9 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
     setIsOpen((prev) => {
       const next = !prev;
       try {
-        localStorage.setItem("sidebar_open", String(next));
+        if (window.innerWidth >= 768) {
+          localStorage.setItem("sidebar_open", String(next));
+        }
       } catch {
         // Ignore
       }
@@ -43,14 +52,27 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   const handleSetIsOpen = (open: boolean) => {
     setIsOpen(open);
     try {
-      localStorage.setItem("sidebar_open", String(open));
+      if (window.innerWidth >= 768) {
+        localStorage.setItem("sidebar_open", String(open));
+      }
     } catch {
       // Ignore
     }
   };
 
+  const closeSidebar = () => handleSetIsOpen(false);
+  const openSidebar = () => handleSetIsOpen(true);
+
   return (
-    <SidebarContext.Provider value={{ isOpen, toggleSidebar, setIsOpen: handleSetIsOpen }}>
+    <SidebarContext.Provider 
+      value={{ 
+        isOpen, 
+        toggleSidebar, 
+        setIsOpen: handleSetIsOpen,
+        closeSidebar,
+        openSidebar
+      }}
+    >
       {children}
     </SidebarContext.Provider>
   );

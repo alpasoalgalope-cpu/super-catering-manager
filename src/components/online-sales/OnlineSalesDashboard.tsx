@@ -5,7 +5,7 @@ import {
   Store, ShoppingCart, Users, Plus, Copy, ExternalLink, ToggleLeft, ToggleRight, 
   Search, Filter, Trash2, Edit3, Link as LinkIcon, Eye, Calendar, DollarSign, 
   TrendingUp, CheckCircle, Clock, XCircle, Package, ChevronDown, Loader2, AlertCircle,
-  Ban, Mail, RefreshCw, ArrowRight, Zap, Building2, Check, Bus
+  Ban, Mail, RefreshCw, ArrowRight, Zap, Building2, Check, Bus, X
 } from 'lucide-react'
 import { 
   autoSyncStoresForConfirmedEventsAction,
@@ -63,8 +63,11 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState('ALL')
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('ALL')
   
+  // Filters for Tiendas
   const [storesList, setStoresList] = useState(initialStores)
   const [storeViewFilter, setStoreViewFilter] = useState<'ALL' | 'ACTIVE' | 'PAUSED'>('ALL')
+  const [storeCompanyFilter, setStoreCompanyFilter] = useState<string>('ALL')
+  const [storeSearchTerm, setStoreSearchTerm] = useState<string>('')
 
   React.useEffect(() => {
     setStoresList(initialStores)
@@ -126,11 +129,53 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     return [...activeStores, ...pausedStores]
   }, [activeStores, pausedStores])
   
+  const uniqueCompanies = useMemo(() => {
+    const set = new Set<string>()
+    initialStores.forEach(s => {
+      const title = s.title || ''
+      // Support em-dash (—), en-dash (–), and hyphen (-)
+      const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+      if (parts.length > 1) {
+        const comp = parts[parts.length - 1]
+        if (comp) set.add(comp)
+      } else {
+        const comp = getStoreCompany(title)
+        if (comp) set.add(comp)
+      }
+    })
+    return Array.from(set).filter(Boolean).sort()
+  }, [initialStores])
+
   const displayedStores = useMemo(() => {
-    if (storeViewFilter === 'ACTIVE') return activeStores
-    if (storeViewFilter === 'PAUSED') return pausedStores
-    return sortedStores
-  }, [storeViewFilter, activeStores, pausedStores, sortedStores])
+    let baseList = sortedStores
+    if (storeViewFilter === 'ACTIVE') baseList = activeStores
+    if (storeViewFilter === 'PAUSED') baseList = pausedStores
+
+    return baseList.filter(s => {
+      // 1. Company Filter
+      if (storeCompanyFilter !== 'ALL') {
+        const titleLower = (s.title || '').toLowerCase()
+        const slugLower = (s.slug || '').toLowerCase()
+        const compLower = storeCompanyFilter.toLowerCase()
+        if (!titleLower.includes(compLower) && !slugLower.includes(compLower)) {
+          return false
+        }
+      }
+
+      // 2. Search Term Filter
+      if (storeSearchTerm.trim() !== '') {
+        const query = storeSearchTerm.toLowerCase().trim()
+        const titleMatch = (s.title || '').toLowerCase().includes(query)
+        const slugMatch = (s.slug || '').toLowerCase().includes(query)
+        const showMatch = (s.events_master?.show_name || '').toLowerCase().includes(query)
+        if (!titleMatch && !slugMatch && !showMatch) {
+          return false
+        }
+      }
+
+      return true
+    })
+  }, [storeViewFilter, storeCompanyFilter, storeSearchTerm, activeStores, pausedStores, sortedStores])
 
   // Extract unique events from stores
   const uniqueEvents = useMemo(() => {
@@ -146,18 +191,6 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
       }
     })
     return Array.from(map.values())
-  }, [initialStores])
-
-  // Extract unique companies from stores
-  const uniqueCompanies = useMemo(() => {
-    const set = new Set<string>()
-    initialStores.forEach(s => {
-      const title = s.title || ''
-      const parts = title.split('—').map((x: string) => x.trim())
-      const comp = parts.length > 1 ? parts[1] : title.split('-').pop()?.trim()
-      if (comp) set.add(comp)
-    })
-    return Array.from(set).sort()
   }, [initialStores])
 
   // Derive unique unified passengers (deduplicating by phone and email)
@@ -384,41 +417,19 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     setCancellingId(null)
   }
 
-  const renderTiendas = () => (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h2 className="text-xl font-bold uppercase italic text-slate-800">Mis Tiendas Online</h2>
-          <p className="text-xs text-slate-500 mt-0.5">Control de tiendas, estados y pedidos por evento.</p>
-        </div>
+  const renderTiendas = () => {
+    const isFiltered = storeCompanyFilter !== 'ALL' || storeSearchTerm.trim() !== '' || storeViewFilter !== 'ALL'
 
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-          {/* Active vs Paused Filter Pills */}
-          <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 text-xs font-black uppercase">
-            <button
-              type="button"
-              onClick={() => setStoreViewFilter('ALL')}
-              className={`px-3 py-1.5 rounded-xl transition cursor-pointer ${storeViewFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'}`}
-            >
-              Todas ({sortedStores.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setStoreViewFilter('ACTIVE')}
-              className={`px-3 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 ${storeViewFilter === 'ACTIVE' ? 'bg-emerald-500 text-white shadow-xs' : 'text-emerald-700 hover:text-emerald-800'}`}
-            >
-              🟢 Abiertas ({activeStores.length})
-            </button>
-            <button
-              type="button"
-              onClick={() => setStoreViewFilter('PAUSED')}
-              className={`px-3 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 ${storeViewFilter === 'PAUSED' ? 'bg-amber-500 text-white shadow-xs' : 'text-amber-700 hover:text-amber-800'}`}
-            >
-              ⏸️ Cerradas / Pausadas ({pausedStores.length})
-            </button>
+    return (
+      <div className="space-y-6">
+        {/* Header with Title & Actions */}
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+          <div>
+            <h2 className="text-xl font-bold uppercase italic text-slate-800">Mis Tiendas Online</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Control de tiendas, estados y pedidos por evento.</p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
             <button 
               onClick={handleSyncStores}
               disabled={isSyncingStores}
@@ -436,9 +447,114 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
             </button>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+        {/* Filters Bar: Status Pills + Empresa Filter + Search Input */}
+        <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-slate-100 space-y-3">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            {/* Status Pills */}
+            <div className="flex items-center bg-slate-100 p-1 rounded-2xl border border-slate-200 text-xs font-black uppercase shrink-0 overflow-x-auto">
+              <button
+                type="button"
+                onClick={() => setStoreViewFilter('ALL')}
+                className={`px-3 py-1.5 rounded-xl transition cursor-pointer whitespace-nowrap ${storeViewFilter === 'ALL' ? 'bg-white text-slate-900 shadow-xs' : 'text-slate-500 hover:text-slate-900'}`}
+              >
+                Todas ({sortedStores.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStoreViewFilter('ACTIVE')}
+                className={`px-3 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 whitespace-nowrap ${storeViewFilter === 'ACTIVE' ? 'bg-emerald-500 text-white shadow-xs' : 'text-emerald-700 hover:text-emerald-800'}`}
+              >
+                🟢 Abiertas ({activeStores.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setStoreViewFilter('PAUSED')}
+                className={`px-3 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1 whitespace-nowrap ${storeViewFilter === 'PAUSED' ? 'bg-amber-500 text-white shadow-xs' : 'text-amber-700 hover:text-amber-800'}`}
+              >
+                ⏸️ Cerradas ({pausedStores.length})
+              </button>
+            </div>
+
+            {/* Inputs: Company Selector + Live Search */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 lg:max-w-2xl justify-end">
+              {/* Company Filter Dropdown */}
+              <div className="min-w-[180px] sm:w-56">
+                <div className="relative">
+                  <Building2 className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={storeCompanyFilter}
+                    onChange={e => setStoreCompanyFilter(e.target.value)}
+                    className="w-full pl-8 pr-7 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                  >
+                    <option value="ALL">Todas las Empresas ({uniqueCompanies.length})</option>
+                    {uniqueCompanies.map(c => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
+              {/* Search Box */}
+              <div className="flex-1 min-w-[200px]">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={storeSearchTerm}
+                    onChange={e => setStoreSearchTerm(e.target.value)}
+                    placeholder="Buscar show o empresa..."
+                    className="w-full pl-8 pr-7 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 placeholder-slate-400 outline-none focus:border-indigo-500"
+                  />
+                  {storeSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setStoreSearchTerm('')}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                      title="Borrar búsqueda"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Clear filters button */}
+              {isFiltered && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStoreCompanyFilter('ALL')
+                    setStoreSearchTerm('')
+                    setStoreViewFilter('ALL')
+                  }}
+                  className="px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-600 rounded-xl text-xs font-bold transition-colors cursor-pointer shrink-0 border border-rose-100 flex items-center justify-center gap-1"
+                  title="Restablecer todos los filtros"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Limpiar</span>
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Results feedback banner when filtering */}
+          {isFiltered && (
+            <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 pt-2 border-t border-slate-100">
+              <span>
+                Mostrando <strong className="text-indigo-600 font-black">{displayedStores.length}</strong> de {sortedStores.length} tiendas
+                {storeCompanyFilter !== 'ALL' && <span> • Empresa: <strong className="text-slate-800">{storeCompanyFilter}</strong></span>}
+                {storeViewFilter !== 'ALL' && <span> • Estado: <strong className="text-slate-800">{storeViewFilter === 'ACTIVE' ? 'Abiertas' : 'Cerradas'}</strong></span>}
+                {storeSearchTerm && <span> • Búsqueda: &ldquo;{storeSearchTerm}&rdquo;</span>}
+              </span>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
         {displayedStores.map(store => {
           const storeOrders = ordersList.filter(o => o.store_event_id === store.id)
           const paidOrders = storeOrders.filter(o => o.status === 'paid')
@@ -453,13 +569,13 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
 
           return (
             <div key={store.id} className={`rounded-[2.5rem] p-6 shadow-lg flex flex-col h-full relative overflow-hidden group transition-all ${isStoreAcceptingOrders(store) ? 'bg-white border border-slate-100' : 'bg-slate-50/90 border-2 border-amber-200/80'}`}>
-              <div className="flex justify-between items-start mb-3">
-                <div>
-                  <h3 className="font-black uppercase italic tracking-tight text-xl text-slate-900 leading-tight">
+              <div className="flex justify-between items-start gap-3 mb-3">
+                <div className="flex-1 min-w-0">
+                  <h3 className="font-black uppercase italic tracking-tight text-xl text-slate-900 leading-tight break-words">
                     {store.title}
                   </h3>
-                  <div className="flex items-center gap-2 mt-2">
-                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg inline-flex border border-slate-200">
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-lg inline-flex border border-slate-200 shrink-0">
                       <Calendar className="w-3.5 h-3.5" />
                       {eventDateStr ? new Date(eventDateStr + 'T12:00:00').toLocaleDateString('es-AR') : 'Sin fecha'}
                     </div>
@@ -469,20 +585,20 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                         const dl = new Date(store.sales_deadline)
                         const timeStr = dl.toLocaleTimeString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit' })
                         return (
-                          <span className="text-[10px] font-black text-rose-700 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200 uppercase tracking-wider flex items-center gap-1" title="El horario límite configurado ha finalizado">
+                          <span className="text-[10px] font-black text-rose-700 bg-rose-50 px-2 py-1 rounded-lg border border-rose-200 uppercase tracking-wider flex items-center gap-1 shrink-0" title="El horario límite configurado ha finalizado">
                             ⏰ Cerrada ({timeStr} hs)
                           </span>
                         )
                       }
                       if (!store.is_active) {
                         return (
-                          <span className="text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 uppercase tracking-wider" title="Pausada manualmente por el operador">
+                          <span className="text-[10px] font-black text-amber-700 bg-amber-50 px-2 py-1 rounded-lg border border-amber-200 uppercase tracking-wider shrink-0" title="Pausada manualmente por el operador">
                             ⏸️ Pausada
                           </span>
                         )
                       }
                       return (
-                        <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 uppercase tracking-wider" title="Abierta recibiendo pedidos">
+                        <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg border border-emerald-200 uppercase tracking-wider shrink-0" title="Abierta recibiendo pedidos">
                           🟢 Activa
                         </span>
                       )
@@ -493,7 +609,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                 <button
                   onClick={() => handleToggleStore(store.id, store.is_active)}
                   disabled={isLoadingToggle}
-                  className={`p-2 rounded-full transition-colors cursor-pointer ${store.is_active ? 'text-emerald-500 bg-emerald-50 hover:bg-emerald-100' : 'text-slate-400 bg-slate-50 hover:bg-slate-200'}`}
+                  className={`p-2 rounded-full transition-colors cursor-pointer shrink-0 ${store.is_active ? 'text-emerald-500 bg-emerald-50 hover:bg-emerald-100' : 'text-slate-400 bg-slate-50 hover:bg-slate-200'}`}
                   title={store.is_active ? "Desactivar tienda" : "Activar tienda"}
                 >
                   {isLoadingToggle ? <Loader2 className="w-6 h-6 animate-spin" /> : store.is_active ? <ToggleRight className="w-7 h-7" /> : <ToggleLeft className="w-7 h-7" />}
@@ -501,15 +617,33 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
               </div>
 
               <div className="flex-1 space-y-4">
-                {/* Link Box */}
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl flex-1 border border-slate-100">
-                    <span className="text-xs font-semibold text-slate-700 truncate">/tienda/{store.slug}</span>
-                    <button onClick={() => handleCopyLink(store.slug)} className="text-indigo-500 hover:text-indigo-700 ml-auto cursor-pointer p-1 hover:bg-indigo-50 rounded" title="Copiar link">
-                      <Copy className="w-4 h-4" />
+                {/* Redesigned Store Link Bar */}
+                <div className="flex items-center gap-1.5 bg-slate-50 p-1.5 pl-3 rounded-2xl border border-slate-200/90 shadow-2xs">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-1">
+                    <LinkIcon className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                    <span className="text-[11px] font-semibold text-slate-600 truncate font-mono select-all" title={`/tienda/${store.slug}`}>
+                      /tienda/{store.slug}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-1 shrink-0">
+                    <button 
+                      type="button"
+                      onClick={() => handleCopyLink(store.slug)} 
+                      className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition cursor-pointer border border-transparent hover:border-indigo-100" 
+                      title="Copiar link de la tienda pública"
+                    >
+                      <Copy className="w-3.5 h-3.5" />
                     </button>
-                    <a href={`/tienda/${store.slug}`} target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:text-indigo-800 font-bold text-xs flex items-center gap-1 bg-indigo-50 px-2.5 py-1 rounded-lg" title="Abrir tienda">
-                      Abrir <ExternalLink className="w-3 h-3" />
+                    <a 
+                      href={`/tienda/${store.slug}`} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs px-3 py-1.5 rounded-xl transition shadow-xs cursor-pointer shrink-0" 
+                      title="Abrir tienda en nueva pestaña"
+                    >
+                      <span>Abrir</span>
+                      <ExternalLink className="w-3 h-3" />
                     </a>
                   </div>
                 </div>
@@ -554,7 +688,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                     className="flex-1 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200/80 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-xs"
                     title="Abrir el Tablero de Control del Coordinador (Pedidos, Lista de Pasajeros y Check-in GPS)"
                   >
-                    <Bus size={13} className="text-emerald-600" />
+                    <Bus size={13} className="text-emerald-600 shrink-0" />
                     <span>🧭 Tablero Coordinador</span>
                   </Link>
                   <button
@@ -564,7 +698,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                       navigator.clipboard.writeText(coordUrl)
                       alert("¡Link del Tablero de Coordinador copiado al portapapeles! Listo para enviar por WhatsApp.")
                     }}
-                    className="py-2.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center justify-center transition cursor-pointer"
+                    className="py-2.5 px-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold text-xs flex items-center justify-center transition cursor-pointer shrink-0"
                     title="Copiar link del coordinador para enviar por WhatsApp"
                   >
                     <Copy size={13} />
@@ -616,6 +750,28 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
           )
         })}
 
+        {displayedStores.length === 0 && sortedStores.length > 0 && (
+          <div className="col-span-full py-16 text-center text-slate-500 bg-white border border-slate-100 rounded-[2.5rem] p-8 shadow-sm">
+            <Store className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+            <p className="text-lg font-bold text-slate-700">No se encontraron tiendas</p>
+            <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+              No hay tiendas que coincidan con los filtros seleccionados en esta vista.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setStoreCompanyFilter('ALL')
+                setStoreSearchTerm('')
+                setStoreViewFilter('ALL')
+              }}
+              className="mt-4 px-4 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-bold rounded-xl transition cursor-pointer border border-indigo-100 inline-flex items-center gap-1.5"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              Restablecer filtros
+            </button>
+          </div>
+        )}
+
         {sortedStores.length === 0 && (
           <div className="col-span-full py-16 text-center text-slate-400 border-2 border-dashed border-slate-200 rounded-[2.5rem]">
             <Store className="w-12 h-12 mx-auto mb-3 text-slate-300" />
@@ -626,6 +782,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
       </div>
     </div>
   )
+}
 
   const renderPedidos = () => {
     return (

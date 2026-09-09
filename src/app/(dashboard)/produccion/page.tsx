@@ -652,7 +652,7 @@ export default function ProduccionPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto p-4 md:p-10 space-y-10">
+    <div className="max-w-7xl mx-auto p-2 sm:p-6 md:p-10 space-y-6 md:space-y-10">
       
       {/* Estilos locales para inyectar CSS que oculte barras de scroll nativas en paneles verticales */}
       <style>{`
@@ -664,25 +664,25 @@ export default function ProduccionPage() {
           scrollbar-width: none;  /* Firefox */
         }
       `}</style>
-      <div className="grid lg:grid-cols-3 gap-8 items-start">
+      <div className="grid lg:grid-cols-3 gap-6 md:gap-8 items-start">
         
         {/* COLUMNA 1 y 2: PLAN DE COCINA CONSOLIDADO */}
-        <div className="lg:col-span-2 space-y-10">
+        <div className="lg:col-span-2 space-y-6 md:space-y-10">
           
           {/* CONTROL PANEL */}
-          <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-slate-100 print:hidden">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+          <div className="bg-white rounded-3xl md:rounded-[2.5rem] p-5 sm:p-8 shadow-xs border border-slate-100 print:hidden">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-5 md:gap-6">
               <div>
                 <div className="flex items-center gap-2 text-indigo-600 mb-1">
-                  <ChefHat size={20} />
+                  <ChefHat size={18} />
                   <span className="text-[10px] font-black uppercase tracking-widest">Centro de Producción</span>
                 </div>
-                <h1 className="text-3xl font-black text-slate-900 tracking-tighter">Plan de Cocina Consolidado</h1>
-                <p className="text-sm text-slate-400 mt-1">Agrupado por Evento — suma de TODAS las empresas</p>
+                <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tighter">Plan de Cocina Consolidado</h1>
+                <p className="text-xs sm:text-sm text-slate-400 mt-0.5">Agrupado por Evento — suma de TODAS las empresas</p>
               </div>
-              <div className="flex flex-wrap gap-4 w-full md:w-auto items-center">
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3 w-full md:w-auto items-stretch sm:items-center">
                 <select
-                  className="bg-slate-50 border border-slate-200 p-4 rounded-2xl font-bold flex-1 md:w-72 outline-none focus:ring-2 focus:ring-indigo-50 transition"
+                  className="bg-slate-50 border border-slate-200 p-3.5 sm:p-4 rounded-2xl font-bold w-full md:w-72 outline-none focus:ring-2 focus:ring-indigo-50 transition text-base md:text-sm"
                   value={selectedDate}
                   onChange={e => setSelectedDate(e.target.value)}>
                   <option value="">-- Seleccionar Día de Producción --</option>
@@ -698,29 +698,29 @@ export default function ProduccionPage() {
                 </select>
                 
                 {consolidado && (
-                  <>
+                  <div className="grid grid-cols-2 sm:flex gap-2 w-full sm:w-auto">
                     <button 
                       onClick={handleCopyCocina}
-                      className="bg-emerald-600 text-white px-5 py-4 rounded-2xl hover:bg-emerald-700 transition shadow-md text-xs font-black uppercase tracking-wider flex items-center gap-2"
+                      className="bg-emerald-600 text-white px-4 py-3.5 sm:px-5 sm:py-4 rounded-2xl hover:bg-emerald-700 transition shadow-md text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2"
                       title="Copiar pedido para WhatsApp (Cocina)"
                     >
-                      <MessageSquare size={16} /> WhatsApp Cocina
+                      <MessageSquare size={16} /> Cocina
                     </button>
                     
                     <button 
                       onClick={handleCopyLogistica}
-                      className="bg-blue-600 text-white px-5 py-4 rounded-2xl hover:bg-blue-700 transition shadow-md text-xs font-black uppercase tracking-wider flex items-center gap-2"
+                      className="bg-blue-600 text-white px-4 py-3.5 sm:px-5 sm:py-4 rounded-2xl hover:bg-blue-700 transition shadow-md text-xs font-black uppercase tracking-wider flex items-center justify-center gap-2"
                       title="Copiar hoja de ruta para WhatsApp (Logística)"
                     >
-                      <Truck size={16} /> WhatsApp Logística
+                      <Truck size={16} /> Logística
                     </button>
-                  </>
+                  </div>
                 )}
 
                 <button onClick={handlePrint}
-                  className="bg-slate-900 text-white p-4 rounded-2xl hover:bg-slate-800 transition shadow-lg shrink-0"
+                  className="bg-slate-900 text-white p-3.5 sm:p-4 rounded-2xl hover:bg-slate-800 transition shadow-lg flex items-center justify-center shrink-0 min-h-[44px]"
                   title="Imprimir PDF Consolidado">
-                  <Printer size={24} />
+                  <Printer size={20} />
                 </button>
               </div>
             </div>
@@ -731,62 +731,62 @@ export default function ProduccionPage() {
               <Loader2 className="animate-spin text-indigo-600" size={40} />
             </div>
           ) : consolidado ? (
-            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="space-y-6 md:space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
               {/* Date Header */}
-              <div className="text-center space-y-3 border-b-4 border-slate-900 pb-8">
-                <h2 className="text-6xl md:text-8xl font-black text-slate-900 uppercase tracking-tighter leading-none">
+              <div className="text-center space-y-3 border-b-4 border-slate-900 pb-6 md:pb-8">
+                <h2 className="text-4xl sm:text-6xl md:text-8xl font-black text-slate-900 uppercase tracking-tighter leading-none">
                   {new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')}
                 </h2>
-                <div className="flex flex-col justify-center items-center gap-3 mt-6">
+                <div className="flex flex-col justify-center items-center gap-2 mt-4">
                   {eventsForSelectedDate.map(e => (
-                     <span key={e.id} className="flex items-center gap-2 text-xl font-bold text-slate-500 bg-slate-100 px-4 py-2 rounded-xl">
-                       <Calendar size={18} /> {e.show_name} <ChevronRight size={18} /> {e.venue_name || e.venues?.name || e.venue}
+                     <span key={e.id} className="flex flex-wrap items-center justify-center gap-1.5 text-sm sm:text-lg font-bold text-slate-600 bg-slate-100 px-3 py-1.5 rounded-xl text-center">
+                       <Calendar size={15} /> {e.show_name} <ChevronRight size={15} /> {e.venue_name || e.venues?.name || e.venue}
                      </span>
                   ))}
                 </div>
 
                 {/* Companies */}
                 {consolidado.companies?.length > 0 && (
-                  <div className="flex flex-wrap justify-center gap-2 mt-4">
+                  <div className="flex flex-wrap justify-center gap-1.5 mt-3">
                     {consolidado.companies.map((c: string) => (
-                      <span key={c} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-sm font-bold border border-indigo-200">
-                        <Building2 size={12} /> {c}
+                      <span key={c} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full text-xs font-bold border border-indigo-200">
+                        <Building2 size={11} /> {c}
                       </span>
                     ))}
                   </div>
                 )}
 
                 {/* PAX Summary */}
-                <div className="flex justify-center gap-6 mt-4">
+                <div className="flex justify-center gap-4 sm:gap-6 mt-4">
                   <div className="text-center">
-                    <p className="text-xs font-black text-slate-400 uppercase">PAX Proyectados (Total)</p>
-                    <p className="text-3xl font-black text-slate-800">{totalProjectedPax}</p>
+                    <p className="text-[10px] sm:text-xs font-black text-slate-400 uppercase">PAX Proyectados</p>
+                    <p className="text-2xl sm:text-3xl font-black text-slate-800">{totalProjectedPax}</p>
                   </div>
                   <div className="w-px bg-slate-200" />
                   <div className="text-center">
-                    <p className="text-xs font-black text-slate-400 uppercase">Unidades Cargadas</p>
-                    <p className="text-3xl font-black text-indigo-600">{consolidado.sold + consolidado.liberated}</p>
+                    <p className="text-[10px] sm:text-xs font-black text-slate-400 uppercase">Unidades Cargadas</p>
+                    <p className="text-2xl sm:text-3xl font-black text-indigo-600">{consolidado.sold + consolidado.liberated}</p>
                   </div>
                 </div>
               </div>
 
               {/* Category Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
                 {consolidado.items.map((item: any) => {
                   const itemSpecials = consolidado.specials?.[item.key] || []
                   return (
-                    <div key={item.label} className="bg-white border-2 border-slate-900 rounded-[3rem] p-10 flex flex-col items-center justify-center text-center gap-2">
-                      <span className="text-xl font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
-                      <span className={`text-9xl font-black tabular-nums tracking-tighter ${item.qty === 0 ? 'text-slate-200' : 'text-slate-900'}`}>
+                    <div key={item.label} className="bg-white border-2 border-slate-900 rounded-3xl md:rounded-[3rem] p-6 sm:p-10 flex flex-col items-center justify-center text-center gap-1 sm:gap-2">
+                      <span className="text-sm sm:text-xl font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
+                      <span className={`text-6xl sm:text-8xl md:text-9xl font-black tabular-nums tracking-tighter ${item.qty === 0 ? 'text-slate-200' : 'text-slate-900'}`}>
                         {item.qty}
                       </span>
                       {itemSpecials.length > 0 && (
-                        <div className="mt-4 w-full border-t-2 border-dashed border-slate-100 pt-4 flex flex-col gap-2">
+                        <div className="mt-3 w-full border-t-2 border-dashed border-slate-100 pt-3 flex flex-col gap-2">
                           {itemSpecials.map((s: any, i: number) => (
-                            <div key={i} className="flex justify-between items-center bg-amber-50 p-3 rounded-2xl border border-amber-200">
-                              {s.qty > 0 && <span className="text-3xl font-black text-amber-600">{s.qty}</span>}
-                              <span className={`${s.qty > 0 ? 'text-sm' : 'text-base'} font-black text-amber-900 uppercase italic`}>"{s.note}"</span>
+                            <div key={i} className="flex justify-between items-center bg-amber-50 p-2.5 sm:p-3 rounded-2xl border border-amber-200">
+                              {s.qty > 0 && <span className="text-xl sm:text-3xl font-black text-amber-600">{s.qty}</span>}
+                              <span className={`${s.qty > 0 ? 'text-xs' : 'text-sm'} font-black text-amber-900 uppercase italic`}>"{s.note}"</span>
                             </div>
                           ))}
                         </div>
@@ -796,32 +796,32 @@ export default function ProduccionPage() {
                 })}
 
                 {/* Total */}
-                <div className="md:col-span-2 bg-slate-900 text-white rounded-[3rem] p-12 flex flex-col md:flex-row items-center justify-between gap-6">
-                  <div className="flex items-center gap-6">
-                    <div className="p-6 bg-white/10 rounded-full">
-                      <Calculator size={64} />
+                <div className="sm:col-span-2 bg-slate-900 text-white rounded-3xl md:rounded-[3rem] p-6 sm:p-12 flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-6">
+                  <div className="flex items-center gap-4 sm:gap-6">
+                    <div className="p-4 sm:p-6 bg-white/10 rounded-full">
+                      <Calculator size={36} className="sm:w-16 sm:h-16" />
                     </div>
-                    <div className="text-center md:text-left">
-                      <h3 className="text-2xl font-black uppercase tracking-widest text-slate-400">Total Producción Comida</h3>
-                      <p className="text-sm font-bold text-indigo-400">Suma de Todas las Empresas del Evento</p>
+                    <div className="text-center sm:text-left">
+                      <h3 className="text-lg sm:text-2xl font-black uppercase tracking-widest text-slate-400">Total Producción Comida</h3>
+                      <p className="text-xs sm:text-sm font-bold text-indigo-400">Suma de Todas las Empresas del Evento</p>
                     </div>
                   </div>
-                  <span className="text-9xl font-black tracking-tighter">{consolidado.total}</span>
+                  <span className="text-6xl sm:text-8xl md:text-9xl font-black tracking-tighter">{consolidado.total}</span>
                 </div>
               </div>
 
-              <div className="text-center p-10 border-t-2 border-dashed border-slate-200">
-                <p className="text-slate-400 font-bold uppercase tracking-widest italic">
+              <div className="text-center p-6 sm:p-10 border-t-2 border-dashed border-slate-200">
+                <p className="text-slate-400 text-xs sm:text-sm font-bold uppercase tracking-widest italic">
                   Sistema Super Catering Manager — {isMounted ? new Date().toLocaleString('es-AR') : ""}
                 </p>
               </div>
             </div>
           ) : (
-            <div className="text-center py-40 space-y-6 bg-slate-50 rounded-[4rem] border-4 border-dashed border-slate-200 print:hidden">
-              <TableIcon className="mx-auto text-slate-200" size={100} />
+            <div className="text-center py-24 sm:py-40 space-y-4 sm:space-y-6 bg-slate-50 rounded-3xl md:rounded-[4rem] border-4 border-dashed border-slate-200 print:hidden p-4">
+              <TableIcon className="mx-auto text-slate-200" size={64} />
               <div>
-                <h3 className="text-2xl font-black text-slate-400 uppercase tracking-widest">Esperando Selección</h3>
-                <p className="text-slate-400 font-medium">Elegí una fecha para generar la hoja de producción consolidada para todo ese día.</p>
+                <h3 className="text-lg sm:text-2xl font-black text-slate-400 uppercase tracking-widest">Esperando Selección</h3>
+                <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-sm mx-auto">Elegí una fecha para generar la hoja de producción consolidada para todo ese día.</p>
               </div>
             </div>
           )}

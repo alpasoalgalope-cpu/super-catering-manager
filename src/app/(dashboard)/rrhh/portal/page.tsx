@@ -728,22 +728,64 @@ export default function EmployeePortalPage() {
           </button>
         </div>
 
-        <div className="overflow-hidden border border-slate-100 rounded-2xl">
-          <table className="w-full text-left border-collapse">
-            <thead className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-widest">
-              <tr>
+        {/* Mobile Card View (Solo Celulares) */}
+        <div className="md:hidden divide-y divide-slate-100">
+          {legajos.map(doc => (
+            <div key={doc.id} className="p-4 space-y-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h4 className="font-black text-xs text-slate-800 uppercase">{doc.titulo}</h4>
+                  <p className="text-[10px] text-slate-400 font-bold mt-0.5">
+                    {doc.periodo ? `Período: ${doc.periodo} • ` : ''}{doc.created_at ? new Date(doc.created_at).toLocaleDateString('es-AR') : '—'}
+                  </p>
+                </div>
+                <span className={`px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider shrink-0 ${
+                  doc.tipo === 'certificado_medico' ? 'bg-amber-50 text-amber-600 border border-amber-150' :
+                  doc.tipo === 'arca_931' ? 'bg-emerald-50 text-emerald-600 border border-emerald-150' :
+                  doc.tipo === 'alta_temprana' ? 'bg-indigo-50 text-indigo-600 border border-indigo-150' :
+                  'bg-slate-100 text-slate-600'
+                }`}>
+                  {doc.tipo === 'certificado_medico' ? 'Médico' :
+                   doc.tipo === 'arca_931' ? 'F.931' :
+                   doc.tipo === 'alta_temprana' ? 'Alta' :
+                   doc.tipo.toUpperCase()}
+                </span>
+              </div>
+              <a
+                href={doc.archivo_url}
+                target="_blank"
+                rel="noreferrer"
+                className="w-full py-2 bg-slate-100 hover:bg-indigo-50 text-slate-700 hover:text-indigo-600 rounded-xl transition text-xs font-black uppercase tracking-wider flex items-center justify-center gap-1.5 min-h-[40px]"
+              >
+                <ExternalLink size={14} /> Ver en Google Drive
+              </a>
+            </div>
+          ))}
+
+          {legajos.length === 0 && (
+            <div className="p-8 text-center text-slate-400 text-xs font-medium">
+              No tienes documentos de legajo o certificados médicos cargados.
+            </div>
+          )}
+        </div>
+
+        {/* Desktop Table (Tablets y Monitores) */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr className="border-b border-slate-100 text-[10px] font-black text-slate-400 uppercase tracking-wider">
                 <th className="p-4 pl-6">Documento</th>
                 <th className="p-4">Tipo</th>
-                <th className="p-4">Período</th>
-                <th className="p-4">Fecha Carga</th>
-                <th className="p-4 text-right pr-6">Acción</th>
+                <th className="p-4">Período / Referencia</th>
+                <th className="p-4">Fecha de Carga</th>
+                <th className="p-4 text-right pr-6">Acceso</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-50 text-xs font-bold text-slate-700">
+            <tbody className="divide-y divide-slate-100 font-bold text-slate-700">
               {legajos.map(doc => (
                 <tr key={doc.id} className="hover:bg-slate-50/60 transition">
-                  <td className="p-4 pl-6 font-black text-slate-800 flex items-center gap-2">
-                    <FileText size={16} className="text-slate-400" />
+                  <td className="p-4 pl-6 font-black text-slate-900 flex items-center gap-2">
+                    <FileText size={16} className="text-indigo-600" />
                     {doc.titulo}
                   </td>
                   <td className="p-4">
@@ -776,7 +818,7 @@ export default function EmployeePortalPage() {
 
               {legajos.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center p-12 text-slate-400 italic">
+                  <td colSpan={5} className="p-8 text-center text-slate-400 italic text-[11px]">
                     No tienes documentos de legajo o certificados médicos cargados en el sistema.
                   </td>
                 </tr>
@@ -788,12 +830,12 @@ export default function EmployeePortalPage() {
 
       {/* Modal Subir Certificado Médico */}
       {showCertModal && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex justify-between items-center">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl p-5 sm:p-8 max-w-md w-full shadow-2xl space-y-5 border border-slate-100 max-h-[92vh] overflow-y-auto animate-in slide-in-from-bottom-6 duration-300">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-lg font-black text-slate-800 uppercase italic">Subir Certificado Médico</h3>
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Se guardará en Google Drive y notificará a RRHH</p>
+                <h3 className="text-base sm:text-lg font-black text-slate-800 uppercase italic">Subir Certificado Médico</h3>
+                <p className="text-[9px] sm:text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Se guardará en Google Drive y notificará a RRHH</p>
               </div>
               <button
                 onClick={() => setShowCertModal(false)}
@@ -811,7 +853,7 @@ export default function EmployeePortalPage() {
                   placeholder="Ej: Licencia médica por cuadro gripal"
                   value={certTitulo}
                   onChange={(e) => setCertTitulo(e.target.value)}
-                  className="w-full bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                  className="w-full bg-slate-50 border-none outline-none font-bold text-base md:text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
                 />
               </div>
 
@@ -823,7 +865,7 @@ export default function EmployeePortalPage() {
                     value={certFechaInicio}
                     onChange={(e) => setCertFechaInicio(e.target.value)}
                     required
-                    className="w-full bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                    className="w-full bg-slate-50 border-none outline-none font-bold text-base md:text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
                 <div className="space-y-1">
@@ -833,34 +875,53 @@ export default function EmployeePortalPage() {
                     value={certFechaFin}
                     onChange={(e) => setCertFechaFin(e.target.value)}
                     required
-                    className="w-full bg-slate-50 border-none outline-none font-bold text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
+                    className="w-full bg-slate-50 border-none outline-none font-bold text-base md:text-xs p-3 rounded-xl focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
               </div>
 
               <div className="space-y-1">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Archivo / Foto del Certificado (PDF o Imagen) *</label>
-                <input
-                  type="file"
-                  accept="image/*,application/pdf"
-                  required
-                  onChange={(e) => setCertFile(e.target.files?.[0] || null)}
-                  className="w-full text-xs text-slate-500 file:mr-3 file:py-2.5 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-black file:bg-indigo-50 file:text-indigo-600 hover:file:bg-indigo-100 cursor-pointer bg-slate-50 p-2 rounded-xl"
-                />
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Foto o Archivo del Certificado *</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <label className="cursor-pointer bg-amber-500 hover:bg-amber-600 text-white text-xs font-black uppercase tracking-wider p-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs">
+                    <span>📸</span> Sacar Foto
+                    <input 
+                      type="file" 
+                      accept="image/*" 
+                      capture="environment"
+                      className="hidden" 
+                      onChange={(e) => setCertFile(e.target.files?.[0] || null)} 
+                    />
+                  </label>
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 text-white text-xs font-black uppercase tracking-wider p-3 rounded-xl transition flex items-center justify-center gap-1.5 shadow-xs">
+                    <UploadCloud size={14} /> Archivo
+                    <input 
+                      type="file" 
+                      accept="image/*,application/pdf" 
+                      className="hidden" 
+                      onChange={(e) => setCertFile(e.target.files?.[0] || null)} 
+                    />
+                  </label>
+                </div>
+                {certFile && (
+                  <p className="text-[10px] font-bold text-emerald-600 bg-emerald-50 p-2 rounded-xl border border-emerald-200 mt-2 truncate">
+                    ✓ Archivo seleccionado: {certFile.name}
+                  </p>
+                )}
               </div>
 
               <div className="pt-2 flex gap-2">
                 <button
                   type="button"
                   onClick={() => setShowCertModal(false)}
-                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs uppercase tracking-wider rounded-xl transition"
+                  className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 font-black text-xs uppercase tracking-wider rounded-xl transition min-h-[44px]"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={uploadingCert || !certFile || !certFechaInicio || !certFechaFin}
-                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-md shadow-indigo-100"
+                  className="flex-1 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs uppercase tracking-wider rounded-xl transition disabled:opacity-50 flex items-center justify-center gap-2 shadow-md shadow-indigo-100 min-h-[44px]"
                 >
                   {uploadingCert ? (
                     <>

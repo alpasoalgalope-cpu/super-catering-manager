@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { OnlineStoreEvent } from '@/types/online-sales'
 import { supabase } from '@/lib/supabase'
 import { 
@@ -42,16 +42,143 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
     vegano: 0,
   })
 
+  const [liveAssignments, setLiveAssignments] = useState<any[]>(busAssignments)
+
+  const [formData, setFormData] = useState({
+    fullName: '',
+    email: '',
+    phone: '',
+    travelDate: store.available_dates?.[0] || store.events_master?.event_date || '',
+    busIdentifier: '',
+  })
+
+  // Sync live assignments from props
+  useEffect(() => {
+    if (busAssignments && busAssignments.length > 0) {
+      setLiveAssignments(busAssignments)
+    }
+  }, [busAssignments])
+
+  // Client-side fallback to guarantee assignments load even with aggressive SSR caching
+  useEffect(() => {
+    async function fetchLiveAssignments() {
+      try {
+        const title = store.title || ''
+        const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+        const storeCompany = parts.length > 1 ? parts[parts.length - 1] : ''
+        const cleanStoreComp = storeCompany.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+        const eventIds: string[] = []
+        if (store.event_master_id) {
+          eventIds.push(store.event_master_id)
+        } else if (store.available_dates && store.available_dates.length > 0) {
+          const showName = (store.title || '').split(/[—–-]/)[0]?.trim()
+          const { data: dateEvents } = await supabase
+            .from('events_master')
+            .select('id')
+            .in('event_date', store.available_dates)
+            .ilike('show_name', `%${showName}%`)
+
+          if (dateEvents) {
+            dateEvents.forEach(e => {
+              if (!eventIds.includes(e.id)) eventIds.push(e.id)
+            })
+          }
+        }
+
+        if (eventIds.length === 0) return
+
+        const { data: assignments, error } = await supabase
+          .from('event_bus_assignments')
+          .select(`
+            id,
+            event_id,
+            crew_count,
+            events_master (
+              id,
+              event_date,
+              show_name
+            ),
+            clients (
+              id,
+              name,
+              company
+            ),
+            vehicles (
+              id,
+              internal_name,
+              vehicle_type
+            ),
+            coordinators (
+              id,
+              name,
+              phone,
+              company
+            )
+          `)
+          .in('event_id', eventIds)
+
+        if (assignments && assignments.length > 0) {
+          if (cleanStoreComp) {
+            const filtered = assignments.filter((a: any) => {
+              const clientObj = Array.isArray(a.clients) ? a.clients[0] : a.clients
+              const coordObj = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
+
+              const clientNameClean = (clientObj?.name || clientObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+              const coordCompClean = (coordObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+              return (
+                (clientNameClean && (clientNameClean.includes(cleanStoreComp) || cleanStoreComp.includes(clientNameClean))) ||
+                (coordCompClean && (coordCompClean.includes(cleanStoreComp) || cleanStoreComp.includes(coordCompClean)))
+              )
+            })
+            setLiveAssignments(filtered.length > 0 ? filtered : assignments)
+          } else {
+            setLiveAssignments(assignments)
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching live assignments:', err)
+      }
+    }
+
+    fetchLiveAssignments()
+  }, [store])
+
   // Build options for Micro / Coordinator dropdown filtered strictly for this event's assignments
   const busOptions = useMemo(() => {
     const list: string[] = []
+    const targetAssignments = liveAssignments && liveAssignments.length > 0 ? liveAssignments : busAssignments
 
-    if (busAssignments && busAssignments.length > 0) {
-      busAssignments.forEach(b => {
-        const vehicleName = b.vehicles?.internal_name || 'Micro'
-        const coorName = b.coordinators?.name
-        const label = coorName ? `${vehicleName} (Coor: ${coorName})` : vehicleName
-        if (!list.includes(label)) list.push(label)
+    if (targetAssignments && targetAssignments.length > 0) {
+      // Filter assignments by selected travelDate if available
+      const matchingDate = targetAssignments.filter((b: any) => {
+        const evDate = b.event_date || (Array.isArray(b.events_master) ? b.events_master[0]?.event_date : b.events_master?.event_date)
+        if (!evDate || !formData.travelDate) return true
+        return evDate === formData.travelDate
+      })
+
+      const targetList = matchingDate.length > 0 ? matchingDate : targetAssignments
+
+      targetList.forEach((b: any) => {
+        const vehicleObj = Array.isArray(b.vehicles) ? b.vehicles[0] : b.vehicles
+        const coordObj = Array.isArray(b.coordinators) ? b.coordinators[0] : b.coordinators
+
+        const vehicleName = vehicleObj?.internal_name?.trim() || ''
+        const coorName = coordObj?.name?.trim() || ''
+
+        let label = ''
+        if (vehicleName && coorName) {
+          label = `${vehicleName} (${coorName})`
+        } else if (vehicleName) {
+          label = vehicleName
+        } else if (coorName) {
+          label = coorName
+        }
+
+        if (label && !list.includes(label)) {
+          list.push(label)
+        }
       })
     }
 
@@ -61,15 +188,18 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
     }
 
     return list
-  }, [busAssignments])
+  }, [liveAssignments, busAssignments, formData.travelDate])
 
-  const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    phone: '',
-    travelDate: store.available_dates?.[0] || store.events_master?.event_date || '',
-    busIdentifier: busOptions[0] || '',
-  })
+  // Sync busIdentifier with busOptions
+  useEffect(() => {
+    if (busOptions.length > 0) {
+      if (!formData.busIdentifier || formData.busIdentifier === 'N/A' || !busOptions.includes(formData.busIdentifier)) {
+        if (busOptions[0] !== 'N/A' || !formData.busIdentifier) {
+          setFormData(prev => ({ ...prev, busIdentifier: busOptions[0] }))
+        }
+      }
+    }
+  }, [busOptions])
 
   const [isLoading, setIsLoading] = useState(false)
   const [showInfoModal, setShowInfoModal] = useState<string | null>(null)

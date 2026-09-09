@@ -466,8 +466,8 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
         company_name: cRecord.name,
         price_base: cRecord.vianda_price || 8500,
         price_sintacc_base: cRecord.sintacc_price || cRecord.vianda_price || 8500,
-        price_sintacc_threshold: 10000,
-        sintacc_limit_pct: cRecord.sintacc_included_pct || 5,
+        price_sintacc_threshold: cRecord.sintacc_price || 10000,
+        sintacc_limit_pct: cRecord.sintacc_included_pct !== undefined && cRecord.sintacc_included_pct !== null ? cRecord.sintacc_included_pct : 0,
         free_unit_step: cRecord.free_unit_step || null,
         coordinator_included: true,
         driver_included: true,
@@ -619,7 +619,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     let SinTaccFacturables = 0
     let price_base = Number(activeRule?.price_base) || (isRVTraslados || isProximaEstacion ? 10000 : isValBus ? 8500 : isRockEnLasVenas ? 7000 : isTercoTour ? 6000 : 7000)
     let price_sintacc_effective = Number(activeRule?.price_sintacc_base) || (isRVTraslados || isProximaEstacion ? 13000 : isValBus ? 10000 : price_base)
-    let price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold) || 10000
+    let price_sintacc_threshold = Number(activeRule?.price_sintacc_threshold) || Number(activeRule?.price_sintacc_base) || 10000
 
     let amount = 0
     let rvValidationErrors: string[] = []
@@ -656,14 +656,16 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
       // Cupo Sin TACC % de tolerancia:
       SinTaccFacturables = consolidated.st
-      const limitPct = Number(activeRule?.sintacc_limit_pct || 5)
-      CupoGratis = Math.ceil(pax * (limitPct / 100))
+      const limitPct = activeRule?.sintacc_limit_pct !== undefined && activeRule?.sintacc_limit_pct !== null && activeRule?.sintacc_limit_pct !== "" 
+        ? Number(activeRule.sintacc_limit_pct) 
+        : 0
+      CupoGratis = limitPct > 0 ? Math.ceil(pax * (limitPct / 100)) : 0
       SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
       const sinTaccEnCupo = Math.min(SinTaccFacturables, CupoGratis)
 
       const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
       amount = (commonFacturables * price_base) + 
-               (sinTaccEnCupo * price_base) + 
+               (sinTaccEnCupo * (limitPct > 0 ? price_base : price_sintacc_effective)) + 
                (SinTaccExcedentes * price_sintacc_threshold)
 
     } else if (isRVTraslados || isProximaEstacion) {
@@ -737,8 +739,10 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     } else {
       // Standard calculation for other companies
       SinTaccFacturables = Math.max(0, consolidated.st - consolidated.liberated)
-      const limitPct = Number(activeRule?.sintacc_limit_pct || 0)
-      CupoGratis = Math.ceil(pax * (limitPct / 100))
+      const limitPct = activeRule?.sintacc_limit_pct !== undefined && activeRule?.sintacc_limit_pct !== null && activeRule?.sintacc_limit_pct !== "" 
+        ? Number(activeRule.sintacc_limit_pct) 
+        : 0
+      CupoGratis = limitPct > 0 ? Math.ceil(pax * (limitPct / 100)) : 0
       SinTaccExcedentes = Math.max(0, SinTaccFacturables - CupoGratis)
 
       price_sintacc_effective = Number(activeRule?.special_sintacc_price) > 0
@@ -1586,7 +1590,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                             <p className="text-[9px] text-white/50">Hasta 3 viandas (choferes + coordis) por coche incluidas.</p>
                             
                             <div className="flex justify-between items-center pt-1 border-t border-white/5">
-                              <span className="text-white/70">Cupo Sin TACC ({activeRule.sintacc_limit_pct || 5}%):</span>
+                              <span className="text-white/70">Cupo Sin TACC ({activeRule.sintacc_limit_pct !== undefined && activeRule.sintacc_limit_pct !== null ? activeRule.sintacc_limit_pct : 0}%):</span>
                               <span className="font-bold text-white">{totals.CupoGratis} un.</span>
                             </div>
                           </div>

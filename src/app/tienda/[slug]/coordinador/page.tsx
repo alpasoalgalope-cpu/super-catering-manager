@@ -66,7 +66,7 @@ async function resolveStoreBySlug(slug: string) {
       combo_vegan_enabled: true,
       combo_vegan_price: 10000,
       combo_vegan_name: 'Combo Vegano + Agua sin Gas',
-      combo_vegan_desc: 'Sándwich Vegano en Ciabatta con vegetales asados + Agua Mineral.'
+      combo_vegan_desc: 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
     }
 
     const { data: created } = await supabase

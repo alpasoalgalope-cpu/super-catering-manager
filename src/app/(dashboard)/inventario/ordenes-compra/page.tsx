@@ -1,20 +1,24 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useEffect, useState, useMemo } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { ShoppingCart, Plus, Package, Clock, CheckCircle2, XCircle, Search, Truck, Edit2, Trash2 } from "lucide-react"
+import { ShoppingCart, Plus, Package, Clock, CheckCircle2, XCircle, Search, Truck, Edit2, Trash2, MessageSquare, ArrowUpDown } from "lucide-react"
 import { PurchaseOrder } from "@/types/inventory"
 import CreatePOModal from "@/components/inventory/CreatePOModal"
 import ReceivePOModal from "@/components/inventory/ReceivePOModal"
+import ExportPOWhatsAppModal from "@/components/inventory/ExportPOWhatsAppModal"
 
 export default function PurchaseOrdersPage() {
   const [orders, setOrders] = useState<PurchaseOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [showModal, setShowModal] = useState(false)
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false)
+  const [selectedWhatsAppOrderId, setSelectedWhatsAppOrderId] = useState<string | null>(null)
   const [editOrderId, setEditOrderId] = useState<string | null>(null)
   const [receiveOrderId, setReceiveOrderId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState("TODAS")
+  const [sortBy, setSortBy] = useState<'fecha_asc' | 'fecha_desc' | 'proveedor'>('fecha_asc')
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const supabase = createClient()
@@ -29,12 +33,12 @@ export default function PurchaseOrdersPage() {
       .from('purchase_orders')
       .select(`
         *,
-        proveedores (nombre),
+        proveedores (id, nombre, contacto),
         purchase_order_items (
           producto_id,
           cantidad,
           costo_unitario,
-          productos (nombre, unidad_medida)
+          productos (id, nombre, unidad_medida, gramos_por_unidad)
         )
       `)
       .order('created_at', { ascending: false })
@@ -86,12 +90,32 @@ export default function PurchaseOrdersPage() {
     }
   }
 
-  const filteredOrders = orders.filter(o => {
-    const provName = o.proveedores?.nombre?.toLowerCase() || ""
-    const matchesSearch = provName.includes(searchTerm.toLowerCase()) || o.id.includes(searchTerm)
-    const matchesStatus = statusFilter === "TODAS" || o.estado === statusFilter
-    return matchesSearch && matchesStatus
-  })
+  const filteredOrders = useMemo(() => {
+    const list = orders.filter(o => {
+      const provName = o.proveedores?.nombre?.toLowerCase() || ""
+      const matchesSearch = provName.includes(searchTerm.toLowerCase()) || o.id.includes(searchTerm)
+      const matchesStatus = statusFilter === "TODAS" || o.estado === statusFilter
+      return matchesSearch && matchesStatus
+    })
+
+    return list.sort((a, b) => {
+      if (sortBy === 'proveedor') {
+        const nameA = a.proveedores?.nombre?.trim() || ""
+        const nameB = b.proveedores?.nombre?.trim() || ""
+        const comp = nameA.localeCompare(nameB)
+        if (comp !== 0) return comp
+        return (a.fecha_esperada || "").localeCompare(b.fecha_esperada || "")
+      } else if (sortBy === 'fecha_asc') {
+        const dateA = a.fecha_esperada || "9999-99-99"
+        const dateB = b.fecha_esperada || "9999-99-99"
+        return dateA.localeCompare(dateB)
+      } else { // 'fecha_desc'
+        const dateA = a.fecha_esperada || "0000-00-00"
+        const dateB = b.fecha_esperada || "0000-00-00"
+        return dateB.localeCompare(dateA)
+      }
+    })
+  }, [orders, searchTerm, statusFilter, sortBy])
 
   const statusColors: any = {
     'PENDIENTE': 'bg-amber-100 text-amber-800 border-amber-200',
@@ -113,35 +137,61 @@ export default function PurchaseOrdersPage() {
             Gestión de Stock en Tránsito y Recepción de Proveedores
           </p>
         </div>
-        <button 
-          onClick={() => { setEditOrderId(null); setShowModal(true); }}
-          className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"
-        >
-          <Plus size={16} /> Nueva Orden
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button 
+            onClick={() => { setSelectedWhatsAppOrderId(null); setShowWhatsAppModal(true); }}
+            className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-3 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+            title="Exportar pedidos agrupados por empresa/proveedor a WhatsApp"
+          >
+            <MessageSquare size={16} /> Exportar a WhatsApp
+          </button>
+          <button 
+            onClick={() => { setEditOrderId(null); setShowModal(true); }}
+            className="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center gap-2 shadow-lg shadow-indigo-200 transition-all active:scale-95"
+          >
+            <Plus size={16} /> Nueva Orden
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-[2.5rem] p-8 border border-slate-200 shadow-xl shadow-slate-200/50">
         
         {/* Toolbar */}
-        <div className="flex flex-col md:flex-row gap-4 justify-between items-center mb-8">
-          <div className="relative w-full md:w-96">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="Buscar por proveedor o ID..." 
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
-            />
+        <div className="flex flex-col lg:flex-row gap-4 justify-between items-stretch lg:items-center mb-8">
+          <div className="flex flex-col sm:flex-row gap-3 flex-1">
+            <div className="relative flex-1 min-w-[240px]">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="text" 
+                placeholder="Buscar por proveedor o ID..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-11 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-indigo-500 outline-none"
+              />
+            </div>
+
+            {/* Selector de Ordenamiento */}
+            <div className="flex items-center gap-2 bg-slate-50 px-4 py-2.5 rounded-2xl border border-slate-200 shadow-xs shrink-0">
+              <ArrowUpDown size={15} className="text-indigo-600" />
+              <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider">Ordenar:</span>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as any)}
+                className="bg-transparent text-xs font-black uppercase text-slate-700 outline-none cursor-pointer pr-1"
+              >
+                <option value="fecha_asc">📅 Fecha (Ascendente / Próximas)</option>
+                <option value="fecha_desc">📅 Fecha (Descendente / Lejanas)</option>
+                <option value="proveedor">🏢 Proveedor (A → Z)</option>
+              </select>
+            </div>
           </div>
           
-          <div className="flex bg-slate-100 p-1 rounded-2xl w-full md:w-auto">
+          <div className="flex bg-slate-100 p-1 rounded-2xl shrink-0">
             {['TODAS', 'PENDIENTE', 'RECIBIDA'].map((status) => (
               <button
                 key={status}
                 onClick={() => setStatusFilter(status)}
-                className={`flex-1 md:flex-none px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
+                className={`px-6 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${
                   statusFilter === status 
                     ? 'bg-white text-indigo-600 shadow-sm' 
                     : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
@@ -222,31 +272,41 @@ export default function PurchaseOrdersPage() {
                       <p className="text-xl font-black text-slate-800 tabular-nums">{formatCurrency(order.costo_total)}</p>
                     </div>
                     
-                    {order.estado === 'PENDIENTE' && (
-                      <div className="flex items-center gap-2">
-                        <button 
-                          onClick={() => { setEditOrderId(order.id); setShowModal(true); }}
-                          className="text-slate-400 hover:text-indigo-600 p-2 transition-colors rounded-xl hover:bg-indigo-50 border border-transparent hover:border-indigo-100"
-                          title="Editar Orden"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleDeleteOrder(order.id)}
-                          disabled={deletingId === order.id}
-                          className="text-slate-400 hover:text-rose-600 p-2 transition-colors rounded-xl hover:bg-rose-50 border border-transparent hover:border-rose-100 disabled:opacity-50"
-                          title="Eliminar Orden"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                        <button 
-                          onClick={() => openReceiveModal(order.id)}
-                          className="bg-emerald-50 hover:bg-emerald-500 text-emerald-700 hover:text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border border-emerald-200 flex items-center gap-2"
-                        >
-                          <CheckCircle2 size={16} /> Recibir
-                        </button>
-                      </div>
-                    )}
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => { setSelectedWhatsAppOrderId(order.id); setShowWhatsAppModal(true); }}
+                        className="text-emerald-600 hover:text-emerald-700 bg-emerald-50 hover:bg-emerald-100 p-2 transition-colors rounded-xl border border-emerald-200/80 shadow-xs"
+                        title="Compartir orden por WhatsApp"
+                      >
+                        <MessageSquare size={16} />
+                      </button>
+
+                      {order.estado === 'PENDIENTE' && (
+                        <>
+                          <button 
+                            onClick={() => { setEditOrderId(order.id); setShowModal(true); }}
+                            className="text-slate-400 hover:text-indigo-600 p-2 transition-colors rounded-xl hover:bg-indigo-50 border border-transparent hover:border-indigo-100"
+                            title="Editar Orden"
+                          >
+                            <Edit2 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => handleDeleteOrder(order.id)}
+                            disabled={deletingId === order.id}
+                            className="text-slate-400 hover:text-rose-600 p-2 transition-colors rounded-xl hover:bg-rose-50 border border-transparent hover:border-rose-100 disabled:opacity-50"
+                            title="Eliminar Orden"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                          <button 
+                            onClick={() => openReceiveModal(order.id)}
+                            className="bg-emerald-50 hover:bg-emerald-500 text-emerald-700 hover:text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition-all border border-emerald-200 flex items-center gap-2"
+                          >
+                            <CheckCircle2 size={16} /> Recibir
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               )
@@ -275,6 +335,14 @@ export default function PurchaseOrdersPage() {
             setReceiveOrderId(null)
             fetchOrders()
           }}
+        />
+      )}
+
+      {showWhatsAppModal && (
+        <ExportPOWhatsAppModal 
+          orders={filteredOrders.length > 0 ? filteredOrders : orders}
+          initialSelectedOrderId={selectedWhatsAppOrderId}
+          onClose={() => { setShowWhatsAppModal(false); setSelectedWhatsAppOrderId(null); }}
         />
       )}
     </div>
