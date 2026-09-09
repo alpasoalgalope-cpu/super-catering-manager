@@ -141,6 +141,23 @@ function slugify(text: string) {
     .replace(/\-\-+/g, '-')
 }
 
+function cleanNormalizedString(str: string) {
+  return (str || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function getStoreCompany(title: string = '', slug: string = ''): string {
+  const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+  if (parts.length > 1) {
+    return parts[parts.length - 1]
+  }
+  return slug
+}
+
 export async function autoSyncStoresForConfirmedEventsAction() {
   const supabase = await createClient()
   const today = new Date().toISOString().split('T')[0]
@@ -154,10 +171,15 @@ export async function autoSyncStoresForConfirmedEventsAction() {
 
   if (evErr || !events) return { success: false, error: evErr?.message }
 
-  // 2. Fetch existing stores
-  const { data: existingStores } = await supabase
-    .from("online_store_events")
-    .select("id, event_master_id, slug, title")
+  // 2. Fetch existing stores and orders for deduplication safety
+  const [{ data: existingStores }, { data: allOrders }] = await Promise.all([
+    supabase
+      .from("online_store_events")
+      .select("id, event_master_id, slug, title, is_active, available_dates, created_at"),
+    supabase
+      .from("online_orders")
+      .select("id, store_event_id")
+  ])
 
   // 3. Fetch commercial rules and clients for price and sale_type lookups
   const [{ data: rules }, { data: clients }] = await Promise.all([
@@ -205,6 +227,59 @@ export async function autoSyncStoresForConfirmedEventsAction() {
         }
 
         const rawSlug = `${slugify(showName)}-${slugify(company)}-${eventDate}`
+        const cleanComp = cleanNormalizedString(company)
+
+        // Find existing store(s) for this event & company
+        const matchingStores = (existingStores || []).filter(s => 
+          s.event_master_id === event.id && 
+          cleanNormalizedString(getStoreCompany(s.title, s.slug)) === cleanComp
+        )
+
+        if (matchingStores.length > 0) {
+          // If duplicates exist, clean up duplicates with 0 orders
+          if (matchingStores.length > 1) {
+            // Keep the one that has orders, or the one with matching slug, or the newest
+            const storeToKeep = matchingStores.find(s => (allOrders || []).some(o => o.store_event_id === s.id)) ||
+                                matchingStores.find(s => s.slug === rawSlug) ||
+                                matchingStores[matchingStores.length - 1]
+
+            for (const s of matchingStores) {
+              if (s.id !== storeToKeep.id) {
+                const hasOrders = (allOrders || []).some(o => o.store_event_id === s.id)
+                if (!hasOrders) {
+                  await supabase.from("online_store_events").delete().eq("id", s.id)
+                }
+              }
+            }
+
+            // Update the kept store
+            await supabase
+              .from("online_store_events")
+              .update({
+                slug: rawSlug,
+                title: `${showName} - ${company}`,
+                available_dates: [eventDate],
+                updated_at: new Date().toISOString()
+              })
+              .eq("id", storeToKeep.id)
+          } else {
+            const singleStore = matchingStores[0]
+            // Update in-place if date/slug changed
+            if (singleStore.slug !== rawSlug || JSON.stringify(singleStore.available_dates) !== JSON.stringify([eventDate])) {
+              await supabase
+                .from("online_store_events")
+                .update({
+                  slug: rawSlug,
+                  title: `${showName} - ${company}`,
+                  available_dates: [eventDate],
+                  updated_at: new Date().toISOString()
+                })
+                .eq("id", singleStore.id)
+            }
+          }
+          continue
+        }
+
         if (existingSlugs.has(rawSlug)) continue
 
         const prices = getPricesForCompany(company)

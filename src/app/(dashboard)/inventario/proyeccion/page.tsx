@@ -78,6 +78,7 @@ export default function ProyeccionInsumosPage() {
 
   // --- States ---
   const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
   const [activeTab, setActiveTab] = useState<'timeline' | 'staggered' | 'consolidated'>('timeline')
   const [rangeDays, setRangeDays] = useState<number>(10)
   const [startDateOffset, setStartDateOffset] = useState<number>(0)
@@ -157,8 +158,12 @@ export default function ProyeccionInsumosPage() {
   }, [startDateOffset, rangeDays])
 
   // --- Fetch Data ---
-  const fetchData = async () => {
-    setLoading(true)
+  const fetchData = async (silent = false) => {
+    if (!silent) {
+      setLoading(true)
+    } else {
+      setRefreshing(true)
+    }
     try {
       const [{ data: masters }, { data: probabilities }, { data: rules }, { data: clientList }, { data: recipes }, { data: waterProduct }, { data: inTransit }, { data: purchaseOrders }, { data: allProducts }, coordinatorRatesRes] = await Promise.all([
         supabase.from("events_master")
@@ -245,6 +250,7 @@ export default function ProyeccionInsumosPage() {
       console.error("Error fetching proyeccion data:", e)
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
   }
 
@@ -986,6 +992,21 @@ export default function ProyeccionInsumosPage() {
             </button>
           )}
 
+          {/* Botón Refrescar / Actualizar Datos */}
+          <button
+            onClick={() => fetchData(true)}
+            disabled={refreshing}
+            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-black transition-all border shadow-sm ${
+              refreshing 
+                ? 'bg-indigo-50 text-indigo-400 border-indigo-200 cursor-not-allowed' 
+                : 'bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600 shadow-indigo-100 hover:shadow-md active:scale-95'
+            }`}
+            title="Actualizar datos del calendario, consumos y órdenes de compra"
+          >
+            <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+            <span>{refreshing ? 'Actualizando...' : 'Actualizar'}</span>
+          </button>
+
           {/* Reset Today */}
           {startDateOffset !== 0 && (
             <button
@@ -993,7 +1014,7 @@ export default function ProyeccionInsumosPage() {
               className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 rounded-xl text-xs font-black transition-all"
               title="Volver a hoy"
             >
-              <RefreshCw size={16} />
+              <CalendarIcon size={16} />
             </button>
           )}
 
@@ -1301,6 +1322,20 @@ export default function ProyeccionInsumosPage() {
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="px-3 py-1.5 bg-slate-100 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
+
+                <button
+                  onClick={() => fetchData(true)}
+                  disabled={refreshing}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all border shadow-sm ${
+                    refreshing
+                      ? 'bg-indigo-50 text-indigo-400 border-indigo-200 cursor-not-allowed'
+                      : 'bg-white hover:bg-indigo-50 text-indigo-600 border-slate-200 hover:border-indigo-200 active:scale-95'
+                  }`}
+                  title="Actualizar datos de stock y compras"
+                >
+                  <RefreshCw size={14} className={refreshing ? 'animate-spin text-indigo-600' : ''} />
+                  <span className="hidden sm:inline">{refreshing ? 'Actualizando...' : 'Actualizar'}</span>
+                </button>
               </div>
             </div>
 
@@ -1795,7 +1830,7 @@ export default function ProyeccionInsumosPage() {
           onClose={() => setShowCreatePOModal(false)}
           onSuccess={() => {
             setShowCreatePOModal(false)
-            fetchData()
+            fetchData(true)
           }}
         />
       )}

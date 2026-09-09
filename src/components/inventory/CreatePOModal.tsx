@@ -94,11 +94,15 @@ export default function CreatePOModal({
     fetchData()
   }, [editOrderId, initialFechaEsperada, initialProveedorId])
 
-  const availableProducts = proveedorId 
+  const supplierProducts = proveedorId 
     ? productos.filter(p => 
         p.proveedor_id === proveedorId || 
         (p.producto_proveedores && p.producto_proveedores.some((pp: any) => pp.proveedor_id === proveedorId))
       ) 
+    : []
+
+  const otherProducts = proveedorId
+    ? productos.filter(p => !supplierProducts.some(sp => sp.id === p.id))
     : productos
 
   const handleAddItem = () => {
@@ -166,8 +170,6 @@ export default function CreatePOModal({
     setSaving(true)
 
     try {
-      let poId = editOrderId
-
       if (editOrderId) {
         // Update existing PO
         const { error: poErr } = await supabase
@@ -188,42 +190,136 @@ export default function CreatePOModal({
           .eq("po_id", editOrderId)
           
         if (delErr) throw delErr
-      } else {
-        // Insert new PO
-        const { data: po, error: poErr } = await supabase
-          .from("purchase_orders")
-          .insert({
-            proveedor_id: proveedorId,
-            fecha_esperada: fechaEsperada,
-            estado: 'PENDIENTE',
-            costo_total: totalCosto
-          })
-          .select('id')
-          .single()
 
-        if (poErr) throw poErr
-        poId = po.id
+        // Insert fresh items
+        const itemsToInsert = items.map(item => {
+          const totalQty = Number(item.bultos) * Number(item.unidadesPorBulto)
+          const unitCost = totalQty > 0 ? Number(item.costoTotal) / totalQty : 0
+          return {
+            po_id: editOrderId,
+            producto_id: item.producto_id,
+            cantidad: totalQty,
+            costo_unitario: unitCost
+          }
+        })
+
+        const { error: itemsErr } = await supabase
+          .from("purchase_order_items")
+          .insert(itemsToInsert)
+
+        if (itemsErr) throw itemsErr
+
+        alert("Orden de compra actualizada exitosamente.")
+      } else {
+        // Check if there is already a PENDING purchase order for the same proveedor and fecha_esperada
+        const { data: existingPO, error: findErr } = await supabase
+          .from("purchase_orders")
+          .select("id, costo_total")
+          .eq("proveedor_id", proveedorId)
+          .eq("fecha_esperada", fechaEsperada)
+          .eq("estado", "PENDIENTE")
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+        if (findErr) throw findErr
+
+        if (existingPO) {
+          // Merge items into existing PO
+          const { data: existingItems, error: exItemsErr } = await supabase
+            .from("purchase_order_items")
+            .select("*")
+            .eq("po_id", existingPO.id)
+
+          if (exItemsErr) throw exItemsErr
+
+          for (const item of items) {
+            const totalQty = Number(item.bultos) * Number(item.unidadesPorBulto)
+            const unitCost = totalQty > 0 ? Number(item.costoTotal) / totalQty : 0
+            const existingItem = (existingItems || []).find((ei: any) => ei.producto_id === item.producto_id)
+
+            if (existingItem) {
+              const newQty = Number(existingItem.cantidad) + totalQty
+              const newUnitCost = unitCost > 0 ? unitCost : Number(existingItem.costo_unitario || 0)
+              const { error: updItemErr } = await supabase
+                .from("purchase_order_items")
+                .update({
+                  cantidad: newQty,
+                  costo_unitario: newUnitCost
+                })
+                .eq("id", existingItem.id)
+
+              if (updItemErr) throw updItemErr
+            } else {
+              const { error: insItemErr } = await supabase
+                .from("purchase_order_items")
+                .insert({
+                  po_id: existingPO.id,
+                  producto_id: item.producto_id,
+                  cantidad: totalQty,
+                  costo_unitario: unitCost
+                })
+
+              if (insItemErr) throw insItemErr
+            }
+          }
+
+          // Recalculate total cost for the existing PO
+          const { data: allPoItems, error: allItemsErr } = await supabase
+            .from("purchase_order_items")
+            .select("cantidad, costo_unitario")
+            .eq("po_id", existingPO.id)
+
+          if (allItemsErr) throw allItemsErr
+
+          const newTotalCosto = (allPoItems || []).reduce((acc: number, curr: any) => {
+            return acc + (Number(curr.cantidad) * Number(curr.costo_unitario || 0))
+          }, 0)
+
+          const { error: updPoErr } = await supabase
+            .from("purchase_orders")
+            .update({ costo_total: Number(newTotalCosto.toFixed(2)) })
+            .eq("id", existingPO.id)
+
+          if (updPoErr) throw updPoErr
+
+          alert("Insumos agregados y consolidados en la Orden de Compra pendiente existente para este proveedor y fecha.")
+        } else {
+          // Create new PO
+          const { data: po, error: poErr } = await supabase
+            .from("purchase_orders")
+            .insert({
+              proveedor_id: proveedorId,
+              fecha_esperada: fechaEsperada,
+              estado: 'PENDIENTE',
+              costo_total: totalCosto
+            })
+            .select('id')
+            .single()
+
+          if (poErr) throw poErr
+
+          const itemsToInsert = items.map(item => {
+            const totalQty = Number(item.bultos) * Number(item.unidadesPorBulto)
+            const unitCost = totalQty > 0 ? Number(item.costoTotal) / totalQty : 0
+            return {
+              po_id: po.id,
+              producto_id: item.producto_id,
+              cantidad: totalQty,
+              costo_unitario: unitCost
+            }
+          })
+
+          const { error: itemsErr } = await supabase
+            .from("purchase_order_items")
+            .insert(itemsToInsert)
+
+          if (itemsErr) throw itemsErr
+
+          alert("Orden de compra creada exitosamente.")
+        }
       }
 
-      // Insert Items (shared for both create and update)
-      const itemsToInsert = items.map(item => {
-        const totalQty = Number(item.bultos) * Number(item.unidadesPorBulto)
-        const unitCost = totalQty > 0 ? Number(item.costoTotal) / totalQty : 0
-        return {
-          po_id: poId,
-          producto_id: item.producto_id,
-          cantidad: totalQty,
-          costo_unitario: unitCost
-        }
-      })
-
-      const { error: itemsErr } = await supabase
-        .from("purchase_order_items")
-        .insert(itemsToInsert)
-
-      if (itemsErr) throw itemsErr
-
-      alert(`Orden de compra ${editOrderId ? 'actualizada' : 'creada'} exitosamente.`)
       onSuccess()
     } catch (err: any) {
       console.error(err)
@@ -268,8 +364,6 @@ export default function CreatePOModal({
                   value={proveedorId}
                   onChange={(e) => {
                     setProveedorId(e.target.value)
-                    // Clear items if provider changes to avoid invalid products
-                    setItems([])
                   }}
                   className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500"
                   required
@@ -323,9 +417,26 @@ export default function CreatePOModal({
                           required
                         >
                           <option value="">Seleccionar insumo...</option>
-                          {availableProducts.map(p => (
-                            <option key={p.id} value={p.id}>{p.nombre} ({p.unidad_medida})</option>
-                          ))}
+                          {supplierProducts.length > 0 ? (
+                            <>
+                              <optgroup label="Insumos habituales de este proveedor">
+                                {supplierProducts.map(p => (
+                                  <option key={p.id} value={p.id}>{p.nombre} ({p.unidad_medida})</option>
+                                ))}
+                              </optgroup>
+                              {otherProducts.length > 0 && (
+                                <optgroup label="Otros insumos del catálogo">
+                                  {otherProducts.map(p => (
+                                    <option key={p.id} value={p.id}>{p.nombre} ({p.unidad_medida})</option>
+                                  ))}
+                                </optgroup>
+                              )}
+                            </>
+                          ) : (
+                            otherProducts.map(p => (
+                              <option key={p.id} value={p.id}>{p.nombre} ({p.unidad_medida})</option>
+                            ))
+                          )}
                         </select>
                       </div>
                       

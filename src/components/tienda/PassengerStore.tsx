@@ -34,7 +34,24 @@ const COMBO_ICONS = {
   vegano: { emoji: "🌱", bg: "bg-teal-50 text-teal-700 border-teal-200" },
 }
 
-export default function PassengerStore({ store, busAssignments = [], coordinators = [] }: PassengerStoreProps) {
+function cleanNormalizedString(str: string) {
+  return (str || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function getStoreCompany(title: string = '', slug: string = ''): string {
+  const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+  if (parts.length > 1) {
+    return parts[parts.length - 1]
+  }
+  return slug
+}
+
+export default function PassengerStore({ store, busAssignments = [] }: PassengerStoreProps) {
   const [combos, setCombos] = useState({
     tradicional: 0,
     vegetariano: 0,
@@ -42,7 +59,7 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
     vegano: 0,
   })
 
-  const [liveAssignments, setLiveAssignments] = useState<any[]>(busAssignments)
+  const [liveAssignments, setLiveAssignments] = useState<any[] | null>(busAssignments || null)
 
   const [formData, setFormData] = useState({
     fullName: '',
@@ -54,7 +71,7 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
 
   // Sync live assignments from props
   useEffect(() => {
-    if (busAssignments && busAssignments.length > 0) {
+    if (busAssignments) {
       setLiveAssignments(busAssignments)
     }
   }, [busAssignments])
@@ -63,10 +80,8 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
   useEffect(() => {
     async function fetchLiveAssignments() {
       try {
-        const title = store.title || ''
-        const parts = title.split(/[—–-]/).map((x: string) => x.trim())
-        const storeCompany = parts.length > 1 ? parts[parts.length - 1] : ''
-        const cleanStoreComp = storeCompany.toLowerCase().replace(/[^a-z0-9]/g, '')
+        const rawStoreCompany = getStoreCompany(store.title, store.slug)
+        const cleanStoreComp = cleanNormalizedString(rawStoreCompany)
 
         const eventIds: string[] = []
         if (store.event_master_id) {
@@ -86,7 +101,10 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
           }
         }
 
-        if (eventIds.length === 0) return
+        if (eventIds.length === 0) {
+          setLiveAssignments([])
+          return
+        }
 
         const { data: assignments, error } = await supabase
           .from('event_bus_assignments')
@@ -124,18 +142,29 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
               const clientObj = Array.isArray(a.clients) ? a.clients[0] : a.clients
               const coordObj = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
 
-              const clientNameClean = (clientObj?.name || clientObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-              const coordCompClean = (coordObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+              const clientNameClean = cleanNormalizedString(clientObj?.name || clientObj?.company || '')
+              const coordCompClean = cleanNormalizedString(coordObj?.company || '')
 
-              return (
-                (clientNameClean && (clientNameClean.includes(cleanStoreComp) || cleanStoreComp.includes(clientNameClean))) ||
-                (coordCompClean && (coordCompClean.includes(cleanStoreComp) || cleanStoreComp.includes(coordCompClean)))
+              const matchClient = clientNameClean && cleanStoreComp && (
+                clientNameClean === cleanStoreComp ||
+                clientNameClean.includes(cleanStoreComp) ||
+                cleanStoreComp.includes(clientNameClean)
               )
+
+              const matchCoord = coordCompClean && cleanStoreComp && (
+                coordCompClean === cleanStoreComp ||
+                coordCompClean.includes(cleanStoreComp) ||
+                cleanStoreComp.includes(coordCompClean)
+              )
+
+              return matchClient || matchCoord
             })
-            setLiveAssignments(filtered.length > 0 ? filtered : assignments)
+            setLiveAssignments(filtered)
           } else {
             setLiveAssignments(assignments)
           }
+        } else {
+          setLiveAssignments([])
         }
       } catch (err) {
         console.error('Error fetching live assignments:', err)
@@ -148,7 +177,7 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
   // Build options for Micro / Coordinator dropdown filtered strictly for this event's assignments
   const busOptions = useMemo(() => {
     const list: string[] = []
-    const targetAssignments = liveAssignments && liveAssignments.length > 0 ? liveAssignments : busAssignments
+    const targetAssignments = liveAssignments !== null ? liveAssignments : (busAssignments || [])
 
     if (targetAssignments && targetAssignments.length > 0) {
       // Filter assignments by selected travelDate if available
@@ -182,9 +211,9 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
       })
     }
 
-    // If no specific bus/coordinator assignments are planned for this event, default to N/A
+    // If no specific bus/coordinator assignments are planned for this event & company, default to General / A coordinar
     if (list.length === 0) {
-      list.push("N/A")
+      list.push("General / A coordinar")
     }
 
     return list
@@ -193,10 +222,8 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
   // Sync busIdentifier with busOptions
   useEffect(() => {
     if (busOptions.length > 0) {
-      if (!formData.busIdentifier || formData.busIdentifier === 'N/A' || !busOptions.includes(formData.busIdentifier)) {
-        if (busOptions[0] !== 'N/A' || !formData.busIdentifier) {
-          setFormData(prev => ({ ...prev, busIdentifier: busOptions[0] }))
-        }
+      if (!formData.busIdentifier || !busOptions.includes(formData.busIdentifier)) {
+        setFormData(prev => ({ ...prev, busIdentifier: busOptions[0] }))
       }
     }
   }, [busOptions])
@@ -445,7 +472,7 @@ export default function PassengerStore({ store, busAssignments = [], coordinator
           <select
             value={formData.busIdentifier}
             onChange={(e) => setFormData(d => ({ ...d, busIdentifier: e.target.value }))}
-            disabled={busOptions.length === 1 && busOptions[0] === 'N/A'}
+            disabled={busOptions.length === 1 && (busOptions[0] === 'N/A' || busOptions[0] === 'General / A coordinar')}
             className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-800 focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none cursor-pointer disabled:bg-slate-100 disabled:text-slate-400 disabled:border-slate-200 disabled:cursor-not-allowed"
           >
             {busOptions.map(opt => (
