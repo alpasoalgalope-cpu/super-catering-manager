@@ -43,6 +43,46 @@ async function resolveStoreBySlug(slug: string) {
     
     const compName = matchedComp?.company_name || 'Pasajeros'
     const venueName = (ev.venues as any)?.name || ''
+    const cleanComp = cleanNormalizedString(compName)
+
+    const { data: existingForComp } = await supabase
+      .from('online_store_events')
+      .select('*, events_master(id, event_date, show_name, status, venues(name))')
+      .eq('event_master_id', ev.id)
+
+    const matchStore = (existingForComp || []).find((s: any) => 
+      cleanNormalizedString(getStoreCompany(s.title, s.slug)) === cleanComp
+    )
+
+    if (matchStore) {
+      if (matchStore.slug !== slug) {
+        await supabase
+          .from('online_store_events')
+          .update({ slug: slug })
+          .eq('id', matchStore.id)
+      }
+      return { ...matchStore, slug: slug }
+    }
+
+    const { data: rule } = await supabase
+      .from('commercial_rules')
+      .select('*')
+      .ilike('company_name', compName)
+      .maybeSingle()
+
+    const basePrice = rule?.price_base ? Number(rule.price_base) : 10000
+    const stPrice = rule?.price_sintacc_base ? Number(rule.price_sintacc_base) : 13000
+    const includesWater = rule?.includes_water ?? true
+
+    let defaultDeadline: string | null = null
+    try {
+      const [y, m, d] = eventDate.split('-').map(Number)
+      const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0))
+      dt.setUTCDate(dt.getUTCDate() - 1)
+      const pad = (n: number) => n < 10 ? '0' + n : n
+      const prevDateStr = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`
+      defaultDeadline = new Date(`${prevDateStr}T23:00:00-03:00`).toISOString()
+    } catch {}
 
     const storeData = {
       event_master_id: ev.id,
@@ -51,23 +91,33 @@ async function resolveStoreBySlug(slug: string) {
       subtitle: venueName ? `Venue: ${venueName}` : 'Cena de Regreso',
       description: `Viandas oficiales para el regreso del show ${ev.show_name}.`,
       is_active: true,
+      sales_deadline: defaultDeadline,
       available_dates: [eventDate],
       combo_trad_enabled: true,
-      combo_trad_price: 10000,
-      combo_trad_name: 'Combo Tradicional + Agua sin Gas',
-      combo_trad_desc: 'Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral.',
+      combo_trad_price: basePrice,
+      combo_trad_name: includesWater ? 'Combo Tradicional + Agua sin Gas' : 'Sándwich Tradicional',
+      combo_trad_desc: includesWater 
+        ? 'Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral.'
+        : 'Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día.',
       combo_veg_enabled: true,
-      combo_veg_price: 10000,
-      combo_veg_name: 'Combo Vegetariano + Agua sin Gas',
-      combo_veg_desc: 'Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral.',
+      combo_veg_price: basePrice,
+      combo_veg_name: includesWater ? 'Combo Vegetariano + Agua sin Gas' : 'Sándwich Vegetariano',
+      combo_veg_desc: includesWater
+        ? 'Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral.'
+        : 'Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate.',
       combo_sintacc_enabled: true,
-      combo_sintacc_price: 13000,
-      combo_sintacc_name: 'Combo Sin TACC + Agua sin Gas',
-      combo_sintacc_desc: 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.',
+      combo_sintacc_price: stPrice,
+      combo_sintacc_name: includesWater ? 'Combo Sin TACC + Agua sin Gas' : 'Sándwich Sin TACC',
+      combo_sintacc_desc: includesWater
+        ? 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.'
+        : 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).',
       combo_vegan_enabled: true,
-      combo_vegan_price: 10000,
-      combo_vegan_name: 'Combo Vegano + Agua sin Gas',
-      combo_vegan_desc: 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
+      combo_vegan_price: basePrice,
+      combo_vegan_name: includesWater ? 'Combo Vegano + Agua sin Gas' : 'Sándwich Vegano',
+      combo_vegan_desc: includesWater
+        ? 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
+        : 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada.',
+      commercial_rule_id: rule?.id || null
     }
 
     const { data: created } = await supabase
@@ -80,6 +130,23 @@ async function resolveStoreBySlug(slug: string) {
   }
 
   return null
+}
+
+function cleanNormalizedString(str: string) {
+  return (str || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function getStoreCompany(title: string = '', slug: string = ''): string {
+  const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+  if (parts.length > 1) {
+    return parts[parts.length - 1]
+  }
+  return slug
 }
 
 interface Props {
@@ -141,9 +208,8 @@ export default async function TiendaPage({ params }: Props) {
   let busAssignments: any[] = []
 
   // Extract company name from store title or slug
-  const title = store.title || ''
-  const parts = title.split(/[—–-]/).map((x: string) => x.trim())
-  const storeCompany = parts.length > 1 ? parts[parts.length - 1] : ''
+  const rawStoreCompany = getStoreCompany(store.title, store.slug)
+  const cleanStoreComp = cleanNormalizedString(rawStoreCompany)
 
   const eventIdsToQuery: string[] = []
   if (store.event_master_id) {
@@ -197,22 +263,31 @@ export default async function TiendaPage({ params }: Props) {
       .in('event_id', eventIdsToQuery)
 
     if (assignments && assignments.length > 0) {
-      if (storeCompany) {
-        const cleanStoreComp = storeCompany.toLowerCase().replace(/[^a-z0-9]/g, '')
+      if (cleanStoreComp) {
         const filtered = assignments.filter((a: any) => {
           const clientObj = Array.isArray(a.clients) ? a.clients[0] : a.clients
           const coordObj = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
 
-          const clientNameClean = (clientObj?.name || clientObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
-          const coordCompClean = (coordObj?.company || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+          const clientNameClean = cleanNormalizedString(clientObj?.name || clientObj?.company || '')
+          const coordCompClean = cleanNormalizedString(coordObj?.company || '')
 
-          return (
-            (clientNameClean && (clientNameClean.includes(cleanStoreComp) || cleanStoreComp.includes(clientNameClean))) ||
-            (coordCompClean && (coordCompClean.includes(cleanStoreComp) || cleanStoreComp.includes(coordCompClean)))
+          const matchClient = clientNameClean && cleanStoreComp && (
+            clientNameClean === cleanStoreComp ||
+            clientNameClean.includes(cleanStoreComp) ||
+            cleanStoreComp.includes(clientNameClean)
           )
+
+          const matchCoord = coordCompClean && cleanStoreComp && (
+            coordCompClean === cleanStoreComp ||
+            coordCompClean.includes(cleanStoreComp) ||
+            cleanStoreComp.includes(coordCompClean)
+          )
+
+          return matchClient || matchCoord
         })
 
-        busAssignments = filtered.length > 0 ? filtered : assignments
+        // Strictly use only the company's assignments. Never fallback to other companies' buses.
+        busAssignments = filtered
       } else {
         busAssignments = assignments
       }

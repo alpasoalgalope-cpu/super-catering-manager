@@ -87,6 +87,23 @@ interface Props {
   }
 }
 
+function cleanNormalizedString(str: string) {
+  return (str || '')
+    .toString()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+}
+
+function getStoreCompany(title: string = '', slug: string = ''): string {
+  const parts = title.split(/[—–-]/).map((x: string) => x.trim())
+  if (parts.length > 1) {
+    return parts[parts.length - 1]
+  }
+  return slug
+}
+
 export default async function CoordinatorStorePage({ params }: Props) {
   const store = await resolveStoreBySlug(params.slug)
 
@@ -95,9 +112,8 @@ export default async function CoordinatorStorePage({ params }: Props) {
   }
 
   // Extract company name
-  const title = store.title || ''
-  const parts = title.split('—').map((x: string) => x.trim())
-  const companyName = parts.length > 1 ? parts[1] : title.split('-').pop()?.trim() || ''
+  const companyName = getStoreCompany(store.title, store.slug)
+  const cleanTargetComp = cleanNormalizedString(companyName)
 
   // Fetch all paid orders for this store
   const { data: orders } = await supabase
@@ -115,6 +131,10 @@ export default async function CoordinatorStorePage({ params }: Props) {
     const { data: assignments } = await supabase
       .from('event_bus_assignments')
       .select(`
+        clients (
+          name,
+          company
+        ),
         coordinators (
           name,
           phone,
@@ -124,11 +144,13 @@ export default async function CoordinatorStorePage({ params }: Props) {
       .eq('event_id', store.event_master_id)
 
     if (assignments && assignments.length > 0) {
-      const targetComp = (companyName || '').toLowerCase().trim()
       const matchingAssign: any = assignments.find((a: any) => {
-        const cObj: any = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
-        const cComp = (cObj?.company || '').toLowerCase().trim()
-        return cComp && targetComp && (cComp === targetComp || cComp.includes(targetComp) || targetComp.includes(cComp))
+        const clientObj = Array.isArray(a.clients) ? a.clients[0] : a.clients
+        const coordObj = Array.isArray(a.coordinators) ? a.coordinators[0] : a.coordinators
+        const cComp = cleanNormalizedString(coordObj?.company || '')
+        const clName = cleanNormalizedString(clientObj?.name || clientObj?.company || '')
+        return (cComp && (cComp === cleanTargetComp || cComp.includes(cleanTargetComp) || cleanTargetComp.includes(cComp))) ||
+               (clName && (clName === cleanTargetComp || clName.includes(cleanTargetComp) || cleanTargetComp.includes(clName)))
       })
 
       if (matchingAssign) {

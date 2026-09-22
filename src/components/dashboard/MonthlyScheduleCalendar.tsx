@@ -4,7 +4,7 @@ import Link from "next/link";
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar as CalendarIcon, ChevronLeft, ChevronRight, Users, 
-  DollarSign, Sandwich, CheckCircle2, Clock, X, Store, ArrowRight, Music, CalendarDays
+  DollarSign, Sandwich, CheckCircle2, Clock, X, Store, ArrowRight, Music, CalendarDays, ChefHat
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
@@ -894,47 +894,74 @@ export default function MonthlyScheduleCalendar({ events = [], role = null }: Pr
                 <ArrowRight size={18} className="text-slate-300 group-hover:text-emerald-600 group-hover:translate-x-1 transition-all shrink-0 ml-2" />
               </Link>
 
-              {/* Option 2: Ventas por Evento */}
-              <Link
-                href={`/ventas-evento?date=${selectedDayModal.dateStr}`}
-                className="flex items-center justify-between p-4 rounded-2xl border border-slate-200 hover:border-amber-400 bg-white hover:bg-amber-50/40 transition-all group cursor-pointer shadow-xs hover:shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <DollarSign size={20} />
+              {/* Option: Consolidado Cocina (Visible especialmente para Cocina) */}
+              {isCocina && (
+                <Link
+                  href={`/produccion?date=${selectedDayModal.dateStr}`}
+                  className="flex items-center justify-between p-4 rounded-2xl border border-slate-200 hover:border-indigo-400 bg-white hover:bg-indigo-50/40 transition-all group cursor-pointer shadow-xs hover:shadow-md"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <ChefHat size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-sm uppercase group-hover:text-indigo-900">
+                        Consolidado de Cocina
+                      </h4>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Plan de producción y preparación de viandas para esta fecha.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-black text-slate-900 text-sm uppercase group-hover:text-amber-900">
-                      Ventas por Evento
-                    </h4>
-                    <p className="text-xs text-slate-500 font-medium">
-                      Carga y planilla de ventas por empresa de esta fecha.
-                    </p>
-                  </div>
-                </div>
-                <ArrowRight size={18} className="text-slate-300 group-hover:text-amber-600 group-hover:translate-x-1 transition-all shrink-0 ml-2" />
-              </Link>
+                  <ArrowRight size={18} className="text-slate-300 group-hover:text-indigo-600 group-hover:translate-x-1 transition-all shrink-0 ml-2" />
+                </Link>
+              )}
 
-              {/* Option 3: Ventas Online */}
-              <Link
-                href={`/ventas-online?date=${selectedDayModal.dateStr}`}
-                className="flex items-center justify-between p-4 rounded-2xl border border-slate-200 hover:border-teal-400 bg-white hover:bg-teal-50/40 transition-all group cursor-pointer shadow-xs hover:shadow-md"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
-                    <Store size={20} />
+              {/* Option 2: Ventas por Evento (Oculto para Cocina) */}
+              {!isCocina && (
+                <Link
+                  href={`/ventas-evento?date=${selectedDayModal.dateStr}`}
+                  className="flex items-center justify-between p-4 rounded-2xl border border-slate-200 hover:border-amber-400 bg-white hover:bg-amber-50/40 transition-all group cursor-pointer shadow-xs hover:shadow-md"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <DollarSign size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-sm uppercase group-hover:text-amber-900">
+                        Ventas por Evento
+                      </h4>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Carga y planilla de ventas por empresa de esta fecha.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-black text-slate-900 text-sm uppercase group-hover:text-teal-900">
-                      Ventas Online
-                    </h4>
-                    <p className="text-xs text-slate-500 font-medium">
-                      Pedidos de pasajeros y tiendas virtuales de esta fecha.
-                    </p>
+                  <ArrowRight size={18} className="text-slate-300 group-hover:text-amber-600 group-hover:translate-x-1 transition-all shrink-0 ml-2" />
+                </Link>
+              )}
+
+              {/* Option 3: Ventas Online (Oculto para Cocina) */}
+              {!isCocina && (
+                <Link
+                  href={`/ventas-online?date=${selectedDayModal.dateStr}`}
+                  className="flex items-center justify-between p-4 rounded-2xl border border-slate-200 hover:border-teal-400 bg-white hover:bg-teal-50/40 transition-all group cursor-pointer shadow-xs hover:shadow-md"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-teal-100 text-teal-700 flex items-center justify-center shrink-0 group-hover:scale-110 transition-transform">
+                      <Store size={20} />
+                    </div>
+                    <div>
+                      <h4 className="font-black text-slate-900 text-sm uppercase group-hover:text-teal-900">
+                        Ventas Online
+                      </h4>
+                      <p className="text-xs text-slate-500 font-medium">
+                        Pedidos de pasajeros y tiendas virtuales de esta fecha.
+                      </p>
+                    </div>
                   </div>
-                </div>
-                <ArrowRight size={18} className="text-slate-300 group-hover:text-teal-600 group-hover:translate-x-1 transition-all shrink-0 ml-2" />
-              </Link>
+                  <ArrowRight size={18} className="text-slate-300 group-hover:text-teal-600 group-hover:translate-x-1 transition-all shrink-0 ml-2" />
+                </Link>
+              )}
             </div>
           </div>
         </div>

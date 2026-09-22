@@ -116,26 +116,60 @@ export async function getBusByTokenAction(token: string): Promise<{
 
     const totalPaidViandas = trad + veg + stacc + vegan
     const company = (bus.company_name || "").toLowerCase()
+    const isCircus = company.includes("circus")
+    const isTerco = company.includes("terco")
+    const isRock = company.includes("rock")
+    const isProxima = company.includes("proxima") || company.includes("próxima")
+    const isRV = company.includes("rv")
+    const isValbus = company.includes("valbus")
+
     let liberatedViandas = manualLib
     let liberatedWater = 0
 
     // If no manual liberated, calculate from company rules
     if (liberatedViandas === 0) {
-      if (company.includes("rv") || company.includes("proxima") || company.includes("próxima")) {
+      if (isCircus) {
+        liberatedViandas = totalPaidViandas >= 5 ? 1 : 0
+        liberatedWater = 0
+      } else if (isTerco) {
+        liberatedViandas = 2
+        liberatedWater = 0
+      } else if (isRock) {
+        liberatedViandas = 2
+        liberatedWater = 2
+      } else if (isProxima) {
         liberatedViandas = totalPaidViandas >= 15 ? 3 : totalPaidViandas >= 5 ? 1 : 0
-        liberatedWater = totalPaidViandas >= 25 ? 3 : 0
-      } else if (company.includes("valbus")) {
+        liberatedWater = liberatedViandas
+      } else if (isRV) {
+        liberatedViandas = totalPaidViandas >= 15 ? 3 : totalPaidViandas >= 5 ? 1 : 0
+        liberatedWater = totalPaidViandas >= 25 ? liberatedViandas : 0
+      } else if (isValbus) {
         liberatedViandas = totalPaidViandas >= 5 ? 1 : 0
         liberatedWater = totalPaidViandas >= 5 ? 1 : 0
-      } else if (company.includes("rock") || company.includes("terco")) {
-        liberatedViandas = 2
-        liberatedWater = company.includes("terco") ? 0 : 2
+      }
+    } else {
+      // Manual liberated viandas set: assign water based on company rule
+      if (isCircus || isTerco) {
+        liberatedWater = 0
+      } else if (isRock || isProxima) {
+        liberatedWater = liberatedViandas
+      } else if (isRV) {
+        liberatedWater = totalPaidViandas >= 25 ? liberatedViandas : 0
       }
     }
 
-    const waterQty = company.includes("terco") 
-      ? 0 
-      : (manualWater > 0 ? manualWater : (totalPaidViandas + liberatedWater))
+    let waterQty = 0
+    if (manualWater > 0) {
+      waterQty = manualWater
+    } else if (isCircus || isTerco) {
+      waterQty = 0
+    } else if (isRock || isProxima) {
+      waterQty = totalPaidViandas + liberatedWater
+    } else if (isRV) {
+      waterQty = totalPaidViandas + (totalPaidViandas >= 25 ? liberatedWater : 0)
+    } else {
+      waterQty = totalPaidViandas + liberatedWater
+    }
 
     return {
       success: true,
@@ -309,25 +343,57 @@ export async function getDispatchSummaryAction(eventId: string): Promise<{
 
       const paidViandas = t + v + st + vg
       const company = (b.company_name || "").toLowerCase()
+      const isCircus = company.includes("circus")
+      const isTerco = company.includes("terco")
+      const isRock = company.includes("rock")
+      const isProxima = company.includes("proxima") || company.includes("próxima")
+      const isRV = company.includes("rv")
+      const isValbus = company.includes("valbus")
 
       // Calculate liberated if not provided manually
       let libW = 0
       if (libV === 0) {
-        if (company.includes("rv") || company.includes("proxima") || company.includes("próxima")) {
+        if (isCircus) {
+          libV = paidViandas >= 5 ? 1 : 0
+          libW = 0
+        } else if (isTerco) {
+          libV = 2
+          libW = 0
+        } else if (isRock) {
+          libV = 2
+          libW = 2
+        } else if (isProxima) {
           libV = paidViandas >= 15 ? 3 : paidViandas >= 5 ? 1 : 0
-          libW = paidViandas >= 25 ? 3 : 0
-        } else if (company.includes("valbus")) {
+          libW = libV
+        } else if (isRV) {
+          libV = paidViandas >= 15 ? 3 : paidViandas >= 5 ? 1 : 0
+          libW = paidViandas >= 25 ? libV : 0
+        } else if (isValbus) {
           libV = paidViandas >= 5 ? 1 : 0
           libW = paidViandas >= 5 ? 1 : 0
-        } else if (company.includes("rock") || company.includes("terco")) {
-          libV = 2
-          libW = company.includes("terco") ? 0 : 2
+        }
+      } else {
+        if (isCircus || isTerco) {
+          libW = 0
+        } else if (isRock || isProxima) {
+          libW = libV
+        } else if (isRV) {
+          libW = paidViandas >= 25 ? libV : 0
         }
       }
 
-      const waterQty = company.includes("terco") 
-        ? 0 
-        : (manualW > 0 ? manualW : (paidViandas + libW))
+      let waterQty = 0
+      if (manualW > 0) {
+        waterQty = manualW
+      } else if (isCircus || isTerco) {
+        waterQty = 0
+      } else if (isRock || isProxima) {
+        waterQty = paidViandas + libW
+      } else if (isRV) {
+        waterQty = paidViandas + (paidViandas >= 25 ? libW : 0)
+      } else {
+        waterQty = paidViandas + libW
+      }
 
       return {
         logistic: b,

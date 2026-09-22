@@ -7,12 +7,12 @@ import { supabase as defaultSupabase } from "@/lib/supabase"
 import {
   Calculator, Truck, Users, Plus, Trash2, Calendar,
   ClipboardList, MapPin, AlertCircle, CheckCircle2,
-  Save, Printer, Loader2, Building2, ChevronDown, ChevronUp
+  Save, Printer, Loader2, Building2, ChevronDown, ChevronUp,
+  ShieldAlert, Unlock
 } from "lucide-react"
 import FleetModal from "@/components/forms/FleetModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
 import { syncStockForSaleAction } from "@/app/actions/stock"
-
 interface UnitRecord {
   id: string
   name: string
@@ -145,6 +145,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   const [deliveryAddress, setDeliveryAddress] = useState("")
   const [units, setUnits] = useState<UnitRecord[]>([newUnit("Micro 1")])
   const [paxOverride, setPaxOverride] = useState<number | null>(null)
+  const [allowCommercialOverride, setAllowCommercialOverride] = useState(false)
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
@@ -205,22 +206,78 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   }, [selectedEventId])
 
   
+  const matchCoordinatorByBusName = (bName: string) => {
+    if (!bName) return ""
+    const cleanB = bName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')
+    
+    // 1. Try matching with company coordinators first
+    const companyCoords = (coordinators || []).filter((c: any) => 
+      !selectedCompany || c.company?.toLowerCase().trim() === selectedCompany.toLowerCase().trim()
+    )
+    
+    // Exact or partial name match
+    const match = companyCoords.find((c: any) => {
+      const cleanC = (c.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')
+      return cleanB === cleanC || cleanB.includes(cleanC) || cleanC.includes(cleanB)
+    })
+    if (match) return match.id
+
+    // 2. Fallback: try matching across all coordinators
+    const anyMatch = (coordinators || []).find((c: any) => {
+      const cleanC = (c.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '')
+      return cleanB === cleanC || cleanB.includes(cleanC) || cleanC.includes(cleanB)
+    })
+    return anyMatch?.id || ""
+  }
+
   const applyOnlineSalesToUnits = (salesInfo: any, fallbackAssignedBuses: any[] = []) => {
     if (!salesInfo || !salesInfo.ordersByBus) return
 
     const busKeys = Object.keys(salesInfo.ordersByBus)
     if (busKeys.length === 0) return
 
+    const compName = selectedCompany || ''
+    const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
+    const globalOcupationPct = pax > 0 ? (salesInfo.totalViandas / pax) * 100 : 0
+
+    const isCircus = compName.toLowerCase().includes('circus') || activeRule?.company_name?.toLowerCase().includes('circus')
+    const isTerco = compName.toLowerCase().includes('terco') || activeRule?.company_name?.toLowerCase().includes('terco')
+    const isRock = compName.toLowerCase().includes('rock') || activeRule?.company_name?.toLowerCase().includes('rock')
+    const isProxima = compName.toLowerCase().includes('proxima') || compName.toLowerCase().includes('próxima') || activeRule?.company_name?.toLowerCase().includes('proxima') || activeRule?.company_name?.toLowerCase().includes('próxima')
+    const isRV = compName.toLowerCase().includes('rv traslados') || activeRule?.company_name?.toLowerCase().includes('rv traslados')
+
     setUnits(prevUnits => {
       return busKeys.map((busName, idx) => {
         const b = salesInfo.ordersByBus[busName]
         const totalViandas = (b.trad || 0) + (b.veg || 0) + (b.vegan || 0) + (b.st || 0)
         
-        // Preserve already assigned vehicle and coordinator if set, or pick from assignedBuses
-        const existingU = prevUnits[idx] || prevUnits[0]
-        const fallbackBus = fallbackAssignedBuses[idx] || fallbackAssignedBuses[0]
+        // Match existing unit by exact/normalized name if it was already configured
+        const matchedByName = prevUnits.find(u => u.name?.trim().toLowerCase() === busName?.trim().toLowerCase())
+        const existingU = matchedByName || (prevUnits.length === busKeys.length ? prevUnits[idx] : null)
+        const fallbackBus = fallbackAssignedBuses[idx]
+        
+        const autoMatchedCoordId = matchCoordinatorByBusName(busName)
         const vId = existingU?.vehicle_id || fallbackBus?.vehicle_id || ""
-        const cId = existingU?.coordinator_id || fallbackBus?.coordinator_id || ""
+        const cId = (existingU && matchedByName ? existingU.coordinator_id : "") || autoMatchedCoordId || fallbackBus?.coordinator_id || ""
+        const libCount = existingU?.liberated ?? 1
+
+        let calculatedWater = 0
+        if (isCircus || isTerco) {
+          calculatedWater = 0
+        } else if (isRock || isProxima) {
+          calculatedWater = totalViandas + libCount
+        } else if (isRV) {
+          calculatedWater = totalViandas + (globalOcupationPct >= 50 ? libCount : 0)
+        } else if (activeRule?.includes_water === false) {
+          calculatedWater = 0
+        } else if (activeRule?.is_mayorista) {
+          calculatedWater = totalViandas + libCount
+        } else if (globalOcupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
+          calculatedWater = totalViandas + libCount
+        } else {
+          const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && globalOcupationPct >= 10 && libCount > 0 ? 1 : 0
+          calculatedWater = totalViandas + coordiWater
+        }
 
         return {
           id: existingU?.id || crypto.randomUUID(),
@@ -228,12 +285,12 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
           vehicle_id: vId,
           coordinator_id: cId,
           sold: totalViandas,
-          liberated: existingU?.liberated || 0,
+          liberated: libCount,
           traditional: b.trad || 0,
           vegetarian: b.veg || 0,
           vegana: b.vegan || 0,
           sin_tacc: b.st || 0,
-          water: totalViandas,
+          water: calculatedWater,
           observations: `Importado de Tienda Online (${salesInfo.totalOrders} pedidos)`,
           details: existingU?.details || [],
           isExpanded: true
@@ -243,7 +300,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
     setMessage({
       type: 'success',
-      text: `¡Se importaron con éxito ${salesInfo.totalViandas} viandas desde la Tienda Online conservando chofer y coordinador!`
+      text: `¡Se importaron con éxito ${salesInfo.totalViandas} viandas desde la Tienda Online asignando a cada coordinador según su micro!`
     })
   }
 
@@ -385,12 +442,15 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
               } catch (e) {}
 
               // Mapear el micro asignado
-              let v_id = ""
-              let c_id = ""
+              let v_id = du.vehicle_id || ""
+              let c_id = du.coordinator_id || ""
               if (assignedBuses.length > 0) {
                  const busRecord = assignedBuses.shift()
-                 v_id = busRecord.vehicle_id || ""
-                 c_id = busRecord.coordinator_id || ""
+                 if (!v_id) v_id = busRecord.vehicle_id || ""
+                 if (!c_id) c_id = busRecord.coordinator_id || ""
+              }
+              if (!c_id) {
+                 c_id = matchCoordinatorByBusName(du.unit_name)
               }
 
               return {
@@ -505,10 +565,39 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       rule.commission_per_unit = customConfig.commission_per_unit !== undefined ? Number(customConfig.commission_per_unit) : 1000
     }
 
-    // Terco Tour NUNCA incluye agua
-    if (rule && (selectedCompany.toLowerCase().includes("terco tour") || rule.company_name?.toLowerCase().includes("terco tour"))) {
+    // Circus Tours & Terco Tour NUNCA incluyen agua
+    if (rule && (
+      selectedCompany.toLowerCase().includes("terco") || 
+      rule.company_name?.toLowerCase().includes("terco") ||
+      selectedCompany.toLowerCase().includes("circus") || 
+      rule.company_name?.toLowerCase().includes("circus")
+    )) {
       rule.includes_water = false
       rule.tier_50_enabled = false
+      rule.tier_10_water = false
+    }
+
+    // Rock en las Venas & Proxima Estacion SIEMPRE incluyen agua + liberados agua
+    if (rule && (
+      selectedCompany.toLowerCase().includes("rock") || 
+      rule.company_name?.toLowerCase().includes("rock") ||
+      selectedCompany.toLowerCase().includes("proxima") || 
+      selectedCompany.toLowerCase().includes("próxima") || 
+      rule.company_name?.toLowerCase().includes("proxima") || 
+      rule.company_name?.toLowerCase().includes("próxima")
+    )) {
+      rule.includes_water = true
+      rule.tier_50_enabled = true
+      rule.tier_10_water = true
+    }
+
+    // RV Traslados SIEMPRE incluye agua en viandas vendidas y a partir de 50% de ocupación en liberados
+    if (rule && (
+      selectedCompany.toLowerCase().includes("rv traslados") || 
+      rule.company_name?.toLowerCase().includes("rv traslados")
+    )) {
+      rule.includes_water = true
+      rule.is_mayorista = false
     }
 
     return rule
@@ -519,71 +608,115 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   const removeUnit = (id: string) => setUnits(prev => prev.length > 1 ? prev.filter(u => u.id !== id) : prev)
 
   const updateUnit = useCallback((id: string, field: keyof UnitRecord, value: any) => {
-    setUnits(prev => prev.map(u => {
-      if (u.id !== id) return u
-      const updated = { ...u, [field]: value }
-      
-      // Auto-logic: If liberated units change, add/subtract from traditional category by default
-      if (field === 'liberated') {
-        const diff = (Number(value) || 0) - (Number(u.liberated) || 0)
-        updated.traditional = (Number(updated.traditional) || 0) + diff
-      }
+    setUnits(prev => {
+      const newUnits = prev.map(u => {
+        if (u.id !== id) return u
+        const updated = { ...u, [field]: value }
+        
+        // Auto-logic: If liberated units change, add/subtract from traditional category by default
+        if (field === 'liberated') {
+          const diff = (Number(value) || 0) - (Number(u.liberated) || 0)
+          updated.traditional = (Number(updated.traditional) || 0) + diff
+        }
+        return updated
+      })
 
       if (field === 'sold' || field === 'liberated') {
-        const isNoWater = selectedCompany?.toLowerCase().includes("terco") || (activeRule && activeRule.includes_water === false)
-        const isMayorista = Boolean(activeRule?.is_mayorista) || selectedCompany?.toLowerCase().includes("rock") || selectedCompany?.toLowerCase().includes("terco")
+        const comp = (selectedCompany || '').toLowerCase()
+        const ruleComp = (activeRule?.company_name || '').toLowerCase()
+
+        const isCircus = comp.includes('circus') || ruleComp.includes('circus')
+        const isTerco = comp.includes('terco') || ruleComp.includes('terco')
+        const isRock = comp.includes('rock') || ruleComp.includes('rock')
+        const isProxima = comp.includes('proxima') || comp.includes('próxima') || ruleComp.includes('proxima') || ruleComp.includes('próxima')
+        const isRV = comp.includes('rv traslados') || ruleComp.includes('rv traslados')
+
         const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
-        const soldNum = Number(updated.sold) || 0
-        const libNum = Number(updated.liberated) || 0
-        const ocupationPct = pax > 0 ? (soldNum / pax) * 100 : 0
-        
-        if (isNoWater) {
-          updated.water = 0
-        } else if (isMayorista) {
-          updated.water = soldNum + libNum
-        } else {
-          // Minorista por escala
-          if (ocupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
-            updated.water = soldNum + libNum
+        const totalSold = newUnits.reduce((sum, u) => sum + (Number(u.sold) || 0), 0)
+        const globalOcupationPct = pax > 0 ? (totalSold / pax) * 100 : 0
+
+        return newUnits.map(u => {
+          const soldNum = Number(u.sold) || 0
+          const libNum = Number(u.liberated) || 0
+          
+          if (isCircus || isTerco) {
+            return { ...u, water: 0 }
+          } else if (isRock || isProxima) {
+            return { ...u, water: soldNum + libNum }
+          } else if (isRV) {
+            return { ...u, water: soldNum + (globalOcupationPct >= 50 ? libNum : 0) }
+          } else if (activeRule?.includes_water === false) {
+            return { ...u, water: 0 }
+          } else if (Boolean(activeRule?.is_mayorista)) {
+            return { ...u, water: soldNum + libNum }
           } else {
-            const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && ocupationPct >= 10 && libNum > 0 ? 1 : 0
-            updated.water = soldNum + coordiWater
+            // Minorista por escala global
+            if (globalOcupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
+              return { ...u, water: soldNum + libNum }
+            } else {
+              const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && globalOcupationPct >= 10 && libNum > 0 ? 1 : 0
+              return { ...u, water: soldNum + coordiWater }
+            }
           }
-        }
+        })
       }
-      return updated
-    }))
+
+      return newUnits
+    })
   }, [activeRule, selectedCompany, paxOverride, projectedPax])
 
   // Recalcular agua si cambia la regla o la ocupación
   useEffect(() => {
-    const isNoWater = selectedCompany?.toLowerCase().includes("terco") || (activeRule && activeRule.includes_water === false)
-    const isMayorista = Boolean(activeRule?.is_mayorista) || selectedCompany?.toLowerCase().includes("rock") || selectedCompany?.toLowerCase().includes("terco")
+    const comp = (selectedCompany || '').toLowerCase()
+    const ruleComp = (activeRule?.company_name || '').toLowerCase()
+
+    const isCircus = comp.includes('circus') || ruleComp.includes('circus')
+    const isTerco = comp.includes('terco') || ruleComp.includes('terco')
+    const isRock = comp.includes('rock') || ruleComp.includes('rock')
+    const isProxima = comp.includes('proxima') || comp.includes('próxima') || ruleComp.includes('proxima') || ruleComp.includes('próxima')
+    const isRV = comp.includes('rv traslados') || ruleComp.includes('rv traslados')
+
     const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
 
-    setUnits(prev => prev.map(u => {
-      const soldNum = Number(u.sold) || 0
-      const libNum = Number(u.liberated) || 0
-      const ocupationPct = pax > 0 ? (soldNum / pax) * 100 : 0
+    setUnits(prev => {
+      const totalSold = prev.reduce((sum, u) => sum + (Number(u.sold) || 0), 0)
+      const globalOcupationPct = pax > 0 ? (totalSold / pax) * 100 : 0
 
-      let expectedWater = 0
-      if (isNoWater) {
-        expectedWater = 0
-      } else if (isMayorista) {
-        expectedWater = soldNum + libNum
-      } else {
-        // Minorista por escala
-        if (ocupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
+      let hasChanges = false
+      const updated = prev.map(u => {
+        const soldNum = Number(u.sold) || 0
+        const libNum = Number(u.liberated) || 0
+
+        let expectedWater = 0
+        if (isCircus || isTerco) {
+          expectedWater = 0
+        } else if (isRock || isProxima) {
+          expectedWater = soldNum + libNum
+        } else if (isRV) {
+          expectedWater = soldNum + (globalOcupationPct >= 50 ? libNum : 0)
+        } else if (activeRule?.includes_water === false) {
+          expectedWater = 0
+        } else if (Boolean(activeRule?.is_mayorista)) {
           expectedWater = soldNum + libNum
         } else {
-          const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && ocupationPct >= 10 && libNum > 0 ? 1 : 0
-          expectedWater = soldNum + coordiWater
+          // Minorista por escala global
+          if (globalOcupationPct >= 50 && (activeRule?.tier_50_enabled ?? true)) {
+            expectedWater = soldNum + libNum
+          } else {
+            const coordiWater = (activeRule?.tier_10_enabled ?? true) && Boolean(activeRule?.tier_10_water) && globalOcupationPct >= 10 && libNum > 0 ? 1 : 0
+            expectedWater = soldNum + coordiWater
+          }
         }
-      }
-      
-      if (u.water !== expectedWater) return { ...u, water: expectedWater }
-      return u
-    }))
+        
+        if (u.water !== expectedWater) {
+          hasChanges = true
+          return { ...u, water: expectedWater }
+        }
+        return u
+      })
+
+      return hasChanges ? updated : prev
+    })
   }, [activeRule, selectedCompany, projectedPax, paxOverride])
 
   // --- Totals & Validation ---
@@ -609,6 +742,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     const isValBus = selectedCompany?.toLowerCase().includes("valbus") || activeRule?.company_name?.toLowerCase().includes("valbus")
     const isRockEnLasVenas = selectedCompany?.toLowerCase().includes("rock") || activeRule?.company_name?.toLowerCase().includes("rock")
     const isTercoTour = selectedCompany?.toLowerCase().includes("terco") || activeRule?.company_name?.toLowerCase().includes("terco")
+    const isCircusTour = selectedCompany?.toLowerCase().includes("circus") || activeRule?.company_name?.toLowerCase().includes("circus")
     const isMayorista = Boolean(activeRule?.is_mayorista) || isRockEnLasVenas || isTercoTour
 
     const pax = paxOverride !== null ? paxOverride : (projectedPax || 0)
@@ -682,17 +816,24 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       }
 
       // 2. Occupation scale limit:
+      const totalUnitsCount = units.length
       let maxLiberadasAllowed = 0
       if (tier30Enabled && ocupationPct >= 30) {
-        maxLiberadasAllowed = 3
+        maxLiberadasAllowed = 3 * totalUnitsCount
       } else if (tier10Enabled && ocupationPct >= 10) {
-        maxLiberadasAllowed = 1
+        maxLiberadasAllowed = 1 * totalUnitsCount
       }
 
       if (consolidated.liberated > maxLiberadasAllowed) {
-        rvValidationErrors.push(
-          `Con ${ocupationPct.toFixed(1)}% de ocupación (${consolidated.sold} vendidos de ${pax} pax proyectados), ${companyLabel} permite como máximo ${maxLiberadasAllowed} vianda(s) liberada(s). Tenés ${consolidated.liberated} asignada(s).`
-        )
+        if (ocupationPct < 10) {
+          rvValidationErrors.push(
+            `Con ${ocupationPct.toFixed(1)}% de ocupación (<10%), ${companyLabel} no permite liberar viandas.`
+          )
+        } else {
+          rvValidationErrors.push(
+            `Con ${ocupationPct.toFixed(1)}% de ocupación (${consolidated.sold} vendidos de ${pax} pax proyectados), ${companyLabel} permite como máximo ${maxLiberadasAllowed} vianda(s) liberada(s) (máx. ${ocupationPct >= 30 ? '3' : '1'} por coche para ${totalUnitsCount} coche(s)). Tenés ${consolidated.liberated} asignada(s).`
+          )
+        }
       }
 
       const commonFacturables = Math.max(0, commonViandas - consolidated.liberated)
@@ -757,7 +898,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
     const allValid = unitsValidity.every(v => v.isValid) && 
                      selectedEventId !== "" && 
                      selectedCompany !== "" && 
-                     rvValidationErrors.length === 0
+                     (rvValidationErrors.length === 0 || allowCommercialOverride)
 
     return {
       ...consolidated,
@@ -785,12 +926,13 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       isValBus,
       isRockEnLasVenas,
       isTercoTour,
+      isCircusTour,
       isMayorista,
       pax,
       ocupationPct,
       rvValidationErrors
     }
-  }, [units, activeRule, projectedPax, paxOverride, selectedEventId, selectedCompany])
+  }, [units, activeRule, projectedPax, paxOverride, selectedEventId, selectedCompany, allowCommercialOverride])
 
   // --- Save / Update ---
   const saveAll = async () => {
@@ -1378,12 +1520,12 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                       <div className="space-y-4 pt-4 border-t">
                         <div className="flex justify-between items-center">
                           <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">
-                            {totals?.isTercoTour ? 'Agua (No incluida)' : `Agua Sugerida${activeRule?.includes_water ? ' (V+L)' : ''}`}
+                            {(totals?.isTercoTour || totals?.isCircusTour) ? 'Agua (No incluida)' : `Agua Sugerida${activeRule?.includes_water ? ' (V+L)' : ''}`}
                           </label>
                           <input type="text" inputMode="numeric"
-                            disabled={totals?.isTercoTour}
-                            className={`w-20 p-2 rounded-xl text-center font-bold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${totals?.isTercoTour ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-indigo-50 border border-indigo-100 text-indigo-700'}`}
-                            value={totals?.isTercoTour ? 0 : u.water}
+                            disabled={totals?.isTercoTour || totals?.isCircusTour}
+                            className={`w-20 p-2 rounded-xl text-center font-bold [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none ${(totals?.isTercoTour || totals?.isCircusTour) ? 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed' : 'bg-indigo-50 border border-indigo-100 text-indigo-700'}`}
+                            value={(totals?.isTercoTour || totals?.isCircusTour) ? 0 : u.water}
                             onChange={e => updateUnit(u.id, 'water', parseInt(e.target.value.replace(/\D/g, '')) || 0)}
                             onFocus={e => e.target.select()} />
                         </div>
@@ -1461,16 +1603,49 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
             {/* Action Bar */}
             <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-200">
               {totals?.rvValidationErrors && totals.rvValidationErrors.length > 0 && (
-                <div className="mb-6 space-y-2">
-                  {totals.rvValidationErrors.map((err, i) => (
-                    <div key={i} className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-700 font-bold text-xs flex items-start gap-3 shadow-xs">
-                      <AlertCircle className="shrink-0 text-rose-600 mt-0.5" size={18} />
+                <div className={`mb-6 p-5 rounded-2xl border transition-all ${
+                  allowCommercialOverride 
+                    ? 'bg-amber-50 border-amber-300 text-amber-900 shadow-sm' 
+                    : 'bg-rose-50 border-rose-200 text-rose-700 shadow-xs'
+                }`}>
+                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                    <div className="flex items-start gap-3">
+                      {allowCommercialOverride ? (
+                        <ShieldAlert className="shrink-0 text-amber-600 mt-0.5" size={20} />
+                      ) : (
+                        <AlertCircle className="shrink-0 text-rose-600 mt-0.5" size={20} />
+                      )}
                       <div>
-                        <p className="uppercase text-[9px] font-black tracking-widest text-rose-800">Bloqueo por Regla Comercial — RV Traslados</p>
-                        <p className="mt-0.5 text-xs font-semibold leading-relaxed">{err}</p>
+                        <p className={`uppercase text-[9px] font-black tracking-widest ${allowCommercialOverride ? 'text-amber-800' : 'text-rose-800'}`}>
+                          {allowCommercialOverride ? '⚠️ Excepción Comercial Habilitada' : `Bloqueo por Regla Comercial — ${selectedCompany || 'Empresa'}`}
+                        </p>
+                        <div className="mt-1 space-y-1">
+                          {totals.rvValidationErrors.map((err, i) => (
+                            <p key={i} className="text-xs font-semibold leading-relaxed">{err}</p>
+                          ))}
+                        </div>
                       </div>
                     </div>
-                  ))}
+                    <button
+                      type="button"
+                      onClick={() => setAllowCommercialOverride(!allowCommercialOverride)}
+                      className={`shrink-0 px-4 py-2.5 rounded-xl font-black text-xs uppercase tracking-wider transition-all flex items-center gap-2 cursor-pointer shadow-sm active:scale-95 ${
+                        allowCommercialOverride
+                          ? 'bg-amber-600 text-white hover:bg-amber-700 shadow-amber-600/20'
+                          : 'bg-rose-600 text-white hover:bg-rose-700 shadow-rose-600/20'
+                      }`}
+                    >
+                      {allowCommercialOverride ? (
+                        <>
+                          <CheckCircle2 size={16} /> Excepción Autorizada (Quitar)
+                        </>
+                      ) : (
+                        <>
+                          <Unlock size={16} /> Autorizar Excepción Comercial
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               )}
 
@@ -1492,12 +1667,14 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                   </div>
                   <div className="h-10 w-px bg-slate-200 hidden md:block" />
                   <div>
-                    <span className={`text-xs font-bold flex items-center gap-2 ${totals?.allValid ? 'text-emerald-600' : 'text-rose-500'}`}>
+                    <span className={`text-xs font-bold flex items-center gap-2 ${totals?.allValid ? (allowCommercialOverride && totals?.rvValidationErrors?.length ? 'text-amber-600' : 'text-emerald-600') : 'text-rose-500'}`}>
                       {totals?.allValid ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-                      {totals?.allValid ? 'Datos Validados' : (totals?.rvValidationErrors?.length ? 'Bloqueo Regla Comercial' : 'Error en Distribución')}
+                      {totals?.allValid 
+                        ? (allowCommercialOverride && totals?.rvValidationErrors?.length ? 'Excepción Comercial Autorizada' : 'Datos Validados') 
+                        : (totals?.rvValidationErrors?.length ? 'Bloqueo Regla Comercial' : 'Error en Distribución')}
                     </span>
                     <p className="text-[10px] text-slate-400">
-                      {totals?.allValid ? 'Listo para persistir' : 'Revisá las advertencias rojas arriba'}
+                      {totals?.allValid ? 'Listo para persistir' : (totals?.rvValidationErrors?.length ? 'Revisá la regla o autorizá la excepción' : 'Revisá las advertencias rojas arriba')}
                     </p>
                   </div>
                 </div>

@@ -1,0 +1,8 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/daily-production-cut",
+      "schedule": "15 2 * * *"
+    }
+  ]
+}

@@ -186,15 +186,14 @@ export default function Sidebar() {
         const restricted = [
           '/crm', '/clients', '/coordinadores', '/buses', 
           '/settings/reglas-precios', '/reglas-liberados', '/informes',
-          '/vehicle-defaults', '/inventario/recetas',
-          '/rrhh', '/finanzas/tesoreria', '/finanzas/categorias', '/informes/financieros'
+          '/vehicle-defaults',
+          '/rrhh', '/finanzas',
+          '/ventas-evento', '/ventas-online'
         ]
-        // Allow Gestión de Eventos, Ventas por Evento y Ventas Online for cocina
+        // Allow Gestión de Eventos para cocina
         if (item.href === '/settings/eventos') return true
-        if (item.href === '/ventas-evento') return true
-        if (item.href === '/ventas-online') return true
         if (item.href === '/settings') return false
-        return !restricted.includes(item.href)
+        return !restricted.some(prefix => item.href.startsWith(prefix))
       })
       if (allowedItems.length === 0) return null
       return { ...section, items: allowedItems }

@@ -14,18 +14,32 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const eventDate = store?.available_dates?.[0] || store?.events_master?.event_date
+
   // Format existing sales_deadline to YYYY-MM-DDTHH:MM for input[type="datetime-local"]
   const getInitialDeadline = (deadlineVal?: string) => {
-    const val = deadlineVal !== undefined ? deadlineVal : store.sales_deadline
-    if (!val) return ''
-    try {
-      const d = new Date(val)
-      if (isNaN(d.getTime())) return ''
-      const pad = (n: number) => n < 10 ? '0' + n : n
-      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-    } catch {
-      return ''
+    const val = deadlineVal !== undefined ? deadlineVal : store?.sales_deadline
+    if (val) {
+      try {
+        const d = new Date(val)
+        if (!isNaN(d.getTime())) {
+          const pad = (n: number) => n < 10 ? '0' + n : n
+          return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+        }
+      } catch {
+        return ''
+      }
     }
+    if (eventDate) {
+      try {
+        const [y, m, d] = eventDate.split('-').map(Number)
+        const dt = new Date(y, m - 1, d)
+        dt.setDate(dt.getDate() - 1)
+        const pad = (n: number) => n < 10 ? '0' + n : n
+        return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T23:00`
+      } catch {}
+    }
+    return ''
   }
 
   const [formData, setFormData] = useState({
@@ -37,22 +51,22 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
     // Combos stock & prices
     combo_trad_enabled: store.combo_trad_enabled ?? true,
     combo_trad_price: Number(store.combo_trad_price) || 0,
-    combo_trad_name: store.combo_trad_name || 'Combo Tradicional + Agua sin Gas',
+    combo_trad_name: store.combo_trad_name || 'Combo Tradicional',
     combo_trad_desc: store.combo_trad_desc || '',
 
     combo_veg_enabled: store.combo_veg_enabled ?? true,
     combo_veg_price: Number(store.combo_veg_price) || 0,
-    combo_veg_name: store.combo_veg_name || 'Combo Vegetariano + Agua sin Gas',
+    combo_veg_name: store.combo_veg_name || 'Combo Vegetariano',
     combo_veg_desc: store.combo_veg_desc || '',
 
     combo_sintacc_enabled: store.combo_sintacc_enabled ?? true,
     combo_sintacc_price: Number(store.combo_sintacc_price) || 0,
-    combo_sintacc_name: store.combo_sintacc_name || 'Combo Sin TACC + Agua sin Gas',
+    combo_sintacc_name: store.combo_sintacc_name || 'Combo Sin TACC',
     combo_sintacc_desc: store.combo_sintacc_desc || '',
 
     combo_vegan_enabled: store.combo_vegan_enabled ?? true,
     combo_vegan_price: Number(store.combo_vegan_price) || 0,
-    combo_vegan_name: store.combo_vegan_name || 'Combo Vegano + Agua sin Gas',
+    combo_vegan_name: store.combo_vegan_name || 'Combo Vegano',
     combo_vegan_desc: store.combo_vegan_desc || ''
   })
 
@@ -67,28 +81,41 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
         
         combo_trad_enabled: store.combo_trad_enabled ?? true,
         combo_trad_price: Number(store.combo_trad_price) || 0,
-        combo_trad_name: store.combo_trad_name || 'Combo Tradicional + Agua sin Gas',
+        combo_trad_name: store.combo_trad_name || 'Combo Tradicional',
         combo_trad_desc: store.combo_trad_desc || '',
 
         combo_veg_enabled: store.combo_veg_enabled ?? true,
         combo_veg_price: Number(store.combo_veg_price) || 0,
-        combo_veg_name: store.combo_veg_name || 'Combo Vegetariano + Agua sin Gas',
+        combo_veg_name: store.combo_veg_name || 'Combo Vegetariano',
         combo_veg_desc: store.combo_veg_desc || '',
 
         combo_sintacc_enabled: store.combo_sintacc_enabled ?? true,
         combo_sintacc_price: Number(store.combo_sintacc_price) || 0,
-        combo_sintacc_name: store.combo_sintacc_name || 'Combo Sin TACC + Agua sin Gas',
+        combo_sintacc_name: store.combo_sintacc_name || 'Combo Sin TACC',
         combo_sintacc_desc: store.combo_sintacc_desc || '',
 
         combo_vegan_enabled: store.combo_vegan_enabled ?? true,
         combo_vegan_price: Number(store.combo_vegan_price) || 0,
-        combo_vegan_name: store.combo_vegan_name || 'Combo Vegano + Agua sin Gas',
-        combo_vegan_desc: store.combo_vegan_desc || 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
+        combo_vegan_name: store.combo_vegan_name || 'Combo Vegano',
+        combo_vegan_desc: store.combo_vegan_desc || ''
       })
     }
   }, [store])
 
-  const eventDate = store.available_dates?.[0] || store.events_master?.event_date
+  const setPresetDayBefore23 = () => {
+    if (!eventDate) return
+    try {
+      const [y, m, d] = eventDate.split('-').map(Number)
+      const dt = new Date(y, m - 1, d)
+      dt.setDate(dt.getDate() - 1)
+      const pad = (n: number) => n < 10 ? '0' + n : n
+      const prevDateStr = `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`
+      setFormData(prev => ({
+        ...prev,
+        sales_deadline: `${prevDateStr}T23:00`
+      }))
+    } catch {}
+  }
 
   const setPresetDeadline = (hours: number, minutes: number = 0) => {
     if (!eventDate) return
@@ -244,6 +271,13 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
                   <div className="flex flex-wrap gap-1.5 pt-1">
                     <button
                       type="button"
+                      onClick={setPresetDayBefore23}
+                      className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-extrabold rounded-lg transition cursor-pointer flex items-center gap-1 shadow-xs"
+                    >
+                      ⭐ Día anterior 23:00 HS (Por Defecto)
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setPresetDeadline(12, 0)}
                       className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg transition cursor-pointer"
                     >
@@ -259,6 +293,7 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
                   </div>
                 )}
               </div>
+
             </div>
           </div>
 
@@ -267,10 +302,10 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-2">
                 <Package size={15} className="text-indigo-600" />
-                2. Disponibilidad de Combos (Encender / Apagar Stock)
+                2. Disponibilidad de Menú / Viandas (Encender / Apagar Stock)
               </h3>
               <span className="text-[11px] text-slate-500 font-semibold">
-                Apagá un combo si te quedaste sin pan, fiambre o insumos.
+                Apagá una opción si te quedaste sin pan, fiambre o insumos.
               </span>
             </div>
 
@@ -279,7 +314,7 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
               {/* Tradicional */}
               <div className={`p-4 rounded-2xl border transition ${formData.combo_trad_enabled ? 'bg-white border-slate-200 shadow-xs' : 'bg-slate-100/80 border-slate-200 opacity-75'}`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-black uppercase text-slate-800">🥪 Combo Tradicional</span>
+                  <span className="text-xs font-black uppercase text-slate-800">🥪 {formData.combo_trad_name || 'Sándwich Tradicional'}</span>
                   <button
                     type="button"
                     onClick={() => setFormData(d => ({ ...d, combo_trad_enabled: !d.combo_trad_enabled }))}
@@ -307,7 +342,7 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
               {/* Vegetariano */}
               <div className={`p-4 rounded-2xl border transition ${formData.combo_veg_enabled ? 'bg-white border-slate-200 shadow-xs' : 'bg-slate-100/80 border-slate-200 opacity-75'}`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-black uppercase text-slate-800">🥗 Combo Vegetariano</span>
+                  <span className="text-xs font-black uppercase text-slate-800">🥗 {formData.combo_veg_name || 'Sándwich Vegetariano'}</span>
                   <button
                     type="button"
                     onClick={() => setFormData(d => ({ ...d, combo_veg_enabled: !d.combo_veg_enabled }))}
@@ -335,7 +370,7 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
               {/* Sin TACC */}
               <div className={`p-4 rounded-2xl border transition ${formData.combo_sintacc_enabled ? 'bg-white border-slate-200 shadow-xs' : 'bg-slate-100/80 border-slate-200 opacity-75'}`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-black uppercase text-slate-800">🌾 Combo Sin TACC</span>
+                  <span className="text-xs font-black uppercase text-slate-800">🌾 {formData.combo_sintacc_name || 'Sándwich Sin TACC'}</span>
                   <button
                     type="button"
                     onClick={() => setFormData(d => ({ ...d, combo_sintacc_enabled: !d.combo_sintacc_enabled }))}
@@ -363,7 +398,7 @@ export default function StoreEditModal({ store, onClose, onUpdated }: Props) {
               {/* Vegano */}
               <div className={`p-4 rounded-2xl border transition ${formData.combo_vegan_enabled ? 'bg-white border-slate-200 shadow-xs' : 'bg-slate-100/80 border-slate-200 opacity-75'}`}>
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-black uppercase text-slate-800">🌱 Combo Vegano</span>
+                  <span className="text-xs font-black uppercase text-slate-800">🌱 {formData.combo_vegan_name || 'Sándwich Vegano'}</span>
                   <button
                     type="button"
                     onClick={() => setFormData(d => ({ ...d, combo_vegan_enabled: !d.combo_vegan_enabled }))}

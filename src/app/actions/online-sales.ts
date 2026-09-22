@@ -7,6 +7,19 @@ import { OnlineStoreEvent, OnlineOrder, OnlineCustomer, OnlineOrdersSummary } fr
 // STORE EVENTS
 // ============================================================
 
+function getDefaultSalesDeadline(eventDate: string): string {
+  try {
+    const [y, m, d] = eventDate.split("-").map(Number)
+    const dt = new Date(Date.UTC(y, m - 1, d, 12, 0, 0))
+    dt.setUTCDate(dt.getUTCDate() - 1)
+    const pad = (n: number) => (n < 10 ? "0" + n : n)
+    const prevDateStr = `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())}`
+    return new Date(`${prevDateStr}T23:00:00-03:00`).toISOString()
+  } catch {
+    return ""
+  }
+}
+
 export async function createStoreEventAction(data: {
   event_master_id: string
   slug: string
@@ -35,6 +48,7 @@ export async function createStoreEventAction(data: {
   commercial_rule_id?: string
 }) {
   const supabase = await createClient()
+  const deadline = data.sales_deadline || (data.available_dates?.[0] ? getDefaultSalesDeadline(data.available_dates[0]) : null)
   
   // Check if store already exists with this slug
   const { data: existing } = await supabase
@@ -48,6 +62,7 @@ export async function createStoreEventAction(data: {
       .from("online_store_events")
       .update({
         ...data,
+        sales_deadline: deadline || null,
         is_active: true,
         updated_at: new Date().toISOString()
       })
@@ -59,14 +74,18 @@ export async function createStoreEventAction(data: {
     return { success: true, data: updated }
   }
 
-  const { data: store, error } = await supabase
+  const { data: newStore, error } = await supabase
     .from("online_store_events")
-    .insert([{ ...data, is_active: true }])
+    .insert([{
+      ...data,
+      sales_deadline: deadline || null,
+      is_active: true
+    }])
     .select()
     .single()
   
   if (error) return { success: false, error: error.message }
-  return { success: true, data: store }
+  return { success: true, data: newStore }
 }
 
 export async function updateStoreEventAction(
@@ -201,15 +220,22 @@ export async function autoSyncStoresForConfirmedEventsAction() {
       const rule = (rules || []).find(r => 
         r.company_name && compName && r.company_name.toLowerCase().trim() === compName.toLowerCase().trim()
       )
-      const basePrice = Number(rule?.price_base) || 10000
-      const sintaccPrice = Number(rule?.price_sintacc_base) || basePrice || 12000
+      const isCircus = Boolean(compName?.toLowerCase().includes('circus') || rule?.company_name?.toLowerCase().includes('circus'))
+      const isTerco = Boolean(compName?.toLowerCase().includes('terco') || rule?.company_name?.toLowerCase().includes('terco'))
+      const isRock = Boolean(compName?.toLowerCase().includes('rock') || rule?.company_name?.toLowerCase().includes('rock'))
+      const isProxima = Boolean(compName?.toLowerCase().includes('proxima') || compName?.toLowerCase().includes('próxima') || rule?.company_name?.toLowerCase().includes('proxima') || rule?.company_name?.toLowerCase().includes('próxima'))
+
+      const basePrice = Number(rule?.price_base) || (isCircus ? 10000 : isRock ? 8500 : isTerco ? 7000 : 12000)
+      const sintaccPrice = Number(rule?.price_sintacc_base) || (isCircus ? 14000 : isRock ? 9000 : isTerco ? 9000 : 15000)
+      const includesWater = isCircus || isTerco ? false : (isRock || isProxima ? true : (rule?.includes_water ?? true))
 
       return {
         trad: basePrice,
         veg: basePrice,
         vegan: basePrice,
         sintacc: sintaccPrice,
-        ruleId: rule?.id || null
+        ruleId: rule?.id || null,
+        includesWater
       }
     }
 
@@ -284,30 +310,43 @@ export async function autoSyncStoresForConfirmedEventsAction() {
 
         const prices = getPricesForCompany(company)
 
+        const isWater = prices.includesWater
+        const deadline = getDefaultSalesDeadline(eventDate)
         const storeData = {
           event_master_id: event.id,
           slug: rawSlug,
           title: `${showName} - ${company}`,
           subtitle: venueName ? `Venue: ${venueName}` : "Cena de Regreso",
-          description: `Viandas oficiales para el regreso del show ${showName}. Reservá tu combo directamente con tarjeta o dinero en cuenta.`,
+          description: isWater
+            ? `Viandas oficiales para el regreso del show ${showName}. Reservá tu combo directamente con tarjeta o dinero en cuenta.`
+            : `Viandas oficiales para el regreso del show ${showName}. Reservá tu sándwich directamente con tarjeta o dinero en cuenta.`,
           is_active: true,
+          sales_deadline: deadline || null,
           available_dates: [eventDate],
           combo_trad_enabled: true,
           combo_trad_price: prices.trad,
-          combo_trad_name: "Combo Tradicional + Agua sin Gas",
-          combo_trad_desc: "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral.",
+          combo_trad_name: isWater ? "Combo Tradicional + Agua sin Gas" : "Sándwich Tradicional",
+          combo_trad_desc: isWater
+            ? "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral."
+            : "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día.",
           combo_veg_enabled: true,
           combo_veg_price: prices.veg,
-          combo_veg_name: "Combo Vegetariano + Agua sin Gas",
-          combo_veg_desc: "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral.",
+          combo_veg_name: isWater ? "Combo Vegetariano + Agua sin Gas" : "Sándwich Vegetariano",
+          combo_veg_desc: isWater
+            ? "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral."
+            : "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate.",
           combo_sintacc_enabled: true,
           combo_sintacc_price: prices.sintacc,
-          combo_sintacc_name: "Combo Sin TACC + Agua sin Gas",
-          combo_sintacc_desc: "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.",
+          combo_sintacc_name: isWater ? "Combo Sin TACC + Agua sin Gas" : "Sándwich Sin TACC",
+          combo_sintacc_desc: isWater
+            ? "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral."
+            : "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).",
           combo_vegan_enabled: true,
           combo_vegan_price: prices.vegan,
-          combo_vegan_name: "Combo Vegano + Agua sin Gas",
-          combo_vegan_desc: "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.",
+          combo_vegan_name: isWater ? "Combo Vegano + Agua sin Gas" : "Sándwich Vegano",
+          combo_vegan_desc: isWater
+            ? "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral."
+            : "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada.",
           commercial_rule_id: prices.ruleId
         }
 
@@ -321,31 +360,44 @@ export async function autoSyncStoresForConfirmedEventsAction() {
       const rawSlug = `${slugify(showName)}-${eventDate}`
       if (!existingSlugs.has(rawSlug)) {
         const prices = getPricesForCompany()
+        const isWater = prices.includesWater
+        const deadline = getDefaultSalesDeadline(eventDate)
 
         const storeData = {
           event_master_id: event.id,
           slug: rawSlug,
           title: showName,
           subtitle: venueName ? `Venue: ${venueName}` : "Cena de Regreso",
-          description: `Viandas oficiales para el regreso del show ${showName}. Reservá tu combo directamente con tarjeta o dinero en cuenta.`,
+          description: isWater
+            ? `Viandas oficiales para el regreso del show ${showName}. Reservá tu combo directamente con tarjeta o dinero en cuenta.`
+            : `Viandas oficiales para el regreso del show ${showName}. Reservá tu sándwich directamente con tarjeta o dinero en cuenta.`,
           is_active: true,
+          sales_deadline: deadline || null,
           available_dates: [eventDate],
           combo_trad_enabled: true,
           combo_trad_price: prices.trad,
-          combo_trad_name: "Combo Tradicional + Agua sin Gas",
-          combo_trad_desc: "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral.",
+          combo_trad_name: isWater ? "Combo Tradicional + Agua sin Gas" : "Sándwich Tradicional",
+          combo_trad_desc: isWater
+            ? "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral."
+            : "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día.",
           combo_veg_enabled: true,
           combo_veg_price: prices.veg,
-          combo_veg_name: "Combo Vegetariano + Agua sin Gas",
-          combo_veg_desc: "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral.",
+          combo_veg_name: isWater ? "Combo Vegetariano + Agua sin Gas" : "Sándwich Vegetariano",
+          combo_veg_desc: isWater
+            ? "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral."
+            : "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate.",
           combo_sintacc_enabled: true,
           combo_sintacc_price: prices.sintacc,
-          combo_sintacc_name: "Combo Sin TACC + Agua sin Gas",
-          combo_sintacc_desc: "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.",
+          combo_sintacc_name: isWater ? "Combo Sin TACC + Agua sin Gas" : "Sándwich Sin TACC",
+          combo_sintacc_desc: isWater
+            ? "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral."
+            : "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).",
           combo_vegan_enabled: true,
           combo_vegan_price: prices.vegan,
-          combo_vegan_name: "Combo Vegano + Agua sin Gas",
-          combo_vegan_desc: "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.",
+          combo_vegan_name: isWater ? "Combo Vegano + Agua sin Gas" : "Sándwich Vegano",
+          combo_vegan_desc: isWater
+            ? "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral."
+            : "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada.",
           commercial_rule_id: prices.ruleId
         }
 
@@ -357,14 +409,6 @@ export async function autoSyncStoresForConfirmedEventsAction() {
       }
     }
   }
-
-  // Guarantee all existing stores have updated vegan combo descriptions
-  await supabase
-    .from("online_store_events")
-    .update({
-      combo_vegan_desc: "Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral."
-    })
-    .or("combo_vegan_desc.ilike.%vegetales asados%,combo_vegan_desc.ilike.%salteados%")
 
   return { success: true, createdCount }
 }
@@ -697,3 +741,136 @@ export async function cancelAllPendingOrdersAction() {
     return { success: false, error: err.message }
   }
 }
+
+export async function moveOnlineOrderBusAction({
+  orderId,
+  newBusIdentifier
+}: {
+  orderId: string
+  newBusIdentifier: string
+}) {
+  try {
+    const supabase = await createClient()
+
+    const cleanBus = (newBusIdentifier || '').trim()
+
+    const { data, error } = await supabase
+      .from("online_orders")
+      .update({
+        bus_identifier: cleanBus || null,
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", orderId)
+      .select("*, online_customers(email, full_name)")
+      .single()
+
+    if (error) throw error
+
+    return { success: true, data }
+  } catch (err: any) {
+    console.error("Error moving order bus identifier:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function bulkMoveOnlineOrdersBusAction({
+  orderIds,
+  newBusIdentifier
+}: {
+  orderIds: string[]
+  newBusIdentifier: string
+}) {
+  try {
+    if (!orderIds || orderIds.length === 0) return { success: false, error: "No se seleccionaron pedidos" }
+
+    const supabase = await createClient()
+    const cleanBus = (newBusIdentifier || '').trim()
+
+    const { data, error } = await supabase
+      .from("online_orders")
+      .update({
+        bus_identifier: cleanBus || null,
+        updated_at: new Date().toISOString()
+      })
+      .in("id", orderIds)
+      .select("id, bus_identifier")
+
+    if (error) throw error
+
+    return { success: true, count: data?.length || 0 }
+  } catch (err: any) {
+    console.error("Error bulk moving order bus identifier:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function resendOrderEmailAction({ orderId }: { orderId: string }) {
+  try {
+    const { sendOrderConfirmationEmail } = await import("@/lib/email")
+    const res = await sendOrderConfirmationEmail(orderId, { force: true })
+    return res
+  } catch (err: any) {
+    console.error("Error resending email:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function manuallyApproveOnlineOrderAction(orderId: string) {
+  try {
+    const supabase = await createClient()
+
+    const { data: order, error } = await supabase
+      .from("online_orders")
+      .update({
+        status: "paid",
+        mp_status: "approved",
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", orderId)
+      .select("*, online_customers(email, full_name)")
+      .single()
+
+    if (error) throw error
+
+    // Send confirmation email directly
+    const { sendOrderConfirmationEmail } = await import("@/lib/email")
+    await sendOrderConfirmationEmail(orderId, { force: true })
+
+    return { success: true, data: order }
+  } catch (err: any) {
+    console.error("Error manually approving order:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function sendFirstCutProductionEmailAction(params: {
+  eventId?: string
+  eventDate?: string
+  targetEmail?: string
+  ccEmail?: string
+}) {
+  try {
+    const { sendFirstCutProductionEmail } = await import("@/lib/email")
+    const res = await sendFirstCutProductionEmail(params)
+    return res
+  } catch (err: any) {
+    console.error("Error sending first cut production email:", err)
+    return { success: false, error: err.message }
+  }
+}
+
+export async function sendDailyProductionCutAction(params: {
+  targetDate?: string
+  targetEmail?: string
+  ccEmail?: string
+} = {}) {
+  try {
+    const { sendDailyProductionCutSchedule } = await import("@/lib/email")
+    const res = await sendDailyProductionCutSchedule(params)
+    return res
+  } catch (err: any) {
+    console.error("Error running daily production cut action:", err)
+    return { success: false, error: err.message }
+  }
+}
+

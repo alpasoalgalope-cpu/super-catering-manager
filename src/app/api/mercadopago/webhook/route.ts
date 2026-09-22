@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { paymentClient } from "@/lib/mercadopago"
 import { createClient } from "@/lib/supabase/server"
+import { sendOrderConfirmationEmail, sendOrderPendingEmail } from "@/lib/email"
 
 export async function POST(request: NextRequest) {
   try {
@@ -61,6 +62,17 @@ export async function POST(request: NextRequest) {
         console.error("Error updating order from webhook:", error)
       } else {
         console.log(`Order ${orderId} updated: status=${orderStatus}, mp_status=${mpStatus}`)
+
+        // Trigger transactional email if approved
+        if (orderStatus === "paid") {
+          sendOrderConfirmationEmail(orderId).catch(mailErr => {
+            console.error("[Webhook Email Error]", mailErr)
+          })
+        } else if (orderStatus === "pending_payment" || mpStatus === "in_process" || mpStatus === "pending") {
+          sendOrderPendingEmail(orderId).catch(mailErr => {
+            console.error("[Webhook Pending Email Error]", mailErr)
+          })
+        }
       }
     }
 

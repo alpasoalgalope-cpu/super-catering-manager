@@ -120,12 +120,18 @@ export async function POST(request: NextRequest) {
 
       activeOrderId = newOrder.id
 
-      // Build items list
+      // Build items list using store names if available
+      let storeInfo: any = null
+      if (storeId) {
+        const { data: st } = await supabase.from('online_store_events').select('combo_trad_name, combo_veg_name, combo_sintacc_name, combo_vegan_name').eq('id', storeId).maybeSingle()
+        storeInfo = st
+      }
+
       activeItems = [
-        ...(tradQty > 0 ? [{ title: "Combo Tradicional + Agua sin Gas", quantity: tradQty, unit_price: tradPrice }] : []),
-        ...(vegQty > 0 ? [{ title: "Combo Vegetariano + Agua sin Gas", quantity: vegQty, unit_price: vegPrice }] : []),
-        ...(staccQty > 0 ? [{ title: "Combo Sin TACC + Agua sin Gas", quantity: staccQty, unit_price: staccPrice }] : []),
-        ...(veganQty > 0 ? [{ title: "Combo Vegano + Agua sin Gas", quantity: veganQty, unit_price: veganPrice }] : []),
+        ...(tradQty > 0 ? [{ title: storeInfo?.combo_trad_name || "Combo Tradicional", quantity: tradQty, unit_price: tradPrice }] : []),
+        ...(vegQty > 0 ? [{ title: storeInfo?.combo_veg_name || "Combo Vegetariano", quantity: vegQty, unit_price: vegPrice }] : []),
+        ...(staccQty > 0 ? [{ title: storeInfo?.combo_sintacc_name || "Combo Sin TACC", quantity: staccQty, unit_price: staccPrice }] : []),
+        ...(veganQty > 0 ? [{ title: storeInfo?.combo_vegan_name || "Combo Vegano", quantity: veganQty, unit_price: veganPrice }] : []),
       ]
     }
 

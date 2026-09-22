@@ -1,6 +1,7 @@
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
-import { CheckCircle, XCircle, Clock, ArrowLeft } from 'lucide-react'
+import { CheckCircle, XCircle, Clock, ArrowLeft, AlertTriangle } from 'lucide-react'
+import { sendOrderConfirmationEmail, sendOrderPendingEmail } from '@/lib/email'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,16 @@ export default async function ConfirmationPage({ params, searchParams }: Props) 
         mp_payment_id: payment_id || null
       })
       .eq('id', order_id)
+
+    // Send confirmation email (has anti-duplicate check internally)
+    sendOrderConfirmationEmail(order_id).catch(err => {
+      console.error("[Confirmation Page Email Error]", err)
+    })
+  } else if (order_id && status === 'pending') {
+    // Send pending email (has anti-duplicate check internally)
+    sendOrderPendingEmail(order_id).catch(err => {
+      console.error("[Confirmation Page Pending Email Error]", err)
+    })
   }
 
   const renderContent = () => {
@@ -43,12 +54,12 @@ export default async function ConfirmationPage({ params, searchParams }: Props) 
               ¡Pago Exitoso!
             </h1>
             <p className="text-slate-400 text-center mb-8 text-lg">
-              Tu pedido ha sido confirmado. Te esperamos en el viaje.
+              Tu pedido ha sido confirmado. Te enviamos el comprobante por correo electrónico.
             </p>
             {order_id && (
               <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 w-full mb-8 text-center">
                 <p className="text-sm text-slate-500 uppercase tracking-wider mb-1">Número de Orden</p>
-                <p className="font-mono text-white text-lg">{order_id.slice(0, 8).toUpperCase()}</p>
+                <p className="font-mono text-white text-lg font-black">{order_id.slice(0, 8).toUpperCase()}</p>
               </div>
             )}
           </>
@@ -74,11 +85,33 @@ export default async function ConfirmationPage({ params, searchParams }: Props) 
               <Clock className="w-12 h-12 text-amber-500" />
             </div>
             <h1 className="text-4xl font-black italic tracking-tighter text-white uppercase text-center mb-4">
-              Pago Pendiente
+              Pago en Proceso
             </h1>
-            <p className="text-slate-400 text-center mb-8 text-lg">
-              Estamos procesando tu pago. Te notificaremos cuando se apruebe.
+            <p className="text-slate-300 text-center mb-6 text-base">
+              Tu pago se encuentra en proceso de verificación por la entidad financiera o Mercado Pago.
             </p>
+
+            {/* Anti-duplicate Warning */}
+            <div className="bg-red-950/40 border-2 border-red-500/50 rounded-2xl p-4 w-full mb-6 text-left">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-black text-red-200 text-xs uppercase tracking-wide">
+                    Importante: No reintentes la compra
+                  </p>
+                  <p className="text-xs text-red-300/90 mt-1 leading-relaxed">
+                    Si ya viste el consumo en tu tarjeta o billetera virtual, <strong>NO vuelvas a intentar la compra</strong> para evitar duplicar el cobro. Tu orden ya está registrada y te avisaremos por email en cuanto se confirme.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {order_id && (
+              <div className="bg-slate-900/50 border border-slate-800 rounded-2xl p-4 w-full mb-8 text-center">
+                <p className="text-sm text-slate-500 uppercase tracking-wider mb-1">Identificador de Orden</p>
+                <p className="font-mono text-amber-400 text-lg font-black">{order_id.slice(0, 8).toUpperCase()}</p>
+              </div>
+            )}
           </>
         )
       default:

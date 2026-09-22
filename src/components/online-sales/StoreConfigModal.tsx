@@ -1,7 +1,7 @@
 "use client"
 
 import React, { useState, useMemo } from 'react'
-import { X, Plus, Trash2, Save, Loader2, AlertCircle, Building2, Calendar, Sparkles, Check, DollarSign } from 'lucide-react'
+import { X, Plus, Trash2, Save, Loader2, AlertCircle, Building2, Calendar, Sparkles, Check, DollarSign, Clock } from 'lucide-react'
 import { createStoreEventAction } from '@/app/actions/online-sales'
 
 interface Props {
@@ -10,6 +10,19 @@ interface Props {
   existingStores?: any[]
   onClose: () => void
   onCreated: () => void
+}
+
+function getDefaultDeadline(eventDateStr?: string) {
+  if (!eventDateStr) return ''
+  try {
+    const [y, m, d] = eventDateStr.split('-').map(Number)
+    const dt = new Date(y, m - 1, d)
+    dt.setDate(dt.getDate() - 1)
+    const pad = (n: number) => n < 10 ? '0' + n : n
+    return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}T23:00`
+  } catch {
+    return ''
+  }
 }
 
 export default function StoreConfigModal({ events, rules = [], existingStores = [], onClose, onCreated }: Props) {
@@ -62,22 +75,10 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
     })
   }, [events])
 
-  const selectedEvent = useMemo(() => {
-    return events.find(e => e.id === selectedEventId) || null
-  }, [events, selectedEventId])
-
-  // Extract companies (projections) for the selected event
-  const eventCompanies = useMemo(() => {
-    if (!selectedEvent) return []
-    const projs = selectedEvent.event_projections || []
-    return projs.map((p: any) => p.company_name).filter(Boolean)
-  }, [selectedEvent])
-
+  // Helper slugify
   const slugify = (text: string) => {
-    return (text || '')
+    return text
       .toString()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase()
       .trim()
       .replace(/\s+/g, '-')
@@ -85,7 +86,18 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
       .replace(/\-\-+/g, '-')
   }
 
-  // When an event is picked, update dates and reset company
+  const selectedEvent = useMemo(() => {
+    return events.find(e => e.id === selectedEventId)
+  }, [events, selectedEventId])
+
+  // Extract companies configured for this show from commercial_rules or default lists
+  const eventCompanies = useMemo(() => {
+    if (!rules || rules.length === 0) return ['RV Traslados', 'Circus Tours', 'Proxima Estacion', 'Terco Tour', 'ValBus']
+    const unique = Array.from(new Set(rules.map((r: any) => r.company_name).filter(Boolean)))
+    return unique.length > 0 ? unique : ['RV Traslados', 'Circus Tours', 'Proxima Estacion', 'Terco Tour', 'ValBus']
+  }, [rules])
+
+  // When an event is selected from the dropdown
   const handleSelectEvent = (eventId: string) => {
     setSelectedEventId(eventId)
     setSelectedCompany('')
@@ -102,7 +114,8 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
       title: showName,
       slug: slugify(`${showName}-${eventDate}`),
       subtitle: venueName ? `Viaje al evento ${showName} @ ${venueName}` : 'Cena de Regreso',
-      available_dates: eventDate ? [eventDate] : []
+      available_dates: eventDate ? [eventDate] : [],
+      sales_deadline: getDefaultDeadline(eventDate)
     }))
   }
 
@@ -120,8 +133,14 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
       r.company_name && companyName && r.company_name.toLowerCase().trim() === companyName.toLowerCase().trim()
     )
 
-    const basePrice = rule?.price_base ? Number(rule.price_base) : (companyName.toLowerCase().includes('valbus') ? 8500 : 12000)
-    const stPrice = rule?.price_sintacc_base ? Number(rule.price_sintacc_base) : (companyName.toLowerCase().includes('valbus') ? 10000 : 15000)
+    const isCircus = companyName.toLowerCase().includes('circus')
+    const isTerco = companyName.toLowerCase().includes('terco')
+    const isRock = companyName.toLowerCase().includes('rock')
+    const isProxima = companyName.toLowerCase().includes('proxima') || companyName.toLowerCase().includes('próxima')
+    const includesWater = isCircus || isTerco ? false : (isRock || isProxima ? true : (rule?.includes_water ?? true))
+
+    const basePrice = rule?.price_base ? Number(rule.price_base) : (isCircus ? 10000 : isRock ? 8500 : isTerco ? 7000 : 12000)
+    const stPrice = rule?.price_sintacc_base ? Number(rule.price_sintacc_base) : (isCircus ? 14000 : isRock ? 9000 : isTerco ? 9000 : 15000)
 
     const cleanSlug = `${slugify(showName)}-${slugify(companyName)}-${eventDate}`
 
@@ -131,10 +150,27 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
       slug: cleanSlug,
       subtitle: venueName ? `Viaje al evento ${showName} @ ${venueName}` : 'Cena de Regreso',
       available_dates: eventDate ? [eventDate] : [],
+      sales_deadline: prev.sales_deadline || getDefaultDeadline(eventDate),
       combo_trad_price: basePrice,
       combo_veg_price: basePrice,
       combo_vegan_price: basePrice,
       combo_sintacc_price: stPrice,
+      combo_trad_name: includesWater ? 'Combo Tradicional + Agua sin Gas' : 'Sándwich Tradicional',
+      combo_trad_desc: includesWater
+        ? 'Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral.'
+        : 'Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día.',
+      combo_veg_name: includesWater ? 'Combo Vegetariano + Agua sin Gas' : 'Sándwich Vegetariano',
+      combo_veg_desc: includesWater
+        ? 'Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral.'
+        : 'Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate.',
+      combo_sintacc_name: includesWater ? 'Combo Sin TACC + Agua sin Gas' : 'Sándwich Sin TACC',
+      combo_sintacc_desc: includesWater
+        ? 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.'
+        : 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).',
+      combo_vegan_name: includesWater ? 'Combo Vegano + Agua sin Gas' : 'Sándwich Vegano',
+      combo_vegan_desc: includesWater
+        ? 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'
+        : 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada.',
       combo_trad_enabled: true,
       combo_veg_enabled: true,
       combo_vegan_enabled: true,
@@ -408,6 +444,64 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
                   <Plus className="w-3.5 h-3.5" />
                 </button>
               </div>
+            </div>
+
+            {/* Automatic Sales Deadline */}
+            <div className="pt-3 border-t border-slate-200/60 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                  <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                  Cierre Automático de Tienda (Hora Bs. As.)
+                </label>
+                {formData.sales_deadline && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData(d => ({ ...d, sales_deadline: '' }))}
+                    className="text-[10px] text-rose-500 font-bold hover:underline cursor-pointer"
+                  >
+                    Quitar límite
+                  </button>
+                )}
+              </div>
+
+              <input
+                type="datetime-local"
+                value={formData.sales_deadline}
+                onChange={e => setFormData(d => ({ ...d, sales_deadline: e.target.value }))}
+                className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-2xl text-xs font-bold text-slate-800 outline-none focus:ring-2 focus:ring-indigo-500"
+              />
+
+              {formData.available_dates?.[0] && (
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setFormData(d => ({ ...d, sales_deadline: getDefaultDeadline(formData.available_dates[0]) }))}
+                    className="px-2.5 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-[10px] font-extrabold rounded-lg transition cursor-pointer flex items-center gap-1 shadow-xs"
+                  >
+                    ⭐ Día anterior 23:00 HS (Por Defecto)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = formData.available_dates[0]
+                      setFormData(prev => ({ ...prev, sales_deadline: `${d}T12:00` }))
+                    }}
+                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg transition cursor-pointer"
+                  >
+                    Día del viaje 12:00 PM
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const d = formData.available_dates[0]
+                      setFormData(prev => ({ ...prev, sales_deadline: `${d}T18:00` }))
+                    }}
+                    className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10px] font-bold rounded-lg transition cursor-pointer"
+                  >
+                    Día del viaje 18:00 PM
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 

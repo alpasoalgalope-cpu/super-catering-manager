@@ -67,7 +67,9 @@ export async function middleware(request: NextRequest) {
         '/reglas-liberados',
         '/buses',
         '/finanzas',
-        '/rrhh'
+        '/rrhh',
+        '/ventas-evento',
+        '/ventas-online'
       ]
       
       const isRestricted = (restrictedPaths.some(path => request.nextUrl.pathname.startsWith(path)) || 

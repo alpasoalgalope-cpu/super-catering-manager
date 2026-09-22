@@ -30,7 +30,7 @@ export default async function VentasOnlinePage() {
       .from('online_orders')
       .select('*, online_customers(*), online_store_events(title, slug, event_master_id, events_master(show_name, event_date))')
       .order('created_at', { ascending: false })
-      .limit(500),
+      .limit(2500),
     supabase
       .from('commercial_rules')
       .select('*')

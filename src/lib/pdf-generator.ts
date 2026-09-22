@@ -67,6 +67,10 @@ export function generateAndDownloadSalesPdf({
       unitOrders = onlineOrders;
     }
 
+    const isCircus = selectedCompany?.toLowerCase().includes('circus');
+    const isTerco = selectedCompany?.toLowerCase().includes('terco');
+    const isNoWater = isCircus || isTerco || liquidsTotal === 0;
+
     // --- RENDER REMITO PAGE ---
     if (mode === 'remito' || mode === 'all') {
       if (pageIndex > 0) doc.addPage();
@@ -141,17 +145,17 @@ export function generateAndDownloadSalesPdf({
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      doc.text('1. DETALLE DE VIANDAS (SÓLIDOS)', 14, 76);
+      doc.text(isCircus ? '1. DETALLE DE SÁNDWICHES' : '1. DETALLE DE VIANDAS (SÓLIDOS)', 14, 76);
 
       autoTable(doc, {
         startY: 79,
-        head: [['TIPO DE MENÚ', 'CANTIDAD']],
+        head: [[isCircus ? 'TIPO DE SÁNDWICH' : 'TIPO DE MENÚ', 'CANTIDAD']],
         body: [
-          ['Menú Tradicional', String(u.traditional || 0)],
-          ['Menú Vegetariano', String(u.vegetarian || 0)],
-          ['Menú Vegano', String(u.vegana || 0)],
-          ['Menú Sin TACC', String(u.sin_tacc || 0)],
-          ['TOTAL SANDWICHES', String(solidsTotal)]
+          [isCircus ? 'Sándwich Tradicional' : 'Menú Tradicional', String(u.traditional || 0)],
+          [isCircus ? 'Sándwich Vegetariano' : 'Menú Vegetariano', String(u.vegetarian || 0)],
+          [isCircus ? 'Sándwich Vegano' : 'Menú Vegano', String(u.vegana || 0)],
+          [isCircus ? 'Sándwich Sin TACC' : 'Menú Sin TACC', String(u.sin_tacc || 0)],
+          [isCircus ? 'TOTAL SÁNDWICHES' : 'TOTAL VIANDAS', String(solidsTotal)]
         ],
         theme: 'grid',
         headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9, cellPadding: 3 },
@@ -185,7 +189,7 @@ export function generateAndDownloadSalesPdf({
         startY: table1Bottom + 3,
         head: [['TIPO DE BEBIDA', 'CANTIDAD']],
         body: [
-          ['Agua Mineral Sin Gas (500ml)', String(liquidsTotal)],
+          ['Agua Mineral Sin Gas (500ml)', isNoWater ? '0 (Sin agua)' : String(liquidsTotal)],
           ['TOTAL BEBIDAS', String(liquidsTotal)]
         ],
         theme: 'grid',
@@ -274,11 +278,11 @@ export function generateAndDownloadSalesPdf({
 
       const tableRows = unitOrders.map((ord: any, ordIdx: number) => {
         const items = [];
-        if (ord.qty_tradicional > 0) items.push(`${ord.qty_tradicional}x Trad`);
-        if (ord.qty_vegetariano > 0) items.push(`${ord.qty_vegetariano}x Veg`);
-        if (ord.qty_sintacc > 0) items.push(`${ord.qty_sintacc}x Sin TACC`);
-        if (ord.qty_vegano > 0) items.push(`${ord.qty_vegano}x Vegano`);
-        const comboText = items.join(', ') || '1x Vianda';
+        if (ord.qty_tradicional > 0) items.push(`${ord.qty_tradicional}x ${isCircus ? 'Sándwich Trad' : 'Trad'}`);
+        if (ord.qty_vegetariano > 0) items.push(`${ord.qty_vegetariano}x ${isCircus ? 'Sándwich Veg' : 'Veg'}`);
+        if (ord.qty_sintacc > 0) items.push(`${ord.qty_sintacc}x ${isCircus ? 'Sándwich Sin TACC' : 'Sin TACC'}`);
+        if (ord.qty_vegano > 0) items.push(`${ord.qty_vegano}x ${isCircus ? 'Sándwich Vegano' : 'Vegano'}`);
+        const comboText = items.join(', ') || (isCircus ? '1x Sándwich' : '1x Vianda');
         const name = (ord.online_customers?.full_name || ord.full_name || 'PASAJERO ONLINE').toUpperCase();
         const phone = ord.online_customers?.phone || ord.phone || 'S/D';
 
@@ -293,7 +297,7 @@ export function generateAndDownloadSalesPdf({
 
       autoTable(doc, {
         startY: 51,
-        head: [['#', 'NOMBRE Y APELLIDO', 'TELÉFONO', 'DETALLE DE COMBOS', 'ENTREGADO']],
+        head: [['#', 'NOMBRE Y APELLIDO', 'TELÉFONO', isCircus ? 'DETALLE DE SÁNDWICHES' : 'DETALLE DE COMBOS', 'ENTREGADO']],
         body: tableRows.length > 0 ? tableRows : [['-', 'SIN PASAJEROS REGISTRADOS', '-', '-', '-']],
         theme: 'grid',
         headStyles: { fillColor: accentColor, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8, cellPadding: 2.5 },

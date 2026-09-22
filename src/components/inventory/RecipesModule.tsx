@@ -55,6 +55,25 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
   // Product Selection Helper
   const [activeProductSearch, setActiveProductSearch] = useState<string | null>(null) // row tempId
   const [searchQuery, setSearchQuery] = useState("")
+  const [userRole, setUserRole] = useState<string>('admin')
+
+  useEffect(() => {
+    async function loadRole() {
+      try {
+        const { createClient } = await import('@/lib/supabase/client')
+        const sb = createClient()
+        const { data: { user } } = await sb.auth.getUser()
+        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
+          setUserRole('cocina')
+        } else {
+          setUserRole(user?.app_metadata?.role || user?.user_metadata?.role || 'admin')
+        }
+      } catch (e) {
+        console.error(e)
+      }
+    }
+    loadRole()
+  }, [])
 
   const selectedReceta = useMemo(() => 
     recetas.find(r => r.id === selectedRecetaId), 
@@ -257,18 +276,30 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
       const cost = getRecipeTotalCost(receta)
       const profitability = cost > 0 ? (((receta.precio_venta_sugerido / cost) - 1) * 100).toFixed(0) + "%" : "0%"
       
-      const rows = [
+      const rows: any[][] = [
         ["FICHA TÉCNICA DE PRODUCCIÓN"],
         [],
         ["Receta:", receta.nombre],
         ["Rubro:", receta.rubros_comida?.nombre || 'Sin Rubro'],
-        ["Precio de Venta Sugerido:", formatMoneyAR(receta.precio_venta_sugerido)],
-        ["Costo Unitario Base:", formatMoneyAR(cost)],
-        ["Rentabilidad Sugerida:", profitability],
+      ]
+
+      if (userRole !== 'cocina') {
+        rows.push(
+          ["Precio de Venta Sugerido:", formatMoneyAR(receta.precio_venta_sugerido)],
+          ["Costo Unitario Base:", formatMoneyAR(cost)],
+          ["Rentabilidad Sugerida:", profitability],
+        )
+      } else {
+        rows.push(
+          ["Costo Unitario Base:", formatMoneyAR(cost)],
+        )
+      }
+      
+      rows.push(
         [],
         ["DESGLOSE DE INSUMOS"],
-        ["Insumo / Producto", "Unidad", "Cantidad Neta", "Costo Unitario Base", "Costo Parcial"],
-      ]
+        ["Insumo / Producto", "Unidad", "Cantidad Neta", "Costo Unitario Base", "Costo Parcial"]
+      )
       
       if (receta.receta_insumos && receta.receta_insumos.length > 0) {
         receta.receta_insumos.forEach(insumo => {
@@ -314,34 +345,41 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
   const handleDownloadAllExcel = () => {
     try {
       const wb = XLSX.utils.book_new()
+      const isCocina = userRole === 'cocina'
       
       // --- SHEET 1: RESUMEN GENERAL ---
-      const resumenRows = [
+      const resumenRows: any[][] = [
         ["RESUMEN DE RECETAS - ESCANDALLO MASTER"],
         [],
-        ["Receta", "Rubro", "Costo Unitario Base", "Precio Venta Sugerido", "Rentabilidad Sugerida"]
+        isCocina
+          ? ["Receta", "Rubro", "Costo Unitario Base"]
+          : ["Receta", "Rubro", "Costo Unitario Base", "Precio Venta Sugerido", "Rentabilidad Sugerida"]
       ]
       
       recetas.forEach(receta => {
         const cost = getRecipeTotalCost(receta)
         const profitability = cost > 0 ? (((receta.precio_venta_sugerido / cost) - 1) * 100).toFixed(0) + "%" : "0%"
-        resumenRows.push([
-          receta.nombre,
-          receta.rubros_comida?.nombre || 'Sin Rubro',
-          formatMoneyAR(cost),
-          formatMoneyAR(receta.precio_venta_sugerido),
-          profitability
-        ])
+        if (isCocina) {
+          resumenRows.push([
+            receta.nombre,
+            receta.rubros_comida?.nombre || 'Sin Rubro',
+            formatMoneyAR(cost)
+          ])
+        } else {
+          resumenRows.push([
+            receta.nombre,
+            receta.rubros_comida?.nombre || 'Sin Rubro',
+            formatMoneyAR(cost),
+            formatMoneyAR(receta.precio_venta_sugerido),
+            profitability
+          ])
+        }
       })
       
       const wsResumen = XLSX.utils.aoa_to_sheet(resumenRows)
-      wsResumen["!cols"] = [
-        { wch: 35 },
-        { wch: 20 },
-        { wch: 20 },
-        { wch: 20 },
-        { wch: 20 }
-      ]
+      wsResumen["!cols"] = isCocina
+        ? [{ wch: 35 }, { wch: 20 }, { wch: 20 }]
+        : [{ wch: 35 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 20 }]
       XLSX.utils.book_append_sheet(wb, wsResumen, "Resumen General")
 
       // --- SHEET 2: DETALLE DE FICHAS ---
@@ -361,9 +399,21 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
         detalleRows.push(
           [`FICHA TÉCNICA: ${receta.nombre.toUpperCase()}`],
           ["Rubro:", receta.rubros_comida?.nombre || 'Sin Rubro'],
-          ["Precio de Venta Sugerido:", formatMoneyAR(receta.precio_venta_sugerido)],
-          ["Costo Unitario Base:", formatMoneyAR(cost)],
-          ["Rentabilidad Sugerida:", profitability],
+        )
+
+        if (!isCocina) {
+          detalleRows.push(
+            ["Precio de Venta Sugerido:", formatMoneyAR(receta.precio_venta_sugerido)],
+            ["Costo Unitario Base:", formatMoneyAR(cost)],
+            ["Rentabilidad Sugerida:", profitability],
+          )
+        } else {
+          detalleRows.push(
+            ["Costo Unitario Base:", formatMoneyAR(cost)],
+          )
+        }
+
+        detalleRows.push(
           [],
           ["Insumo / Producto", "Unidad", "Cantidad Neta", "Costo Unitario Base", "Costo Parcial"]
         )
@@ -468,30 +518,36 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
                     </div>
                  </div>
                  <div className="space-y-0.5">
-                    <label className="text-[8px] font-bold text-slate-400 uppercase tracking-widest ml-1">Precio Venta</label>
-                    <div className="relative">
-                       <input 
-                          type="text"
-                          value={builderData.precio || ""}
-                          onChange={e => {
-                             const val = e.target.value.replace(/[^0-9,.]/g, '')
-                             setBuilderData({...builderData, precio: normalizeCurrencyInput(val)})
-                          }}
-                          placeholder="0,00"
-                          className="w-full bg-slate-50 border border-slate-100 rounded-lg p-2 text-slate-900 font-bold text-xs outline-none focus:bg-white focus:border-indigo-500 transition-all"
-                       />
-                       <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-300">$</span>
+                  {userRole !== 'cocina' && (
+                    <div className="space-y-0.5">
+                       <label className="text-[8px] font-bold text-slate-400 uppercase tracking-widest ml-1">Precio Venta</label>
+                       <div className="relative">
+                          <input 
+                             type="text"
+                             value={builderData.precio || ""}
+                             onChange={e => {
+                                const val = e.target.value.replace(/[^0-9,.]/g, '')
+                                setBuilderData({...builderData, precio: normalizeCurrencyInput(val)})
+                             }}
+                             placeholder="0,00"
+                             className="w-full bg-slate-50 border border-slate-100 rounded-lg p-2 text-slate-900 font-bold text-xs outline-none focus:bg-white focus:border-indigo-500 transition-all"
+                          />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-300">$</span>
+                       </div>
                     </div>
+                  )}
                  </div>
               </div>
 
               <div className="flex items-center gap-3 lg:border-l lg:border-slate-100 lg:pl-4 w-full lg:w-auto">
-                 <div className="bg-indigo-50 rounded-lg px-3 py-1 flex flex-col">
-                    <span className="text-[7px] font-bold text-indigo-400 uppercase tracking-widest leading-none">Rentabilidad</span>
-                    <span className="text-base font-bold text-indigo-700 italic leading-none mt-0.5">
-                       {builderTotalCost > 0 ? (((builderData.precio / builderTotalCost) - 1) * 100).toFixed(0) : 0}%
-                    </span>
-                 </div>
+                 {userRole !== 'cocina' && (
+                    <div className="bg-indigo-50 rounded-lg px-3 py-1 flex flex-col">
+                       <span className="text-[7px] font-bold text-indigo-400 uppercase tracking-widest leading-none">Rentabilidad</span>
+                       <span className="text-base font-bold text-indigo-700 italic leading-none mt-0.5">
+                          {builderTotalCost > 0 ? (((builderData.precio / builderTotalCost) - 1) * 100).toFixed(0) : 0}%
+                       </span>
+                    </div>
+                 )}
                  <div className="bg-slate-900 rounded-lg px-3 py-1 flex flex-col min-w-[100px]">
                     <span className="text-[7px] font-bold text-slate-500 uppercase tracking-widest leading-none">Costo Sug.</span>
                     <span className="text-base font-bold text-white tabular-nums leading-none mt-0.5">
@@ -741,9 +797,11 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
                       <Download size={14} />
                       Exportar Ficha
                     </button>
-                    <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
-                     <Package size={14} className="text-slate-300" /> Venta: {formatMoneyAR(selectedReceta.precio_venta_sugerido)}
-                   </div>
+                    {userRole !== 'cocina' && (
+                      <div className="flex items-center gap-2 text-slate-400 text-[10px] font-bold uppercase tracking-widest">
+                        <Package size={14} className="text-slate-300" /> Venta: {formatMoneyAR(selectedReceta.precio_venta_sugerido)}
+                      </div>
+                    )}
                 </div>
               </div>
               
@@ -816,12 +874,14 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
             {/* Detail Footer */}
             <div className="p-10 border-t border-slate-50 flex justify-between items-center bg-slate-50/50">
                <div className="flex items-center gap-6">
-                  <div className="flex items-center gap-2">
-                     <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">Rentabilidad Sugerida</span>
-                     <span className="text-sm font-bold text-emerald-600">
-                        {totalCost > 0 ? (((selectedReceta.precio_venta_sugerido / totalCost) - 1) * 100).toFixed(0) : 0}%
-                     </span>
-                  </div>
+                  {userRole !== 'cocina' && (
+                    <div className="flex items-center gap-2">
+                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">Rentabilidad Sugerida</span>
+                       <span className="text-sm font-bold text-emerald-600">
+                          {totalCost > 0 ? (((selectedReceta.precio_venta_sugerido / totalCost) - 1) * 100).toFixed(0) : 0}%
+                       </span>
+                    </div>
+                  )}
                </div>
                <button 
                   onClick={() => handleDeleteReceta(selectedRecetaId!)}
@@ -872,22 +932,24 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
                         <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                       </div>
                    </div>
-                   <div className="space-y-2">
-                       <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Precio Venta Sugerido</label>
-                       <div className="relative">
-                         <input 
-                           type="text"
-                           className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-base text-slate-900 outline-none focus:bg-white focus:border-indigo-500 transition-all"
-                           placeholder="0,00"
-                           value={newReceta.precio || ""}
-                           onChange={e => {
-                              const val = e.target.value.replace(/[^0-9,.]/g, '')
-                              setNewReceta({...newReceta, precio: normalizeCurrencyInput(val)})
-                           }}
-                         />
-                         <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">$</span>
-                       </div>
-                    </div>
+                    {userRole !== 'cocina' && (
+                      <div className="space-y-2">
+                          <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Precio Venta Sugerido</label>
+                          <div className="relative">
+                            <input 
+                              type="text"
+                              className="w-full p-4 bg-slate-50 border border-slate-100 rounded-2xl font-bold text-base text-slate-900 outline-none focus:bg-white focus:border-indigo-500 transition-all"
+                              placeholder="0,00"
+                              value={newReceta.precio || ""}
+                              onChange={e => {
+                                 const val = e.target.value.replace(/[^0-9,.]/g, '')
+                                 setNewReceta({...newReceta, precio: normalizeCurrencyInput(val)})
+                              }}
+                            />
+                            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300">$</span>
+                          </div>
+                      </div>
+                    )}
                 </div>
 
                 <div className="pt-6 flex gap-4">

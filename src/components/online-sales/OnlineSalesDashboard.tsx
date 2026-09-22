@@ -5,14 +5,21 @@ import {
   Store, ShoppingCart, Users, Plus, Copy, ExternalLink, ToggleLeft, ToggleRight, 
   Search, Filter, Trash2, Edit3, Link as LinkIcon, Eye, Calendar, DollarSign, 
   TrendingUp, CheckCircle, Clock, XCircle, Package, ChevronDown, Loader2, AlertCircle,
-  Ban, Mail, RefreshCw, ArrowRight, Zap, Building2, Check, Bus, X
+  Ban, Mail, RefreshCw, ArrowRight, Zap, Building2, Check, Bus, X, FileSpreadsheet, Download,
+  ArrowRightLeft
 } from 'lucide-react'
+import * as XLSX from 'xlsx'
 import { 
   autoSyncStoresForConfirmedEventsAction,
   toggleStoreActiveAction, 
   deleteStoreEventAction, 
   cancelOnlineOrderAction, 
-  cancelAllPendingOrdersAction 
+  cancelAllPendingOrdersAction,
+  moveOnlineOrderBusAction,
+  bulkMoveOnlineOrdersBusAction,
+  resendOrderEmailAction,
+  manuallyApproveOnlineOrderAction,
+  sendFirstCutProductionEmailAction
 } from '@/app/actions/online-sales'
 import StoreConfigModal from './StoreConfigModal'
 import StoreEditModal from './StoreEditModal'
@@ -29,6 +36,13 @@ interface Props {
 
 const formatCurrency = (amount: number) => {
   return new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(amount)
+}
+
+// Helper to extract company from store title
+export const getStoreCompany = (storeTitle?: string) => {
+  if (!storeTitle) return ''
+  const parts = storeTitle.split('—').map(s => s.trim())
+  return parts.length > 1 ? parts[1] : storeTitle.split('-').pop()?.trim() || storeTitle
 }
 
 export default function OnlineSalesDashboard({ initialStores, initialOrders, initialEvents, rules = [] }: Props) {
@@ -61,11 +75,14 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedEventFilter, setSelectedEventFilter] = useState('ALL')
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState('ALL')
+  const [selectedCoordinatorFilter, setSelectedCoordinatorFilter] = useState('ALL')
   const [selectedStatusFilter, setSelectedStatusFilter] = useState('ALL')
+  const [bulkMoving, setBulkMoving] = useState<boolean>(false)
   
   // Filters for Tiendas
   const [storesList, setStoresList] = useState(initialStores)
   const [storeViewFilter, setStoreViewFilter] = useState<'ALL' | 'ACTIVE' | 'PAUSED'>('ALL')
+  const [storeDateFilter, setStoreDateFilter] = useState<string>('ALL')
   const [storeCompanyFilter, setStoreCompanyFilter] = useState<string>('ALL')
   const [storeSearchTerm, setStoreSearchTerm] = useState<string>('')
 
@@ -77,6 +94,72 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
   const [cancellingId, setCancellingId] = useState<string | null>(null)
   const [loadingAction, setLoadingAction] = useState<string | null>(null)
   const [isSyncingStores, setIsSyncingStores] = useState(false)
+  const [movingOrder, setMovingOrder] = useState<any | null>(null)
+  const [targetBusInput, setTargetBusInput] = useState<string>('')
+  const [isMovingOrder, setIsMovingOrder] = useState(false)
+
+  const handleMoveOrder = async () => {
+    if (!movingOrder) return
+    setIsMovingOrder(true)
+    try {
+      const res = await moveOnlineOrderBusAction({
+        orderId: movingOrder.id,
+        newBusIdentifier: targetBusInput.trim()
+      })
+      if (res.success) {
+        setOrdersList(prev => prev.map(o => o.id === movingOrder.id ? { ...o, bus_identifier: targetBusInput.trim() || null } : o))
+        setMovingOrder(null)
+      } else {
+        alert("Error al mover el pedido: " + res.error)
+      }
+    } catch (e: any) {
+      console.error("Error moving order:", e)
+      alert("Error al mover el pedido: " + (e.message || 'Error desconocido'))
+    } finally {
+      setIsMovingOrder(false)
+    }
+  }
+
+  const [resendingEmailId, setResendingEmailId] = useState<string | null>(null)
+  const [approvingId, setApprovingId] = useState<string | null>(null)
+
+  const handleManuallyApproveOrder = async (orderId: string, customerEmail?: string) => {
+    if (!confirm(`¿Confirmás que querés aprobar el pago para ${customerEmail || 'el cliente'} y enviarle el comprobante oficial por correo?`)) {
+      return
+    }
+    setApprovingId(orderId)
+    try {
+      const res = await manuallyApproveOnlineOrderAction(orderId)
+      if (res.success) {
+        setOrdersList(prev => prev.map(o => o.id === orderId ? { ...o, status: 'paid', mp_status: 'approved' } : o))
+        alert(`¡Pago aprobado exitosamente! Se envió el correo de confirmación a ${customerEmail || 'el cliente'}.`)
+      } else {
+        alert("Error al aprobar el pago: " + (res.error || 'Error desconocido'))
+      }
+    } catch (e: any) {
+      console.error("Error approving order:", e)
+      alert("Error al aprobar el pago: " + (e.message || 'Error desconocido'))
+    } finally {
+      setApprovingId(null)
+    }
+  }
+
+  const handleResendEmail = async (orderId: string, customerEmail?: string) => {
+    setResendingEmailId(orderId)
+    try {
+      const res = await resendOrderEmailAction({ orderId })
+      if (res.success) {
+        alert(`¡Correo de confirmación enviado exitosamente a ${customerEmail || 'el cliente'}!`)
+      } else {
+        alert("No se pudo enviar el correo: " + ((res as any)?.error || 'Error desconocido'))
+      }
+    } catch (e: any) {
+      console.error("Error resending email:", e)
+      alert("Error: " + (e.message || 'Error al reenviar'))
+    } finally {
+      setResendingEmailId(null)
+    }
+  }
 
   const handleSyncStores = async () => {
     setIsSyncingStores(true)
@@ -146,6 +229,51 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     return Array.from(set).filter(Boolean).sort()
   }, [initialStores])
 
+  // Extract unique dates for stores (sorted closest future -> furthest, then past DESC)
+  const uniqueStoreDates = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    const dateCounts = new Map<string, number>()
+
+    const allStores = storesList && storesList.length > 0 ? storesList : initialStores
+    allStores.forEach(s => {
+      const dates = s.available_dates && s.available_dates.length > 0
+        ? s.available_dates
+        : s.events_master?.event_date
+        ? [s.events_master.event_date]
+        : []
+
+      dates.forEach((d: string) => {
+        if (d) {
+          dateCounts.set(d, (dateCounts.get(d) || 0) + 1)
+        }
+      })
+    })
+
+    const dateList = Array.from(dateCounts.entries()).map(([date, count]) => {
+      let formatted = date
+      try {
+        const [y, m, d] = date.split('-')
+        if (y && m && d) formatted = `${d}/${m}/${y}`
+      } catch (e) {}
+
+      return {
+        date,
+        formatted,
+        count
+      }
+    })
+
+    const upcoming = dateList
+      .filter(item => item.date >= today)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    const past = dateList
+      .filter(item => item.date < today)
+      .sort((a, b) => b.date.localeCompare(a.date))
+
+    return [...upcoming, ...past]
+  }, [storesList, initialStores])
+
   const displayedStores = useMemo(() => {
     let baseList = sortedStores
     if (storeViewFilter === 'ACTIVE') baseList = activeStores
@@ -162,7 +290,19 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
         }
       }
 
-      // 2. Search Term Filter
+      // 2. Date Filter
+      if (storeDateFilter !== 'ALL') {
+        const sDates = s.available_dates && s.available_dates.length > 0
+          ? s.available_dates
+          : s.events_master?.event_date
+          ? [s.events_master.event_date]
+          : []
+        if (!sDates.includes(storeDateFilter)) {
+          return false
+        }
+      }
+
+      // 3. Search Term Filter
       if (storeSearchTerm.trim() !== '') {
         const query = storeSearchTerm.toLowerCase().trim()
         const titleMatch = (s.title || '').toLowerCase().includes(query)
@@ -175,12 +315,15 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
 
       return true
     })
-  }, [storeViewFilter, storeCompanyFilter, storeSearchTerm, activeStores, pausedStores, sortedStores])
+  }, [storeViewFilter, storeCompanyFilter, storeDateFilter, storeSearchTerm, activeStores, pausedStores, sortedStores])
 
-  // Extract unique events from stores
+  // Extract unique events from stores and orders, sorted from closest to furthest (upcoming ASC, past DESC)
   const uniqueEvents = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
     const map = new Map<string, { id: string; name: string; date: string }>()
-    initialStores.forEach(s => {
+
+    const allStores = storesList && storesList.length > 0 ? storesList : initialStores
+    allStores.forEach(s => {
       const ev = s.events_master
       if (ev && !map.has(ev.id)) {
         map.set(ev.id, {
@@ -190,8 +333,38 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
         })
       }
     })
-    return Array.from(map.values())
-  }, [initialStores])
+
+    // Also include any events referenced in orders
+    ordersList.forEach(o => {
+      const ev = o.online_store_events?.events_master
+      const evId = ev?.id || o.online_store_events?.event_master_id
+      if (evId && !map.has(evId)) {
+        map.set(evId, {
+          id: evId,
+          name: ev?.show_name || o.online_store_events?.title || 'Evento',
+          date: ev?.event_date || o.travel_date || ''
+        })
+      }
+    })
+
+    const list = Array.from(map.values())
+
+    const upcoming = list
+      .filter(ev => !ev.date || ev.date >= today)
+      .sort((a, b) => {
+        const dA = a.date || '9999-12-31'
+        const dB = b.date || '9999-12-31'
+        return dA.localeCompare(dB)
+      })
+
+    const past = list
+      .filter(ev => ev.date && ev.date < today)
+      .sort((a, b) => {
+        return b.date.localeCompare(a.date) // Most recent past first
+      })
+
+    return [...upcoming, ...past]
+  }, [storesList, initialStores, ordersList])
 
   // Derive unique unified passengers (deduplicating by phone and email)
   const customers = useMemo(() => {
@@ -275,12 +448,46 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     return ordersList.filter(o => o.status === 'paid').length
   }, [ordersList])
 
-  // Helper to extract company from store title
-  const getStoreCompany = (storeTitle?: string) => {
-    if (!storeTitle) return ''
-    const parts = storeTitle.split('—').map(s => s.trim())
-    return parts.length > 1 ? parts[1] : storeTitle.split('-').pop()?.trim() || storeTitle
-  }
+
+  // Extract unique coordinators / buses based on selected event & company
+  const uniqueCoordinators = useMemo(() => {
+    let pool = ordersList
+    if (selectedEventFilter !== 'ALL') {
+      pool = pool.filter(o => 
+        o.online_store_events?.event_master_id === selectedEventFilter || 
+        o.online_store_events?.events_master?.id === selectedEventFilter
+      )
+    }
+    if (selectedCompanyFilter !== 'ALL') {
+      pool = pool.filter(o => {
+        const comp = getStoreCompany(o.online_store_events?.title)
+        return comp.toLowerCase().includes(selectedCompanyFilter.toLowerCase())
+      })
+    }
+
+    const map = new Map<string, number>()
+    let unassignedCount = 0
+
+    pool.forEach(o => {
+      const bus = (o.bus_identifier || '').trim()
+      if (!bus) {
+        unassignedCount++
+      } else {
+        map.set(bus, (map.get(bus) || 0) + 1)
+      }
+    })
+
+    const list = Array.from(map.entries()).map(([name, count]) => ({
+      name,
+      count
+    })).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
+
+    return {
+      list,
+      unassignedCount,
+      totalCount: pool.length
+    }
+  }, [ordersList, selectedEventFilter, selectedCompanyFilter])
 
   // Filtered Orders
   const filteredOrders = useMemo(() => {
@@ -310,7 +517,21 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
         }
       }
 
-      // 4. Status filter
+      // 4. Coordinator / Micro filter
+      if (selectedCoordinatorFilter !== 'ALL') {
+        if (selectedCoordinatorFilter === '__UNASSIGNED__') {
+          if (order.bus_identifier && order.bus_identifier.trim()) {
+            return false
+          }
+        } else {
+          const bus = (order.bus_identifier || '').trim().toLowerCase()
+          if (bus !== selectedCoordinatorFilter.toLowerCase().trim()) {
+            return false
+          }
+        }
+      }
+
+      // 5. Status filter
       if (selectedStatusFilter !== 'ALL') {
         if (order.status !== selectedStatusFilter) {
           return false
@@ -319,7 +540,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
 
       return true
     })
-  }, [ordersList, searchTerm, selectedEventFilter, selectedCompanyFilter, selectedStatusFilter])
+  }, [ordersList, searchTerm, selectedEventFilter, selectedCompanyFilter, selectedCoordinatorFilter, selectedStatusFilter])
 
   // Dynamic Combo Production Scorecards (calculated from filtered orders or paid subset)
   const productionMetrics = useMemo(() => {
@@ -356,18 +577,161 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     }
   }, [filteredOrders])
 
+  const availableBusesForMovingStore = useMemo(() => {
+    if (movingOrder) {
+      const storeId = movingOrder.store_event_id
+      const storeOrders = ordersList.filter(o => o.store_event_id === storeId && o.bus_identifier)
+      const set = new Set<string>()
+      storeOrders.forEach(o => {
+        if (o.bus_identifier && o.bus_identifier.trim()) {
+          set.add(o.bus_identifier.trim())
+        }
+      })
+      return Array.from(set)
+    } else if (bulkMoving) {
+      const storeIds = new Set(filteredOrders.map(o => o.store_event_id))
+      const storeOrders = ordersList.filter(o => (storeIds.size === 0 || storeIds.has(o.store_event_id)) && o.bus_identifier)
+      const set = new Set<string>()
+      storeOrders.forEach(o => {
+        if (o.bus_identifier && o.bus_identifier.trim()) {
+          set.add(o.bus_identifier.trim())
+        }
+      })
+      return Array.from(set)
+    }
+    return []
+  }, [movingOrder, bulkMoving, ordersList, filteredOrders])
+
+  const handleBulkMoveOrders = async () => {
+    const idsToMove = filteredOrders.map(o => o.id)
+    if (idsToMove.length === 0) return
+    const cleanTarget = targetBusInput.trim()
+    if (!confirm(`¿Confirmás que querés reasignar los ${idsToMove.length} pedidos mostrados al micro/coordinador "${cleanTarget || 'Sin Micro'}"?`)) {
+      return
+    }
+    setIsMovingOrder(true)
+    try {
+      const res = await bulkMoveOnlineOrdersBusAction({
+        orderIds: idsToMove,
+        newBusIdentifier: cleanTarget
+      })
+      if (res.success) {
+        setOrdersList(prev => prev.map(o => idsToMove.includes(o.id) ? { ...o, bus_identifier: cleanTarget || null } : o))
+        setBulkMoving(false)
+        alert(`¡Se reasignaron exitosamente ${res.count} pedidos a "${cleanTarget || 'Sin Micro'}"!`)
+      } else {
+        alert("Error al mover los pedidos: " + res.error)
+      }
+    } catch (e: any) {
+      console.error("Error bulk moving orders:", e)
+      alert("Error al mover pedidos: " + (e.message || 'Error desconocido'))
+    } finally {
+      setIsMovingOrder(false)
+    }
+  }
+
   const handleCopyLink = (slug: string) => {
     const url = `${window.location.origin}/tienda/${slug}`
     navigator.clipboard.writeText(url)
   }
 
-  const handleToggleStore = async (id: string, currentStatus: boolean) => {
-    setLoadingAction(`toggle-${id}`)
+  const handleToggleStore = async (store: any) => {
+    const id = store.id
+    const currentStatus = store.is_active
     const newStatus = !currentStatus
+
+    let sendMode: 'test' | 'official' | 'none' = 'none'
+    if (currentStatus === true) {
+      // Operator is turning store OFF (closing store)
+      const wantEmail = window.confirm(
+        "¿Deseas enviar el correo de 'Primer corte para producción' al cerrar esta tienda?\n\n" +
+        "• Aceptar: Seleccionar destinatario (Prueba personal o Graciela).\n" +
+        "• Cancelar: Cerrar la tienda SIN enviar correo."
+      )
+
+      if (wantEmail) {
+        const isTest = window.confirm(
+          "¿Deseas que sea un envío de MODO PRUEBA únicamente a tu correo (fschottenfeld@gmail.com)?\n\n" +
+          "• Aceptar: MODO PRUEBA (SOLO a fschottenfeld@gmail.com, Graciela NO lo recibe).\n" +
+          "• Cancelar: Envío oficial a Graciela (graciel.ch@gmail.com) con copia a ti."
+        )
+        sendMode = isTest ? 'test' : 'official'
+      }
+    }
+
+    setLoadingAction(`toggle-${id}`)
     setStoresList(prev => prev.map(s => s.id === id ? { ...s, is_active: newStatus } : s))
     await toggleStoreActiveAction(id, newStatus)
+
+    if (sendMode !== 'none') {
+      try {
+        const targetEmail = sendMode === 'test' ? 'fschottenfeld@gmail.com' : 'graciel.ch@gmail.com'
+        const ccEmail = sendMode === 'test' ? undefined : 'fschottenfeld@gmail.com'
+        const res = await sendFirstCutProductionEmailAction({
+          eventId: store.event_master_id,
+          targetEmail,
+          ccEmail
+        })
+        if (res.success) {
+          if (sendMode === 'test') {
+            alert("¡Prueba enviada con éxito exclusivamente a tu casilla fschottenfeld@gmail.com!")
+          } else {
+            alert("¡Primer corte de producción enviado con éxito a graciel.ch@gmail.com (CC: fschottenfeld@gmail.com)!")
+          }
+        } else {
+          alert(`La tienda se desactivó, pero ocurrió un problema al enviar el correo: ${res.error || 'Error desconocido'}`)
+        }
+      } catch (err: any) {
+        alert(`Error al enviar el correo de producción: ${err.message}`)
+      }
+    }
+
     router.refresh()
     setLoadingAction(null)
+  }
+
+  const handleSendFirstCutManual = async (store: any) => {
+    const showTitle = store.events_master?.show_name || store.title
+    const isTest = window.confirm(
+      `¿Deseas enviar este 1° Corte en MODO PRUEBA únicamente a tu correo (fschottenfeld@gmail.com)?\n\n` +
+      `• Aceptar: MODO PRUEBA (solo a fschottenfeld@gmail.com, Graciela NO lo recibe).\n` +
+      `• Cancelar: Pasar a confirmación de envío oficial a Graciela.`
+    )
+
+    let targetEmail = "graciel.ch@gmail.com"
+    let ccEmail: string | undefined = "fschottenfeld@gmail.com"
+
+    if (isTest) {
+      targetEmail = "fschottenfeld@gmail.com"
+      ccEmail = undefined
+    } else {
+      const sendOfficial = window.confirm(
+        `¿Deseas enviar el 1° Corte OFICIAL a Graciela (graciel.ch@gmail.com) con copia a tu correo?\n\nShow: ${showTitle}`
+      )
+      if (!sendOfficial) return
+    }
+
+    setLoadingAction(`email-${store.id}`)
+    try {
+      const res = await sendFirstCutProductionEmailAction({
+        eventId: store.event_master_id,
+        targetEmail,
+        ccEmail
+      })
+      if (res.success) {
+        if (isTest) {
+          alert("¡Prueba enviada con éxito! Revisa tu casilla fschottenfeld@gmail.com")
+        } else {
+          alert("¡Primer corte de producción enviado con éxito a graciel.ch@gmail.com (CC: fschottenfeld@gmail.com)!")
+        }
+      } else {
+        alert(`Error al enviar el correo: ${res.error || 'Error desconocido'}`)
+      }
+    } catch (err: any) {
+      alert(`Error al enviar el correo: ${err.message}`)
+    } finally {
+      setLoadingAction(null)
+    }
   }
 
   const handleDeleteStore = async (id: string) => {
@@ -417,8 +781,113 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     setCancellingId(null)
   }
 
+  const handleExportOrdersXLS = () => {
+    if (!filteredOrders || filteredOrders.length === 0) {
+      alert("No hay pedidos para exportar con los filtros seleccionados.")
+      return
+    }
+
+    const rows = filteredOrders.map(order => {
+      const trad = Number(order.qty_tradicional) || 0
+      const veg = Number(order.qty_vegetariano) || 0
+      const stacc = Number(order.qty_sintacc) || 0
+      const vegan = Number(order.qty_vegano) || 0
+      const totalViandas = trad + veg + stacc + vegan
+
+      const statusMap: Record<string, string> = {
+        'paid': 'PAGADO',
+        'pending_payment': 'PENDIENTE',
+        'cancelled': 'CANCELADO',
+        'refunded': 'REEMBOLSADO'
+      }
+
+      return {
+        'Fecha': new Date(order.created_at).toLocaleDateString('es-AR') + ' ' + new Date(order.created_at).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }),
+        'Cliente': order.online_customers?.full_name || order.full_name || 'Desconocido',
+        'Teléfono': order.online_customers?.phone || order.phone || '',
+        'Email': order.online_customers?.email || order.email || '',
+        'Evento / Tienda': order.online_store_events?.title || '',
+        'Fecha Viaje': order.travel_date ? new Date(order.travel_date + 'T12:00:00').toLocaleDateString('es-AR') : '',
+        'Micro / Coordinador': order.bus_identifier || '',
+        'Tradicional': trad,
+        'Vegetariano': veg,
+        'Sin TACC': stacc,
+        'Vegano': vegan,
+        'Total Viandas': totalViandas,
+        'Monto Total ($)': Number(order.total_amount) || 0,
+        'Estado': statusMap[order.status] || order.status || '',
+        'ID Mercado Pago': order.mp_payment_id || '',
+        'ID Pedido': order.id
+      }
+    })
+
+    const ws = XLSX.utils.json_to_sheet(rows)
+    
+    // Column widths
+    ws['!cols'] = [
+      { wch: 18 }, // Fecha
+      { wch: 25 }, // Cliente
+      { wch: 18 }, // Teléfono
+      { wch: 30 }, // Email
+      { wch: 35 }, // Evento / Tienda
+      { wch: 14 }, // Fecha Viaje
+      { wch: 24 }, // Micro / Coordinador
+      { wch: 12 }, // Tradicional
+      { wch: 12 }, // Vegetariano
+      { wch: 10 }, // Sin TACC
+      { wch: 10 }, // Vegano
+      { wch: 14 }, // Total Viandas
+      { wch: 16 }, // Monto Total ($)
+      { wch: 14 }, // Estado
+      { wch: 20 }, // ID Mercado Pago
+      { wch: 38 }  // ID Pedido
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Pedidos")
+
+    const dateStr = new Date().toISOString().split('T')[0]
+    XLSX.writeFile(wb, `Pedidos_Online_${dateStr}.xlsx`)
+  }
+
+  const handleExportCustomersXLS = () => {
+    const filteredCustomers = customers.filter(c => 
+      searchTerm === '' || 
+      c.full_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.email?.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+
+    if (filteredCustomers.length === 0) {
+      alert("No hay clientes para exportar.")
+      return
+    }
+
+    const rows = filteredCustomers.map(c => ({
+      'Nombre': c.full_name || 'Desconocido',
+      'Email': c.email || '',
+      'Teléfono': c.phone || '',
+      'Pedidos Pagados': c.paidOrdersCount || 0,
+      'Total Gastado ($)': c.totalSpent || 0
+    }))
+
+    const ws = XLSX.utils.json_to_sheet(rows)
+    ws['!cols'] = [
+      { wch: 25 },
+      { wch: 30 },
+      { wch: 18 },
+      { wch: 16 },
+      { wch: 18 }
+    ]
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, "Clientes")
+
+    const dateStr = new Date().toISOString().split('T')[0]
+    XLSX.writeFile(wb, `Clientes_Online_${dateStr}.xlsx`)
+  }
+
   const renderTiendas = () => {
-    const isFiltered = storeCompanyFilter !== 'ALL' || storeSearchTerm.trim() !== '' || storeViewFilter !== 'ALL'
+    const isFiltered = storeCompanyFilter !== 'ALL' || storeDateFilter !== 'ALL' || storeSearchTerm.trim() !== '' || storeViewFilter !== 'ALL'
 
     return (
       <div className="space-y-6">
@@ -448,7 +917,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
           </div>
         </div>
 
-        {/* Filters Bar: Status Pills + Empresa Filter + Search Input */}
+        {/* Filters Bar: Status Pills + Fecha Filter + Empresa Filter + Search Input */}
         <div className="bg-white rounded-3xl p-4 sm:p-5 shadow-sm border border-slate-100 space-y-3">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
             {/* Status Pills */}
@@ -476,10 +945,30 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
               </button>
             </div>
 
-            {/* Inputs: Company Selector + Live Search */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 lg:max-w-2xl justify-end">
+            {/* Inputs: Fecha Selector + Empresa Selector + Live Search */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1 lg:max-w-3xl justify-end">
+              {/* Date Filter Dropdown */}
+              <div className="min-w-[160px] sm:w-48">
+                <div className="relative">
+                  <Calendar className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <select
+                    value={storeDateFilter}
+                    onChange={e => setStoreDateFilter(e.target.value)}
+                    className="w-full pl-8 pr-7 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500 appearance-none cursor-pointer"
+                  >
+                    <option value="ALL">Todas las Fechas ({uniqueStoreDates.length})</option>
+                    {uniqueStoreDates.map(d => (
+                      <option key={d.date} value={d.date}>
+                        {d.formatted} ({d.count})
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="w-3.5 h-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              </div>
+
               {/* Company Filter Dropdown */}
-              <div className="min-w-[180px] sm:w-56">
+              <div className="min-w-[170px] sm:w-52">
                 <div className="relative">
                   <Building2 className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <select
@@ -499,7 +988,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
               </div>
 
               {/* Search Box */}
-              <div className="flex-1 min-w-[200px]">
+              <div className="flex-1 min-w-[180px]">
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
@@ -527,6 +1016,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                 <button
                   type="button"
                   onClick={() => {
+                    setStoreDateFilter('ALL')
                     setStoreCompanyFilter('ALL')
                     setStoreSearchTerm('')
                     setStoreViewFilter('ALL')
@@ -607,7 +1097,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                 </div>
                 
                 <button
-                  onClick={() => handleToggleStore(store.id, store.is_active)}
+                  onClick={() => handleToggleStore(store)}
                   disabled={isLoadingToggle}
                   className={`p-2 rounded-full transition-colors cursor-pointer shrink-0 ${store.is_active ? 'text-emerald-500 bg-emerald-50 hover:bg-emerald-100' : 'text-slate-400 bg-slate-50 hover:bg-slate-200'}`}
                   title={store.is_active ? "Desactivar tienda" : "Activar tienda"}
@@ -724,6 +1214,22 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                     <span>Transferir</span>
                   </Link>
                 </div>
+
+                {/* Manual First Cut Production Email */}
+                <button
+                  type="button"
+                  onClick={() => handleSendFirstCutManual(store)}
+                  disabled={loadingAction === `email-${store.id}`}
+                  className="w-full py-2 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-2xs cursor-pointer"
+                  title="Enviar manualmente el 1° corte de producción por email a Graciela (graciel.ch@gmail.com)"
+                >
+                  {loadingAction === `email-${store.id}` ? (
+                    <Loader2 size={13} className="animate-spin text-indigo-600" />
+                  ) : (
+                    <Mail size={13} className="text-indigo-600" />
+                  )}
+                  <span>📧 Enviar 1° Corte Cocina</span>
+                </button>
               </div>
 
               <div className="pt-4 mt-4 border-t border-slate-100 flex items-center justify-between">
@@ -788,21 +1294,24 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     return (
       <div className="space-y-6">
 
-        {/* 1. FILTERS BAR (Evento, Empresa, Estado, Buscador) */}
+        {/* 1. FILTERS BAR (Evento, Empresa, Coordinador, Estado, Buscador) */}
         <div className="bg-white rounded-3xl p-5 shadow-sm border border-slate-100 space-y-4">
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-            <div className="flex items-center gap-2 text-slate-800">
+            <div className="flex items-center gap-2 text-slate-800 shrink-0">
               <Filter className="w-5 h-5 text-indigo-600" />
               <h3 className="text-sm font-black uppercase tracking-wider">Filtrar Pedidos</h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 flex-1 lg:max-w-4xl">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-1 lg:max-w-5xl">
               {/* Event Filter */}
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Evento</label>
                 <select
                   value={selectedEventFilter}
-                  onChange={e => setSelectedEventFilter(e.target.value)}
+                  onChange={e => {
+                    setSelectedEventFilter(e.target.value)
+                    setSelectedCoordinatorFilter('ALL')
+                  }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
                 >
                   <option value="ALL">Todos los Eventos ({uniqueEvents.length})</option>
@@ -819,13 +1328,36 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Empresa</label>
                 <select
                   value={selectedCompanyFilter}
-                  onChange={e => setSelectedCompanyFilter(e.target.value)}
+                  onChange={e => {
+                    setSelectedCompanyFilter(e.target.value)
+                    setSelectedCoordinatorFilter('ALL')
+                  }}
                   className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
                 >
                   <option value="ALL">Todas las Empresas ({uniqueCompanies.length})</option>
                   {uniqueCompanies.map(c => (
                     <option key={c} value={c}>
                       {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Coordinator / Micro Filter */}
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Coordinador / Micro</label>
+                <select
+                  value={selectedCoordinatorFilter}
+                  onChange={e => setSelectedCoordinatorFilter(e.target.value)}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                >
+                  <option value="ALL">Todos ({uniqueCoordinators.totalCount})</option>
+                  {uniqueCoordinators.unassignedCount > 0 && (
+                    <option value="__UNASSIGNED__">⚠️ Sin Micro / A coordinar ({uniqueCoordinators.unassignedCount})</option>
+                  )}
+                  {uniqueCoordinators.list.map(c => (
+                    <option key={c.name} value={c.name}>
+                      🚌 {c.name} ({c.count})
                     </option>
                   ))}
                 </select>
@@ -968,12 +1500,40 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
         {/* 3. ORDERS TABLE */}
         <div className="bg-white rounded-[2.5rem] shadow-lg border border-slate-100 overflow-hidden">
           <div className="p-6 border-b border-slate-100 flex flex-wrap justify-between items-center gap-3 bg-slate-50/50">
-            <h2 className="text-xl font-bold uppercase italic text-slate-800">
-              Pedidos Detallados ({filteredOrders.length})
-            </h2>
+            <div>
+              <h2 className="text-xl font-bold uppercase italic text-slate-800">
+                Pedidos Detallados ({filteredOrders.length})
+              </h2>
+              <div className="text-xs font-bold text-slate-500 mt-0.5">
+                Mostrando {filteredOrders.length} de {ordersList.length} pedidos
+              </div>
+            </div>
 
-            <div className="text-xs font-bold text-slate-500">
-              Mostrando {filteredOrders.length} de {ordersList.length} pedidos
+            <div className="flex items-center gap-2">
+              {filteredOrders.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkMoving(true)
+                    setTargetBusInput(selectedCoordinatorFilter !== 'ALL' && selectedCoordinatorFilter !== '__UNASSIGNED__' ? selectedCoordinatorFilter : '')
+                  }}
+                  className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition shadow-md hover:shadow-indigo-600/20 active:scale-95 cursor-pointer"
+                  title="Reasignar todos los pedidos mostrados a otro micro o coordinador en lote"
+                >
+                  <ArrowRightLeft size={16} />
+                  <span>Mover en Lote ({filteredOrders.length})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={handleExportOrdersXLS}
+                className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 transition shadow-md hover:shadow-emerald-600/20 active:scale-95 cursor-pointer"
+                title="Descargar pedidos filtrados en formato Excel XLS"
+              >
+                <FileSpreadsheet size={16} />
+                <span>Descargar XLS</span>
+              </button>
             </div>
           </div>
 
@@ -1005,62 +1565,131 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                         {new Date(order.created_at).toLocaleDateString('es-AR')}
                       </td>
                       <td className="px-6 py-4">
-                        <div className="font-bold text-slate-800">{order.online_customers?.full_name || 'Desconocido'}</div>
-                        <div className="text-xs text-slate-500">{order.online_customers?.email}</div>
+                        <div className="font-bold text-slate-800">{order.online_customers?.full_name || order.full_name || 'Desconocido'}</div>
+                        <div className="text-xs text-slate-500">{order.online_customers?.email || order.email}</div>
+                        {(order.online_customers?.phone || order.phone) && (
+                          <div className="text-xs text-emerald-600 font-semibold flex items-center gap-1 mt-0.5">
+                            <span className="text-[10px]">📱</span> {order.online_customers?.phone || order.phone}
+                          </div>
+                        )}
                       </td>
                       <td className="px-6 py-4">
                         <div className="font-semibold text-slate-700">{order.online_store_events?.title}</div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-slate-700">{order.travel_date ? new Date(order.travel_date + 'T12:00:00').toLocaleDateString('es-AR') : '-'}</div>
-                        {order.bus_identifier && <div className="text-xs text-indigo-600 font-bold">Micro: {order.bus_identifier}</div>}
+                        <div className="flex items-center gap-1.5 mt-1">
+                          {order.bus_identifier ? (
+                            <span className="text-xs text-indigo-600 font-bold bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded-md">
+                              Micro: {order.bus_identifier}
+                            </span>
+                          ) : (
+                            <span className="text-xs text-slate-400 font-medium italic">
+                              Sin Micro
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMovingOrder(order)
+                              setTargetBusInput(order.bus_identifier || '')
+                            }}
+                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer border border-transparent hover:border-indigo-200"
+                            title="Mover a otro Micro / Coordinador"
+                          >
+                            <ArrowRightLeft size={13} />
+                          </button>
+                        </div>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <div className="inline-flex flex-wrap gap-1 justify-center max-w-[120px]">
                           {combos.map((c, i) => (
-                            <span key={i} className="text-[10px] font-bold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded uppercase">{c}</span>
+                            <span key={i} className="text-[10px] font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded">
+                              {c}
+                            </span>
                           ))}
                         </div>
                       </td>
                       {userRole !== 'cocina' && (
-                        <td className="px-6 py-4 font-black text-slate-800 whitespace-nowrap">
-                          {formatCurrency(Number(order.total_amount))}
+                        <td className="px-6 py-4 whitespace-nowrap font-bold text-emerald-600">
+                          {formatCurrency(order.total_amount)}
                         </td>
                       )}
                       <td className="px-6 py-4 text-center">
-                        {order.status === 'paid' ? (
-                          <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-                            Pagado
-                          </span>
-                        ) : order.status === 'pending_payment' ? (
-                          <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-                            Pendiente
-                          </span>
-                        ) : order.status === 'refunded' ? (
-                          <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-                            Reembolsado
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-700 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wider">
-                            Cancelado
-                          </span>
-                        )}
+                        <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-full ${
+                          order.status === 'paid' ? 'bg-emerald-100 text-emerald-700' :
+                          order.status === 'pending_payment' ? 'bg-amber-100 text-amber-700' :
+                          'bg-rose-100 text-rose-700'
+                        }`}>
+                          {order.status === 'paid' ? 'Pagado' : order.status === 'pending_payment' ? 'Pendiente' : order.status}
+                        </span>
                       </td>
-                      <td className="px-6 py-4 text-right whitespace-nowrap">
-                        {order.status === 'pending_payment' ? (
+                      <td className="px-6 py-4 text-right">
+                        <div className="flex items-center justify-end gap-2">
+                          {order.status === 'paid' && (
+                            <button
+                              type="button"
+                              onClick={() => handleResendEmail(order.id, order.online_customers?.email)}
+                              disabled={resendingEmailId === order.id}
+                              className="text-xs font-bold text-sky-600 hover:text-sky-800 bg-sky-50 hover:bg-sky-100 px-2.5 py-1 rounded-lg transition-colors cursor-pointer border border-sky-200/60 inline-flex items-center gap-1"
+                              title="Reenviar comprobante por correo electrónico"
+                            >
+                              {resendingEmailId === order.id ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <Mail size={12} />
+                              )}
+                              <span>Reenviar Mail</span>
+                            </button>
+                          )}
+
                           <button
                             type="button"
-                            onClick={() => handleCancelSingleOrder(order.id, order.online_customers?.email)}
-                            disabled={cancellingId === order.id}
-                            className="px-2.5 py-1 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-lg text-xs font-bold transition cursor-pointer flex items-center gap-1 ml-auto"
-                            title="Cancelar este pedido pendiente"
+                            onClick={() => {
+                              setMovingOrder(order)
+                              setTargetBusInput(order.bus_identifier || '')
+                            }}
+                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg transition-colors cursor-pointer border border-indigo-200/60 inline-flex items-center gap-1"
+                            title="Mover a otro Micro o Coordinador"
                           >
-                            <Ban size={12} />
-                            <span>Cancelar</span>
+                            <ArrowRightLeft size={12} />
+                            <span>Mover a...</span>
                           </button>
-                        ) : (
-                          <span className="text-xs text-slate-400 font-medium">-</span>
-                        )}
+
+                          {order.status === 'pending_payment' && (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => handleManuallyApproveOrder(order.id, order.online_customers?.email)}
+                                disabled={approvingId === order.id}
+                                className="text-xs font-bold text-emerald-700 hover:text-emerald-900 bg-emerald-50 hover:bg-emerald-100 px-2.5 py-1 rounded-lg transition-colors cursor-pointer border border-emerald-300 inline-flex items-center gap-1"
+                                title="Aprobar pago manualmente y enviar correo de confirmación"
+                              >
+                                {approvingId === order.id ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <CheckCircle size={12} />
+                                )}
+                                <span>Aprobar Pago</span>
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleCancelSingleOrder(order.id, order.online_customers?.email)}
+                                disabled={cancellingId === order.id}
+                                className="text-xs font-bold text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 px-2.5 py-1 rounded-lg transition-colors cursor-pointer border border-rose-200/60 inline-flex items-center gap-1"
+                                title="Cancelar este pedido pendiente"
+                              >
+                                {cancellingId === order.id ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <Ban size={12} />
+                                )}
+                                <span>Cancelar</span>
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -1090,17 +1719,28 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     return (
       <div className="space-y-6">
         <div className="bg-white rounded-[2.5rem] shadow-lg border border-slate-100 overflow-hidden">
-          <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+          <div className="p-6 border-b border-slate-100 flex flex-wrap justify-between items-center gap-3 bg-slate-50/50">
             <h2 className="text-xl font-bold uppercase italic text-slate-800">Base de Clientes (CRM Pasajeros)</h2>
-            <div className="relative">
-              <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input 
-                type="text" 
-                placeholder="Buscar por nombre o email..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm w-64 shadow-sm"
-              />
+            <div className="flex items-center gap-3">
+              <div className="relative">
+                <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input 
+                  type="text" 
+                  placeholder="Buscar por nombre o email..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10 pr-4 py-2 bg-white border border-slate-200 rounded-full focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent text-sm w-64 shadow-sm"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={handleExportCustomersXLS}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-full text-xs font-black uppercase tracking-wider flex items-center gap-2 transition shadow-md hover:shadow-emerald-600/20 active:scale-95 cursor-pointer"
+                title="Descargar clientes en formato Excel XLS"
+              >
+                <FileSpreadsheet size={15} />
+                <span>Descargar XLS</span>
+              </button>
             </div>
           </div>
           <div className="overflow-x-auto">
@@ -1237,6 +1877,142 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
           }}
         />
       )}
+
+      {/* Move Order to Another Bus / Coord Modal (Single & Bulk) */}
+      {(movingOrder || bulkMoving) && (
+        <div className="fixed inset-0 z-[999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white border border-slate-200 rounded-[2.5rem] p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b pb-4 border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                  <ArrowRightLeft size={22} />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-base">
+                    {bulkMoving ? `Mover ${filteredOrders.length} Pedidos en Lote` : 'Mover Pedido a otro Micro / Coordi'}
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    {bulkMoving ? 'Reasignar todos los pedidos filtrados' : 'Reasignar pasajero a otro coordinador o micro'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMovingOrder(null)
+                  setBulkMoving(false)
+                }}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            {/* Info Box */}
+            {movingOrder ? (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Pasajero</span>
+                  <span className="font-black text-slate-800">{movingOrder.online_customers?.full_name || 'Desconocido'}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Micro Actual</span>
+                  <span className="font-bold text-indigo-600">{movingOrder.bus_identifier || 'Sin asignar'}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Tienda / Evento</span>
+                  <span className="font-medium text-slate-600 truncate max-w-[200px]">{movingOrder.online_store_events?.title}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="p-4 bg-indigo-50/70 rounded-2xl border border-indigo-100 space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Pedidos Seleccionados</span>
+                  <span className="font-black text-indigo-900 text-sm">{filteredOrders.length} pedidos</span>
+                </div>
+                {selectedCoordinatorFilter !== 'ALL' && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-indigo-600 font-bold uppercase tracking-wider text-[10px]">Coordinador Actual</span>
+                    <span className="font-bold text-slate-800">
+                      {selectedCoordinatorFilter === '__UNASSIGNED__' ? 'Sin Micro' : selectedCoordinatorFilter}
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Chips of existing micros in this store */}
+            {availableBusesForMovingStore.length > 0 && (
+              <div className="space-y-2">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  Micros / Coordinadores registrados:
+                </label>
+                <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                  {availableBusesForMovingStore.map((bName) => (
+                    <button
+                      key={bName}
+                      type="button"
+                      onClick={() => setTargetBusInput(bName)}
+                      className={`text-xs px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer border ${
+                        targetBusInput === bName
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                          : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-indigo-200'
+                      }`}
+                    >
+                      {bName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Custom Input */}
+            <div className="space-y-1.5">
+              <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                O Escribir Nuevo Micro / Coordinador:
+              </label>
+              <input
+                type="text"
+                placeholder="Ej: Micro 2 - Cami / Flor / Micro 3"
+                value={targetBusInput}
+                onChange={e => setTargetBusInput(e.target.value)}
+                className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-200 font-bold text-slate-800 text-sm"
+              />
+            </div>
+
+            {/* Actions */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setMovingOrder(null)
+                  setBulkMoving(false)
+                }}
+                className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-xs uppercase tracking-wider hover:bg-slate-50 transition cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={bulkMoving ? handleBulkMoveOrders : handleMoveOrder}
+                disabled={isMovingOrder || !targetBusInput.trim()}
+                className="flex-1 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase tracking-wider transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isMovingOrder ? (
+                  <>
+                    <Loader2 size={16} className="animate-spin" /> Guardando...
+                  </>
+                ) : (
+                  <>
+                    <ArrowRightLeft size={16} /> Confirmar {bulkMoving ? `Traslado (${filteredOrders.length})` : 'Traslado'}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
+

@@ -5,9 +5,11 @@ import {
   Bus, MapPin, Users, Phone, CheckCircle2, Clock, 
   Search, Copy, Check, Navigation, AlertTriangle, 
   Sparkles, ExternalLink, Printer, ShieldCheck, 
-  ChevronRight, MessageCircle, RefreshCw, Loader2, Store, Calendar, User
+  ChevronRight, MessageCircle, RefreshCw, Loader2, Store, Calendar, User,
+  ArrowRightLeft, X
 } from 'lucide-react'
 import { saveCoordinatorCheckinBySlugAction } from '@/app/actions/logistics'
+import { moveOnlineOrderBusAction } from '@/app/actions/online-sales'
 import Link from 'next/link'
 
 interface Props {
@@ -28,9 +30,50 @@ export default function CoordinatorPortal({
   defaultCoordPhone = ''
 }: Props) {
   const [bus, setBus] = useState<any>(initialBus || {})
+  const [ordersList, setOrdersList] = useState(orders)
   const [searchTerm, setSearchTerm] = useState('')
   const [copiedWhatsapp, setCopiedWhatsapp] = useState(false)
   const [copiedStoreLink, setCopiedStoreLink] = useState(false)
+
+  React.useEffect(() => {
+    setOrdersList(orders)
+  }, [orders])
+
+  const [movingOrder, setMovingOrder] = useState<any | null>(null)
+  const [targetBusInput, setTargetBusInput] = useState('')
+  const [isMovingOrder, setIsMovingOrder] = useState(false)
+
+  const handleMoveOrder = async () => {
+    if (!movingOrder) return
+    setIsMovingOrder(true)
+    try {
+      const res = await moveOnlineOrderBusAction({
+        orderId: movingOrder.id,
+        newBusIdentifier: targetBusInput.trim()
+      })
+      if (res.success) {
+        setOrdersList(prev => prev.map(o => o.id === movingOrder.id ? { ...o, bus_identifier: targetBusInput.trim() || null } : o))
+        setMovingOrder(null)
+      } else {
+        alert("Error al mover el pedido: " + res.error)
+      }
+    } catch (e: any) {
+      console.error("Error moving order:", e)
+      alert("Error al mover el pedido: " + (e.message || 'Error desconocido'))
+    } finally {
+      setIsMovingOrder(false)
+    }
+  }
+
+  const availableBuses = useMemo(() => {
+    const set = new Set<string>()
+    ordersList.forEach(o => {
+      if (o.bus_identifier && o.bus_identifier.trim()) {
+        set.add(o.bus_identifier.trim())
+      }
+    })
+    return Array.from(set)
+  }, [ordersList])
 
   // Check-in Form States (Pre-filled from Event Management if available, fully editable)
   const [coordName, setCoordName] = useState(bus?.coordinator_name || defaultCoordName)
@@ -58,7 +101,7 @@ export default function CoordinatorPortal({
     let totalViandas = 0
     let totalMoney = 0
 
-    orders.forEach(o => {
+    ordersList.forEach(o => {
       const qTrad = Number(o.qty_tradicional) || 0
       const qVeg = Number(o.qty_vegetariano) || 0
       const qStacc = Number(o.qty_sintacc) || 0
@@ -79,21 +122,21 @@ export default function CoordinatorPortal({
       vegan,
       totalViandas,
       totalMoney,
-      totalPassengers: orders.length
+      totalPassengers: ordersList.length
     }
-  }, [orders])
+  }, [ordersList])
 
   // Filter orders by search term
   const filteredOrders = useMemo(() => {
-    if (!searchTerm.trim()) return orders
+    if (!searchTerm.trim()) return ordersList
     const term = searchTerm.toLowerCase().trim()
-    return orders.filter(o => {
+    return ordersList.filter(o => {
       const name = (o.online_customers?.full_name || '').toLowerCase()
       const phone = (o.online_customers?.phone || '').toLowerCase()
       const busId = (o.bus_identifier || '').toLowerCase()
       return name.includes(term) || phone.includes(term) || busId.includes(term)
     })
-  }, [orders, searchTerm])
+  }, [ordersList, searchTerm])
 
   // Handle GPS Checkin
   const handleGetLocation = () => {
@@ -187,7 +230,7 @@ export default function CoordinatorPortal({
     if (totals.vegan > 0) text += `  • Vegano: ${totals.vegan}\n`
     text += `\n📝 *DETALLE DE PASAJEROS:*\n`
 
-    orders.forEach((o, i) => {
+    ordersList.forEach((o, i) => {
       const cust = o.online_customers
       const name = cust?.full_name || 'Pasajero'
       const phone = cust?.phone ? `(${cust.phone})` : ''
@@ -462,6 +505,19 @@ export default function CoordinatorPortal({
                         )}
                       </div>
 
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMovingOrder(o)
+                          setTargetBusInput(o.bus_identifier || '')
+                        }}
+                        className="p-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl transition cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold"
+                        title="Mover a otro micro / coordinador"
+                      >
+                        <ArrowRightLeft size={14} />
+                        <span className="hidden sm:inline text-[10px] font-black uppercase">Mover a...</span>
+                      </button>
+
                       {phoneClean && (
                         <a
                           href={`https://wa.me/${phoneClean}`}
@@ -587,6 +643,110 @@ export default function CoordinatorPortal({
             </button>
           </form>
         </div>
+
+        {/* Move Order Modal */}
+        {movingOrder && (
+          <div className="fixed inset-0 z-[999] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white border border-slate-200 rounded-[2.5rem] p-6 sm:p-8 max-w-md w-full shadow-2xl space-y-6 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center justify-between border-b pb-4 border-slate-100">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                    <ArrowRightLeft size={22} />
+                  </div>
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 text-base">Mover Pasajero a otro Micro</h3>
+                    <p className="text-xs text-slate-400">Reasignar a otro micro o coordinador</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMovingOrder(null)}
+                  className="p-2 text-slate-400 hover:text-slate-600 rounded-xl hover:bg-slate-50 transition cursor-pointer"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Pasajero info */}
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-100 space-y-2">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Pasajero</span>
+                  <span className="font-black text-slate-800">{movingOrder.online_customers?.full_name || 'Desconocido'}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-slate-400 font-bold uppercase tracking-wider text-[10px]">Micro Actual</span>
+                  <span className="font-bold text-indigo-600">{movingOrder.bus_identifier || 'Sin asignar'}</span>
+                </div>
+              </div>
+
+              {/* Chips of existing micros */}
+              {availableBuses.length > 0 && (
+                <div className="space-y-2">
+                  <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                    Micros / Coordinadores registrados:
+                  </label>
+                  <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
+                    {availableBuses.map((bName) => (
+                      <button
+                        key={bName}
+                        type="button"
+                        onClick={() => setTargetBusInput(bName)}
+                        className={`text-xs px-3 py-1.5 rounded-xl font-bold transition-all cursor-pointer border ${
+                          targetBusInput === bName
+                            ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50 hover:border-indigo-200'
+                        }`}
+                      >
+                        {bName}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Custom Input */}
+              <div className="space-y-1.5">
+                <label className="block text-[10px] font-black uppercase tracking-wider text-slate-400">
+                  O Escribir Nuevo Micro / Coordinador:
+                </label>
+                <input
+                  type="text"
+                  placeholder="Ej: Micro 2 - Cami / Flor / Micro 3"
+                  value={targetBusInput}
+                  onChange={e => setTargetBusInput(e.target.value)}
+                  className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-200 font-bold text-slate-800 text-sm"
+                />
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setMovingOrder(null)}
+                  className="flex-1 py-3.5 rounded-2xl border border-slate-200 text-slate-600 font-bold text-xs uppercase tracking-wider hover:bg-slate-50 transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleMoveOrder}
+                  disabled={isMovingOrder || !targetBusInput.trim()}
+                  className="flex-1 py-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold text-xs uppercase tracking-wider transition shadow-lg shadow-indigo-600/25 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isMovingOrder ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" /> Guardando...
+                    </>
+                  ) : (
+                    <>
+                      <ArrowRightLeft size={16} /> Mover Pasajero
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       </div>
     </div>

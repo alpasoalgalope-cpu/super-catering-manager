@@ -7,7 +7,7 @@ import {
   Users, Calendar, DollarSign, Activity, Loader2, TrendingUp, TrendingDown, 
   History, MapPin, Building2, ChevronRight, Truck, Package, Copy, FileText, 
   CheckCircle2, Sparkles, Camera, ExternalLink, MessageCircle, ShoppingBag, 
-  Store, Check, Bus, Send, Share2, User
+  Store, Check, Bus, Send, Share2, User, Mail
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import Link from "next/link"
@@ -23,6 +23,7 @@ import {
   generateFinancialDiagnosisAction,
   generateEventProductionPlanAction
 } from "@/app/actions/gemini-copilot"
+import { sendFirstCutProductionEmailAction } from "@/app/actions/online-sales"
 
 function slugify(text: string) {
   return text
@@ -121,6 +122,8 @@ export default function DashboardPage() {
   const [eventPlanOpen, setEventPlanOpen] = useState(false)
   const [eventPlanLoading, setEventPlanLoading] = useState(false)
   const [eventPlanData, setEventPlanData] = useState<any>(null)
+
+  const [sendingFirstCutId, setSendingFirstCutId] = useState<string | null>(null)
 
   const handleOpenWeeklyBriefing = async () => {
     setBriefingOpen(true)
@@ -636,6 +639,190 @@ export default function DashboardPage() {
      alert("Lista de entregas copiada al portapapeles con éxito!")
   }
 
+  const handleSendFirstCut = async (show: any) => {
+    const isTest = window.confirm(
+      `¿Deseas enviar este 1° Corte en MODO PRUEBA únicamente a tu correo (fschottenfeld@gmail.com)?\n\n` +
+      `• Aceptar: MODO PRUEBA (solo a fschottenfeld@gmail.com, Graciela NO lo recibe).\n` +
+      `• Cancelar: Pasar a confirmación de envío oficial a Graciela.`
+    )
+
+    let targetEmail = "graciel.ch@gmail.com"
+    let ccEmail: string | undefined = "fschottenfeld@gmail.com"
+
+    if (isTest) {
+      targetEmail = "fschottenfeld@gmail.com"
+      ccEmail = undefined
+    } else {
+      const sendOfficial = window.confirm(
+        `¿Deseas enviar el 1° Corte OFICIAL a Graciela (graciel.ch@gmail.com) con copia a tu correo?\n\nShow: ${show.show}\nFecha: ${show.date}`
+      )
+      if (!sendOfficial) return
+    }
+
+    setSendingFirstCutId(show.id)
+    try {
+      const res = await sendFirstCutProductionEmailAction({
+        eventId: show.id,
+        targetEmail,
+        ccEmail
+      })
+      if (res.success) {
+        if (isTest) {
+          alert(`¡Prueba enviada con éxito para ${show.show}! Revisa tu casilla fschottenfeld@gmail.com`)
+        } else {
+          alert(`¡Primer corte de producción enviado con éxito para ${show.show}!\nDestinatario: graciel.ch@gmail.com\nCC: fschottenfeld@gmail.com`)
+        }
+      } else {
+        alert(`Error al enviar el correo: ${res.error || 'Error desconocido'}`)
+      }
+    } catch (err: any) {
+      alert(`Error al enviar el correo: ${err.message}`)
+    } finally {
+      setSendingFirstCutId(null)
+    }
+  }
+
+  const copyWeeklyKitchenForecast = () => {
+    const now = new Date()
+    const dayOfWeek = now.getDay() // 0: Dom, 1: Lun, 2: Mar, 3: Mie, 4: Jue, 5: Vie, 6: Sab
+
+    // Lógica precisa de Martes a Martes:
+    // Si hoy es martes (2), el inicio es hoy.
+    // Si hoy es lunes (1), el inicio de la semana de producción es mañana martes.
+    // En cualquier otro caso, arranca desde hoy pero extiende hasta el próximo martes.
+    let startDate = new Date(now)
+    if (dayOfWeek === 1) {
+      startDate.setDate(now.getDate() + 1)
+    }
+    startDate.setHours(0, 0, 0, 0)
+
+    let windowEnd = new Date(startDate)
+    if (dayOfWeek === 2 || dayOfWeek === 1) {
+      windowEnd.setDate(startDate.getDate() + 7)
+    } else {
+      const daysUntilNextTuesday = ((2 - dayOfWeek + 7) % 7) || 7
+      windowEnd.setDate(now.getDate() + daysUntilNextTuesday)
+    }
+    windowEnd.setHours(23, 59, 59, 999)
+
+    const pad = (n: number) => (n < 10 ? '0' + n : n)
+    const todayStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())}`
+    const endStr = `${windowEnd.getFullYear()}-${pad(windowEnd.getMonth() + 1)}-${pad(windowEnd.getDate())}`
+
+    const formatPeriodDate = (d: Date) => {
+      const weekday = d.toLocaleDateString('es-AR', { weekday: 'long' }).toUpperCase()
+      return `${weekday} ${d.getDate()}-${d.getMonth() + 1}`
+    }
+    const periodStr = `${formatPeriodDate(startDate)} AL ${formatPeriodDate(windowEnd)}`
+
+    const targetShows = allEvents
+      .filter(ev => {
+        if (!ev.date) return false
+        return ev.date >= todayStr && ev.date <= endStr && !['cancelado', 'cancelada'].includes((ev.status || '').toLowerCase())
+      })
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    if (targetShows.length === 0) {
+      alert("No se encontraron shows programados en el período martes a martes para generar la previsión semanal.")
+      return
+    }
+
+    let grandTotalViandas = 0
+    let totalTrad = 0
+    let totalVeg = 0
+    let totalSintacc = 0
+    let totalWater = 0
+
+    let text = `📋 *PREVISIÓN SEMANAL DE PRODUCCIÓN*\n`
+    text += `🗓️ *Período:* ${periodStr}\n`
+    text += `Para coordinación de compras, insumos y panadería.\n`
+    text += `━━━━━━━━━━━━━━━━━━━━\n\n`
+
+    // Agrupar shows por fecha para consolidar días con múltiples eventos
+    const showsByDate: Record<string, any[]> = {}
+    targetShows.forEach(show => {
+      if (!showsByDate[show.date]) showsByDate[show.date] = []
+      showsByDate[show.date].push(show)
+    })
+
+    const sortedDates = Object.keys(showsByDate).sort()
+
+    sortedDates.forEach(dateKey => {
+      const dateShows = showsByDate[dateKey]
+      const evDate = new Date(dateKey + 'T12:00:00')
+      const dateName = evDate.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()
+
+      let dayTotalViandas = 0
+      let dayTrad = 0
+      let dayVeg = 0
+      let daySintacc = 0
+      let dayWater = 0
+
+      dateShows.forEach(show => {
+        const totalViandas = Math.max(show.projected || 0, show.sold || 0)
+        if (totalViandas === 0) return
+
+        const trad = Math.round(totalViandas * 0.90)
+        const veg = Math.round(totalViandas * 0.05)
+        const sintacc = totalViandas - trad - veg
+
+        let showWater = 0
+        if (show.projections && show.projections.length > 0) {
+          show.projections.forEach((p: any) => {
+            const compClean = (p.company || '').toLowerCase().trim()
+            const noWaterCompanies = ['circus', 'terco', 'terco tour', 'circus tours']
+            const hasNoWater = noWaterCompanies.some(nw => compClean.includes(nw))
+            if (!hasNoWater) {
+              showWater += (p.adjusted || 0)
+            }
+          })
+        } else {
+          showWater = totalViandas
+        }
+
+        dayTotalViandas += totalViandas
+        dayTrad += trad
+        dayVeg += veg
+        daySintacc += sintacc
+        dayWater += showWater
+      })
+
+      if (dayTotalViandas === 0) return
+
+      grandTotalViandas += dayTotalViandas
+      totalTrad += dayTrad
+      totalVeg += dayVeg
+      totalSintacc += daySintacc
+      totalWater += dayWater
+
+      text += `📅 *${dateName}*\n`
+      if (dateShows.length === 1) {
+        const singleShow = dateShows[0]
+        text += `🎤 *${singleShow.show.toUpperCase()}* — 📍 ${singleShow.venue}\n`
+      } else {
+        const showsList = dateShows.map(s => `${s.show.toUpperCase()} (${s.venue})`).join(' • ')
+        text += `🎤 *Shows del día:* ${showsList}\n`
+      }
+      text += `🥪 *Total Viandas:* ${dayTotalViandas} u.\n`
+      text += `  • 🥖 Tradicional: ${dayTrad} u.\n`
+      text += `  • 🥑 Vegetariano: ${dayVeg} u.\n`
+      text += `  • 🌾 Sin TACC: ${daySintacc} u.\n`
+      text += `  • 💧 Aguas 500ml: ${dayWater} u.\n\n`
+    })
+
+    text += `━━━━━━━━━━━━━━━━━━━━\n`
+    text += `📊 *CONSOLIDADO SEMANAL PARA PROVEEDORES Y PANADERÍA*\n`
+    text += `🥖 Total Pan Tradicional (Ciabatta): ${totalTrad} u.\n`
+    text += `🥑 Total Pan Vegetariano: ${totalVeg} u.\n`
+    text += `🌾 Total Pan Árabe Sin TACC: ${totalSintacc} u.\n`
+    text += `🥪 *TOTAL VIANDAS SEMANA:* ${grandTotalViandas} u.\n`
+    text += `💧 *TOTAL AGUAS 500ml:* ${totalWater} u.\n\n`
+    text += `_⚠️ Valores proyectados según estimación de micros. A confirmar el mediodía previo con el corte definitivo._`
+
+    navigator.clipboard.writeText(text)
+    alert("📋 ¡Previsión semanal copiada al portapapeles con éxito!\n\nLista para pegar en WhatsApp para la cocina.")
+  }
+
   return (
     <div className="space-y-8 pb-20 animate-in fade-in slide-in-from-bottom-4 duration-500">
       
@@ -763,12 +950,23 @@ export default function DashboardPage() {
          
          {/* COLUMNA 1 y 2: SHOWS PRÓXIMAS SEMANAS */}
          <div className="lg:col-span-2 bg-white rounded-[3rem] border border-slate-200 p-10 md:p-14 shadow-xl shadow-slate-200/50">
-           <div className="mb-12">
-             <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
-               <TrendingUp className="text-indigo-600" size={40} /> 
-               Shows Próximas Semanas
-             </h3>
-             <p className="text-xl text-slate-500 font-medium mt-2">Seguimiento de ventas real vs. proyección para planificación de compras.</p>
+           <div className="mb-12 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+             <div>
+               <h3 className="text-4xl font-bold text-slate-900 tracking-tighter flex items-center gap-4">
+                 <TrendingUp className="text-indigo-600" size={40} /> 
+                 Shows Próximas Semanas
+               </h3>
+               <p className="text-xl text-slate-500 font-medium mt-2">Seguimiento de ventas real vs. proyección para planificación de compras.</p>
+             </div>
+             <button
+               type="button"
+               onClick={copyWeeklyKitchenForecast}
+               className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white rounded-2xl text-xs font-black uppercase tracking-wider flex items-center gap-2 shadow-lg shadow-emerald-500/20 transition-all active:scale-95 cursor-pointer shrink-0"
+               title="Copiar previsión semanal de producción (Martes a Martes) para enviar por WhatsApp a la cocina"
+             >
+               <MessageCircle size={18} />
+               <span>Previsión Semanal Cocina</span>
+             </button>
            </div>
            
            <div className="space-y-16">
@@ -785,6 +983,8 @@ export default function DashboardPage() {
                role={role}
                onOpenBriefing={handleOpenWeeklyBriefing}
                onOpenPlan={handleOpenEventPlan}
+               onSendFirstCut={handleSendFirstCut}
+               sendingFirstCutId={sendingFirstCutId}
              />
              
              <SectionView 
@@ -800,6 +1000,8 @@ export default function DashboardPage() {
                role={role}
                onOpenBriefing={handleOpenWeeklyBriefing}
                onOpenPlan={handleOpenEventPlan}
+               onSendFirstCut={handleSendFirstCut}
+               sendingFirstCutId={sendingFirstCutId}
              />
             </div>
           </div>
@@ -1029,7 +1231,7 @@ export default function DashboardPage() {
 
 const formatCurrencyLocal = (val: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(val)
 
-function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel, role, onOpenBriefing, onOpenPlan }: any) {
+function SectionView({ title, shows, subtitle, total_projected, total_adjusted, total_revenue, accentColor, footerTitle, footerLabel, role, onOpenBriefing, onOpenPlan, onSendFirstCut, sendingFirstCutId }: any) {
   if (shows.length === 0) return (
     <div className="space-y-6">
       <div className="flex items-center justify-between border-b-4 border-slate-100 pb-4">
@@ -1099,7 +1301,7 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
                  
                  <div className={`grid grid-cols-1 ${group.shows.length > 1 ? 'md:grid-cols-2' : ''} gap-6`}>
                     {group.shows.map((show: any, j: number) => (
-                      <EffectivenessCard key={j} show={show} role={role} onOpenPlan={onOpenPlan} />
+                      <EffectivenessCard key={j} show={show} role={role} onOpenPlan={onOpenPlan} onSendFirstCut={onSendFirstCut} sendingFirstCutId={sendingFirstCutId} />
                     ))}
                  </div>
               </div>
@@ -1141,7 +1343,7 @@ function SectionView({ title, shows, subtitle, total_projected, total_adjusted, 
   )
 }
 
-function EffectivenessCard({ show, role, onOpenPlan }: { show: any, role: string | null, onOpenPlan?: (show: any) => void }) {
+function EffectivenessCard({ show, role, onOpenPlan, onSendFirstCut, sendingFirstCutId }: { show: any, role: string | null, onOpenPlan?: (show: any) => void, onSendFirstCut?: (show: any) => void, sendingFirstCutId?: string | null }) {
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
 
   const evDate = new Date(show.date + 'T12:00:00')
@@ -1276,7 +1478,7 @@ function EffectivenessCard({ show, role, onOpenPlan }: { show: any, role: string
         )}
 
         {/* ACCESOS RÁPIDOS Y PACK INTEGRAL DE WHATSAPP POR EMPRESA */}
-        {show.projections && show.projections.length > 0 && (
+        {role === 'admin' && show.projections && show.projections.length > 0 && (
           <div className="pt-3.5 border-t border-slate-200/80 space-y-2.5">
             <p className="text-[9px] font-black text-indigo-600 uppercase tracking-widest flex items-center gap-1">
               <Store size={12} /> Pack WhatsApp y Links por Empresa:
@@ -1372,14 +1574,36 @@ function EffectivenessCard({ show, role, onOpenPlan }: { show: any, role: string
         )}
       </div>
 
+      {/* Botón de Envío de 1° Corte por Email */}
+      {onSendFirstCut && (
+        <div className="mb-2.5">
+          <button
+            type="button"
+            onClick={() => onSendFirstCut(show)}
+            disabled={sendingFirstCutId === show.id}
+            className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 rounded-xl uppercase tracking-wider transition-all border border-indigo-200/80 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
+            title="Enviar 1° Corte de Producción por email a Graciela (graciel.ch@gmail.com)"
+          >
+            {sendingFirstCutId === show.id ? (
+              <Loader2 size={12} className="animate-spin text-indigo-600" />
+            ) : (
+              <Mail size={12} className="text-indigo-600" />
+            )}
+            <span>📧 Enviar 1° Corte Cocina</span>
+          </button>
+        </div>
+      )}
+
       {/* Botones de Acción */}
-      <div className="grid grid-cols-4 gap-2 mt-auto">
+      <div className={`grid ${role === 'cocina' ? 'grid-cols-3' : 'grid-cols-4'} gap-2 mt-auto`}>
         <Link href={`/settings/eventos?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-slate-50 hover:bg-slate-100 text-slate-700 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-slate-200 flex items-center justify-center">
           Gestión
         </Link>
-        <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-indigo-100 shadow-2xs flex items-center justify-center">
-          Ventas
-        </Link>
+        {role !== 'cocina' && (
+          <Link href={`/ventas-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-indigo-100 shadow-2xs flex items-center justify-center">
+            Ventas
+          </Link>
+        )}
         <Link href={`/logistica-evento?eventId=${show.id}`} className="w-full text-center text-[9px] font-black bg-emerald-50 hover:bg-emerald-100 text-emerald-800 py-2.5 rounded-xl uppercase tracking-widest transition-all border border-emerald-200 shadow-2xs flex items-center justify-center gap-1">
           <Truck size={12} className="text-emerald-700" /> Logística
         </Link>
