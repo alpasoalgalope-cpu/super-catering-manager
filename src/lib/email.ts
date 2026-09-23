@@ -764,7 +764,7 @@ export interface FirstCutItemSummary {
 }
 
 function formatPackaging(qty: number, label: string): string {
-  if (qty <= 0) return `0 bultos rotulados "${label}"`
+  if (qty <= 0) return `— (Sin producción requerida)`
   const full = Math.floor(qty / 10)
   const rem = qty % 10
   if (full > 0 && rem > 0) {
@@ -1201,6 +1201,16 @@ export async function sendFirstCutProductionEmail({
         sintacc: oSin,
         vegan: oVegana,
         water: oWater
+      })
+
+      // REGLA CLAVE: Si hay ventas en la Tienda Online para el evento,
+      // esas ventas representan la producción real de los pasajeros.
+      // Se marcan las empresas cubiertas para que NO se sume la estimación ficticia.
+      (event.event_projections || []).forEach((p: any) => {
+        const comp = (p.company_name || "").trim().toLowerCase()
+        if (comp) {
+          confirmedCompanies.add(comp)
+        }
       })
     }
 
