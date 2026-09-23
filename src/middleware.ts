@@ -31,7 +31,12 @@ export async function middleware(request: NextRequest) {
 
   // 1. Public and Auth paths
   const isAuthPage = request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register')
-  const isPublicRoute = isAuthPage || request.nextUrl.pathname.startsWith('/tienda') || request.nextUrl.pathname.startsWith('/api/mercadopago')
+  const isPublicRoute = isAuthPage || 
+                        request.nextUrl.pathname.startsWith('/tienda') || 
+                        request.nextUrl.pathname.startsWith('/api/mercadopago') ||
+                        request.nextUrl.pathname.startsWith('/api/cron') ||
+                        request.nextUrl.pathname.startsWith('/api/auth') ||
+                        request.nextUrl.pathname.startsWith('/coordi')
 
   if (!user && !isPublicRoute) {
     return NextResponse.redirect(new URL('/login', request.url))
