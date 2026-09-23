@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server"
+import nodemailer from "nodemailer"
 
 interface SendEmailParams {
   to: string | string[]
@@ -11,7 +12,7 @@ interface SendEmailParams {
 }
 
 export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: SendEmailParams) {
-  const fromEmail = from || process.env.EMAIL_FROM || "Super Catering <onboarding@resend.dev>"
+  const fromEmail = from || process.env.EMAIL_FROM || "Super Catering <fschottenfeld@gmail.com>"
   const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "alpaso.algalope@gmail.com"
   const adminNotify = process.env.ADMIN_NOTIFY_EMAIL || "alpaso.algalope@gmail.com"
   const toList = Array.isArray(to) ? to : [to]
@@ -19,7 +20,45 @@ export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: S
   const resendApiKey = process.env.RESEND_API_KEY
   const sendgridApiKey = process.env.SENDGRID_API_KEY
 
-  // 1. PRIORIDAD: RESEND (REST API nativa, rápida y sin dependencias pesadas)
+  // 1. PRIORIDAD MÁXIMA: GMAIL (Google App Password) - Sin límites de sandbox ni necesidad de dominio
+  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "vvqm evkp axrh zbjp").replace(/\s+/g, "")
+  const gmailUser = process.env.GMAIL_USER || "fschottenfeld@gmail.com"
+
+  if (gmailPass && gmailUser) {
+    try {
+      const transporter = nodemailer.createTransport({
+        service: "gmail",
+        auth: {
+          user: gmailUser,
+          pass: gmailPass
+        }
+      })
+
+      const mailOptions: any = {
+        from: `Super Catering <${gmailUser}>`,
+        to: toList,
+        subject,
+        html,
+        replyTo: replyToEmail
+      }
+
+      if (cc && cc.length > 0) {
+        mailOptions.cc = cc
+      }
+      if (notifyBcc && notifyBcc.length > 0) {
+        mailOptions.bcc = notifyBcc
+      }
+
+      const info = await transporter.sendMail(mailOptions)
+      console.log(`[Gmail Success] Email enviado a ${toList.join(', ')} (ID: ${info.messageId})`)
+      return { success: true, provider: "gmail", id: info.messageId }
+    } catch (gmailErr: any) {
+      console.error("[Gmail Error]", gmailErr)
+      // Si falla Gmail por algún motivo, continúa como fallback a Resend
+    }
+  }
+
+  // 2. RESPALDO: RESEND (REST API)
   if (resendApiKey) {
     try {
       const payload: any = {
