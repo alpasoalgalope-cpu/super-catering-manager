@@ -12,7 +12,7 @@ interface SendEmailParams {
 }
 
 export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: SendEmailParams) {
-  const fromEmail = from || process.env.EMAIL_FROM || "Super Catering <fschottenfeld@gmail.com>"
+  const fromEmail = from || process.env.EMAIL_FROM || "Al Paso y Al Galope <alpaso.algalope@gmail.com>"
   const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "alpaso.algalope@gmail.com"
   const adminNotify = process.env.ADMIN_NOTIFY_EMAIL || "alpaso.algalope@gmail.com"
   const toList = Array.isArray(to) ? to : [to]
@@ -20,9 +20,9 @@ export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: S
   const resendApiKey = process.env.RESEND_API_KEY
   const sendgridApiKey = process.env.SENDGRID_API_KEY
 
-  // 1. PRIORIDAD MÁXIMA: GMAIL (Google App Password) - Sin límites de sandbox ni necesidad de dominio
-  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "vvqm evkp axrh zbjp").replace(/\s+/g, "")
-  const gmailUser = process.env.GMAIL_USER || "fschottenfeld@gmail.com"
+  // 1. PRIORIDAD MÁXIMA: GMAIL OFICIAL (Al Paso y Al Galope)
+  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "jddz xpto ejrr nefp").replace(/\s+/g, "")
+  const gmailUser = process.env.GMAIL_USER || "alpaso.algalope@gmail.com"
 
   if (gmailPass && gmailUser) {
     try {
@@ -35,7 +35,7 @@ export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: S
       })
 
       const mailOptions: any = {
-        from: `Super Catering <${gmailUser}>`,
+        from: `Al Paso y Al Galope <${gmailUser}>`,
         to: toList,
         subject,
         html,
