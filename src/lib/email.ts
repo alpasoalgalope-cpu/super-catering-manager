@@ -48,6 +48,52 @@ export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: S
       const data = await response.json()
       if (!response.ok) {
         console.error("[Resend Error]", data)
+
+        // Fallback automático si Resend está en Sandbox (sin dominio verificado)
+        const isSandboxRestricted = typeof data.message === "string" && 
+          data.message.includes("You can only send testing emails to your own email address")
+        
+        const isAlreadyOnlyOwner = toList.length === 1 && 
+          toList[0].toLowerCase() === "fschottenfeld@gmail.com" && 
+          (!cc || cc.length === 0) && 
+          (!notifyBcc || notifyBcc.length === 0)
+
+        if (isSandboxRestricted && !isAlreadyOnlyOwner) {
+          console.warn("[Resend Fallback] Sandbox mode detectado. Reintentando exclusivamente a fschottenfeld@gmail.com")
+          const fallbackPayload: any = {
+            from: fromEmail,
+            to: ["fschottenfeld@gmail.com"],
+            reply_to: replyToEmail,
+            subject: `[MODO PRUEBA RESEND] ${subject}`,
+            html: `<div style="background-color: #fef3c7; border: 1px solid #f59e0b; padding: 14px; border-radius: 8px; margin-bottom: 20px; font-family: sans-serif; font-size: 13px; color: #92400e;">
+              <strong>⚠️ AVISO DE MODO PRUEBA (RESEND):</strong><br>
+              Este correo iba dirigido originalmente a: <strong>${toList.join(', ')}</strong>${cc && cc.length > 0 ? ` (CC: ${cc.join(', ')})` : ''}.<br>
+              Como tu cuenta de Resend todavía está en modo prueba (sandbox con remitente de prueba), Resend únicamente permite enviar correos a tu dirección registrada (<strong>fschottenfeld@gmail.com</strong>).<br>
+              Para que los correos le lleguen directo a Graciela y clientes, recuerda verificar tu dominio en <a href="https://resend.com/domains" target="_blank" style="color: #b45309; text-decoration: underline;">resend.com/domains</a>.
+            </div>` + html
+          }
+
+          const fallbackRes = await fetch("https://api.resend.com/emails", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${resendApiKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify(fallbackPayload)
+          })
+
+          const fallbackData = await fallbackRes.json()
+          if (fallbackRes.ok) {
+            console.log(`[Resend Fallback Success] Email enviado a fschottenfeld@gmail.com (ID: ${fallbackData.id})`)
+            return { 
+              success: true, 
+              provider: "resend-sandbox-fallback", 
+              id: fallbackData.id,
+              warning: "Enviado a fschottenfeld@gmail.com debido a restricciones de Sandbox de Resend" 
+            }
+          }
+        }
+
         return { success: false, error: data.message || "Error al enviar con Resend" }
       }
 
