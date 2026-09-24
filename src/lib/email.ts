@@ -754,6 +754,14 @@ export interface FirstCutItemSummary {
   projWater: number
   projBreakdown: { company: string; pax: number; viandas: number; trad: number; veg: number; sintacc: number; water: number }[]
 
+  // Desglose por receta y empresa
+  recipeBreakdown?: {
+    traditional: { recipeName: string; qty: number; companies: string[] }[]
+    vegetarian: { recipeName: string; qty: number; companies: string[] }[]
+    vegana: { recipeName: string; qty: number; companies: string[] }[]
+    sin_tacc: { recipeName: string; qty: number; companies: string[] }[]
+  }
+
   // Gran Total a Elaborar
   grandTotal: number
   grandTrad: number
@@ -878,10 +886,16 @@ export function generateFirstCutProductionHtml(data: FirstCutItemSummary): strin
                   <!-- Fila Tradicional -->
                   <tr style="border-bottom: 1px solid #f1f5f9;">
                     <td style="padding: 12px 14px; font-weight: 800; color: #1e293b;">
-                      🥖 Ciabatta Tradicional
+                      🥖 Ciabatta / Vianda Tradicional
                     </td>
                     <td style="padding: 12px 14px; color: #475569; font-size: 12px;">
                       Jamón, queso, lechuga y tomate
+                      ${data.recipeBreakdown?.traditional && data.recipeBreakdown.traditional.length > 0 && (data.recipeBreakdown.traditional.length > 1 || !data.recipeBreakdown.traditional[0].recipeName.toLowerCase().includes('ciabatta')) ? `
+                        <div style="margin-top: 6px; padding: 6px 8px; background-color: #f1f5f9; border-radius: 6px; border-left: 3px solid #0f172a; font-size: 11px; line-height: 1.4;">
+                          <strong style="color: #0f172a; display: block; margin-bottom: 2px;">Formatos / Recetas específicas:</strong>
+                          ${data.recipeBreakdown.traditional.map(b => `<div style="color: #334155; margin-bottom: 2px;">• <strong>${b.qty} un. ${b.recipeName}</strong> <span style="color: #64748b;">(${b.companies.join(', ')})</span></div>`).join('')}
+                        </div>
+                      ` : ''}
                     </td>
                     <td align="center" style="padding: 12px 14px; font-weight: 900; color: #0f172a; font-size: 15px;">
                       ${data.grandTrad} un.
@@ -972,6 +986,10 @@ export function generateFirstCutProductionHtml(data: FirstCutItemSummary): strin
                   <li style="margin-bottom: 6px;">
                     Todos los sándwiches van en su packaging individual (caja media pizza, papel parafinado, servilletas y sobrecitos de mayonesa).
                   </li>
+                  ${JSON.stringify(data.recipeBreakdown || {}).toLowerCase().includes('pbt') || JSON.stringify(data.recipeBreakdown || {}).toLowerCase().includes('pebete') ? `
+                  <li style="margin-bottom: 8px; color: #991b1b; font-weight: 800; background-color: #fee2e2; padding: 8px 12px; border-radius: 8px; list-style-type: none; margin-left: -18px;">
+                    🚨 <strong>ATENCIÓN COCINA / EMPAQUE:</strong> Se incluye producción en <strong>PAN PEBETE (PBT)</strong> para empresas específicas (ej. Terco Tour). Separar, rotular y empaquetar en bultos diferenciados de las Ciabattas.
+                  </li>` : ''}
                   <li style="margin-bottom: 6px;">
                     Los bultos master deben quedar agrupados de a <strong>10 unidades del mismo tipo</strong>, debidamente fajados o rotulados para agilizar la carga del reparto.
                   </li>
@@ -1005,12 +1023,14 @@ export async function sendFirstCutProductionEmail({
   eventId,
   eventDate,
   targetEmail = "graciel.ch@gmail.com",
-  ccEmail = "fschottenfeld@gmail.com"
+  ccEmail = "fschottenfeld@gmail.com",
+  dryRun = false
 }: {
   eventId?: string
   eventDate?: string
   targetEmail?: string
   ccEmail?: string
+  dryRun?: boolean
 }) {
   try {
     const supabase = await createClient()
@@ -1052,11 +1072,22 @@ export async function sendFirstCutProductionEmail({
     const dt = new Date(y, m - 1, d, 12, 0, 0)
     const eventDateFormatted = dt.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" }).toUpperCase()
 
-    // 2. Fetch Conversion factors & Rules
-    const [{ data: clients }, { data: rules }] = await Promise.all([
+    // 2. Fetch Conversion factors, Rules & Recipes
+    const [{ data: clients }, { data: rules }, { data: recetasList }] = await Promise.all([
       supabase.from("clients").select("name, company, sale_type, conversion_factor"),
-      supabase.from("commercial_rules").select("company_name, includes_water")
+      supabase.from("commercial_rules").select("company_name, includes_water, recipe_trad_id, recipe_veg_id, recipe_vegan_id, recipe_sintacc_id"),
+      supabase.from("recetas").select("id, nombre")
     ])
+
+    const recipeNameMap: Record<string, string> = {}
+    recetasList?.forEach((r: any) => {
+      if (r.id && r.nombre) recipeNameMap[r.id] = r.nombre
+    })
+
+    const ruleMap: Record<string, any> = {}
+    rules?.forEach((r: any) => {
+      if (r.company_name) ruleMap[normalizeStr(r.company_name)] = r
+    })
 
     const normalizeStr = (str: string) => {
       return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
@@ -1098,7 +1129,11 @@ export async function sendFirstCutProductionEmail({
           traditional,
           vegetarian,
           vegana,
-          sin_tacc
+          sin_tacc,
+          recipe_trad_id,
+          recipe_veg_id,
+          recipe_vegan_id,
+          recipe_sintacc_id
         )
       `)
       .eq("event_master_id", effectiveEventId)
@@ -1130,10 +1165,19 @@ export async function sendFirstCutProductionEmail({
     let soldVegan = 0
     let soldWater = 0
 
+    const breakdownMap: Record<string, Record<string, { recipeName: string; qty: number; companies: Set<string> }>> = {
+      traditional: {},
+      vegetarian: {},
+      vegana: {},
+      sin_tacc: {}
+    }
+
     // Process Wholesale / Event Sales Headers
     if (salesHeaders && salesHeaders.length > 0) {
       salesHeaders.forEach(sh => {
         const comp = (sh.company_name || "").trim()
+        const compClean = normalizeStr(comp)
+        const rule = ruleMap[compClean]
         if (comp) {
           confirmedCompanies.add(comp.toLowerCase())
         }
@@ -1143,10 +1187,55 @@ export async function sendFirstCutProductionEmail({
         let hVegana = 0
 
         sh.event_sales_units?.forEach((u: any) => {
-          hTrad += Number(u.traditional) || 0
-          hVeg += Number(u.vegetarian) || 0
-          hSin += Number(u.sin_tacc) || 0
-          hVegana += Number(u.vegana) || 0
+          const tradQty = Number(u.traditional) || 0
+          const vegQty = Number(u.vegetarian) || 0
+          const sinQty = Number(u.sin_tacc) || 0
+          const veganQty = Number(u.vegana) || 0
+
+          hTrad += tradQty
+          hVeg += vegQty
+          hSin += sinQty
+          hVegana += veganQty
+
+          if (tradQty > 0) {
+            const rId = u.recipe_trad_id || rule?.recipe_trad_id
+            const rName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+            if (!breakdownMap.traditional[rName]) {
+              breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.traditional[rName].qty += tradQty
+            if (comp) breakdownMap.traditional[rName].companies.add(comp)
+          }
+
+          if (vegQty > 0) {
+            const rId = u.recipe_veg_id || rule?.recipe_veg_id
+            const rName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+            if (!breakdownMap.vegetarian[rName]) {
+              breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.vegetarian[rName].qty += vegQty
+            if (comp) breakdownMap.vegetarian[rName].companies.add(comp)
+          }
+
+          if (veganQty > 0) {
+            const rId = u.recipe_vegan_id || rule?.recipe_vegan_id
+            const rName = (rId && recipeNameMap[rId]) || "Sándwich Vegano"
+            if (!breakdownMap.vegana[rName]) {
+              breakdownMap.vegana[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.vegana[rName].qty += veganQty
+            if (comp) breakdownMap.vegana[rName].companies.add(comp)
+          }
+
+          if (sinQty > 0) {
+            const rId = u.recipe_sintacc_id || rule?.recipe_sintacc_id
+            const rName = (rId && recipeNameMap[rId]) || "Sándwich Sin TACC"
+            if (!breakdownMap.sin_tacc[rName]) {
+              breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.sin_tacc[rName].qty += sinQty
+            if (comp) breakdownMap.sin_tacc[rName].companies.add(comp)
+          }
         })
 
         const hTotal = hTrad + hVeg + hSin + hVegana
@@ -1158,8 +1247,15 @@ export async function sendFirstCutProductionEmail({
         soldVegan += hVegana
         soldWater += hWater
 
+        const compTradRecipe = rule?.recipe_trad_id && recipeNameMap[rule.recipe_trad_id]
+        const sourceLabel = comp
+          ? (compTradRecipe && !compTradRecipe.toLowerCase().includes("ciabatta")
+              ? `Mayorista: ${comp} (${compTradRecipe})`
+              : `Mayorista: ${comp}`)
+          : "Ventas por Evento"
+
         soldSources.push({
-          name: comp ? `Mayorista: ${comp}` : "Ventas por Evento",
+          name: sourceLabel,
           qty: hTotal,
           trad: hTrad,
           veg: hVeg,
@@ -1167,6 +1263,21 @@ export async function sendFirstCutProductionEmail({
           vegan: hVegana,
           water: hWater
         })
+      })
+    }
+
+    const hasOnlineStore = Boolean(stores && stores.length > 0)
+
+    // REGLA CLAVE: "Si existe tienda online: Tienda online mata proyección".
+    // Si el evento tiene tienda online, la producción de viandas de pasajeros la
+    // determina exclusivamente la venta real de la tienda (proyecciones = 0).
+    if (hasOnlineStore) {
+      const currentProjs = event.event_projections || []
+      currentProjs.forEach((p: any) => {
+        const comp = (p.company_name || "").trim().toLowerCase()
+        if (comp) {
+          confirmedCompanies.add(comp)
+        }
       })
     }
 
@@ -1193,6 +1304,35 @@ export async function sendFirstCutProductionEmail({
       soldVegan += oVegana
       soldWater += oWater
 
+      if (oTrad > 0) {
+        if (!breakdownMap.traditional["Ciabatta Tradicional"]) {
+          breakdownMap.traditional["Ciabatta Tradicional"] = { recipeName: "Ciabatta Tradicional", qty: 0, companies: new Set() }
+        }
+        breakdownMap.traditional["Ciabatta Tradicional"].qty += oTrad
+        breakdownMap.traditional["Ciabatta Tradicional"].companies.add("Tienda Online")
+      }
+      if (oVeg > 0) {
+        if (!breakdownMap.vegetarian["Ciabatta Vegetariana"]) {
+          breakdownMap.vegetarian["Ciabatta Vegetariana"] = { recipeName: "Ciabatta Vegetariana", qty: 0, companies: new Set() }
+        }
+        breakdownMap.vegetarian["Ciabatta Vegetariana"].qty += oVeg
+        breakdownMap.vegetarian["Ciabatta Vegetariana"].companies.add("Tienda Online")
+      }
+      if (oSin > 0) {
+        if (!breakdownMap.sin_tacc["Sándwich Sin TACC"]) {
+          breakdownMap.sin_tacc["Sándwich Sin TACC"] = { recipeName: "Sándwich Sin TACC", qty: 0, companies: new Set() }
+        }
+        breakdownMap.sin_tacc["Sándwich Sin TACC"].qty += oSin
+        breakdownMap.sin_tacc["Sándwich Sin TACC"].companies.add("Tienda Online")
+      }
+      if (oVegana > 0) {
+        if (!breakdownMap.vegana["Sándwich Vegano"]) {
+          breakdownMap.vegana["Sándwich Vegano"] = { recipeName: "Sándwich Vegano", qty: 0, companies: new Set() }
+        }
+        breakdownMap.vegana["Sándwich Vegano"].qty += oVegana
+        breakdownMap.vegana["Sándwich Vegano"].companies.add("Tienda Online")
+      }
+
       soldSources.push({
         name: "Tienda Online (Pasajeros)",
         qty: oTotal,
@@ -1201,16 +1341,6 @@ export async function sendFirstCutProductionEmail({
         sintacc: oSin,
         vegan: oVegana,
         water: oWater
-      })
-
-      // REGLA CLAVE: Si hay ventas en la Tienda Online para el evento,
-      // esas ventas representan la producción real de los pasajeros.
-      // Se marcan las empresas cubiertas para que NO se sume la estimación ficticia.
-      (event.event_projections || []).forEach((p: any) => {
-        const comp = (p.company_name || "").trim().toLowerCase()
-        if (comp) {
-          confirmedCompanies.add(comp)
-        }
       })
     }
 
@@ -1269,6 +1399,37 @@ export async function sendFirstCutProductionEmail({
       projTotalSintacc += sinRaw
       projTotalWater += water
 
+      if (trad > 0) {
+        const rule = ruleMap[compClean]
+        const rId = rule?.recipe_trad_id
+        const rName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+        if (!breakdownMap.traditional[rName]) {
+          breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.traditional[rName].qty += trad
+        breakdownMap.traditional[rName].companies.add(compName)
+      }
+      if (vegRaw > 0) {
+        const rule = ruleMap[compClean]
+        const rId = rule?.recipe_veg_id
+        const rName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+        if (!breakdownMap.vegetarian[rName]) {
+          breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.vegetarian[rName].qty += vegRaw
+        breakdownMap.vegetarian[rName].companies.add(compName)
+      }
+      if (sinRaw > 0) {
+        const rule = ruleMap[compClean]
+        const rId = rule?.recipe_sintacc_id
+        const rName = (rId && recipeNameMap[rId]) || "Sándwich Sin TACC"
+        if (!breakdownMap.sin_tacc[rName]) {
+          breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.sin_tacc[rName].qty += sinRaw
+        breakdownMap.sin_tacc[rName].companies.add(compName)
+      }
+
       projBreakdown.push({
         company: compName,
         pax: basePax,
@@ -1290,6 +1451,29 @@ export async function sendFirstCutProductionEmail({
     const grandVegan = soldVegan
     const grandWater = soldWater + projTotalWater
 
+    const recipeBreakdown = {
+      traditional: Object.values(breakdownMap.traditional).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      })),
+      vegetarian: Object.values(breakdownMap.vegetarian).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      })),
+      vegana: Object.values(breakdownMap.vegana).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      })),
+      sin_tacc: Object.values(breakdownMap.sin_tacc).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      }))
+    }
+
     const summaryData: FirstCutItemSummary = {
       showName,
       venueName,
@@ -1309,6 +1493,7 @@ export async function sendFirstCutProductionEmail({
       projVegan: 0,
       projWater: projTotalWater,
       projBreakdown,
+      recipeBreakdown,
       grandTotal,
       grandTrad,
       grandVeg,
@@ -1320,8 +1505,17 @@ export async function sendFirstCutProductionEmail({
     const html = generateFirstCutProductionHtml(summaryData)
     const subject = `ORDEN DE PRODUCCIÓN — PRIMER CORTE — ${showName} — ${eventDateFormatted}`
 
+    if (dryRun) {
+      return {
+        success: true,
+        dryRun: true,
+        summary: summaryData,
+        message: "Simulación exitosa: no se envió ningún correo."
+      }
+    }
+
     // 7. Send email
-    const fromAddress = process.env.EMAIL_FROM || "Super Catering <onboarding@resend.dev>"
+    const fromAddress = "Al Paso y Al Galope <alpaso.algalope@gmail.com>"
     const toRecipients = [targetEmail]
     const ccRecipients = ccEmail ? [ccEmail] : []
 
@@ -1426,11 +1620,15 @@ export function generateNoOrderProductionHtml(params: {
 export async function sendDailyProductionCutSchedule({
   targetDate,
   targetEmail = "graciel.ch@gmail.com",
-  ccEmail = "fschottenfeld@gmail.com"
+  ccEmail = "fschottenfeld@gmail.com",
+  dryRun = false,
+  force = false
 }: {
   targetDate?: string
   targetEmail?: string
   ccEmail?: string
+  dryRun?: boolean
+  force?: boolean
 } = {}) {
   try {
     const supabase = await createClient()
@@ -1461,6 +1659,36 @@ export async function sendDailyProductionCutSchedule({
       })
       .toUpperCase()
 
+    // 0. Si no es dryRun ni force, verificar candado anti-duplicados en settings
+    if (!dryRun && !force) {
+      try {
+        const lockKey = `daily_cut_lock_${serviceDateStr}`
+        const { data: lockEntry } = await supabase
+          .from("settings")
+          .select("value")
+          .eq("key", lockKey)
+          .maybeSingle()
+
+        if (lockEntry && lockEntry.value) {
+          const lastSentAt = new Date(lockEntry.value)
+          const diffMs = Date.now() - lastSentAt.getTime()
+          const diffMinutes = Math.floor(diffMs / 60000)
+
+          if (diffMinutes < 60) {
+            console.log(`[sendDailyProductionCutSchedule] Bloqueo anti-duplicados activo para ${serviceDateStr}. Enviado hace ${diffMinutes} min.`)
+            return {
+              success: true,
+              skipped: true,
+              message: `El corte diario para ${serviceDateStr} ya fue procesado hace ${diffMinutes} minutos. Se bloqueó el reenvío duplicado. Para forzar reenvío use ?force=true.`,
+              lastSentAt: lockEntry.value
+            }
+          }
+        }
+      } catch (lockErr) {
+        console.warn("[sendDailyProductionCutSchedule] Error consultando lock anti-duplicados:", lockErr)
+      }
+    }
+
     // 2. Consultar eventos para esta fecha
     const { data: events, error: eventsErr } = await supabase
       .from("events_master")
@@ -1480,7 +1708,8 @@ export async function sendDailyProductionCutSchedule({
         const res = await sendFirstCutProductionEmail({
           eventId: ev.id,
           targetEmail,
-          ccEmail
+          ccEmail,
+          dryRun
         })
         results.push({
           eventId: ev.id,
@@ -1488,9 +1717,26 @@ export async function sendDailyProductionCutSchedule({
           res
         })
       }
+
+      if (!dryRun) {
+        try {
+          const lockKey = `daily_cut_lock_${serviceDateStr}`
+          await supabase
+            .from("settings")
+            .upsert({
+              key: lockKey,
+              value: new Date().toISOString(),
+              updated_at: new Date().toISOString()
+            })
+        } catch (saveLockErr) {
+          console.warn("[sendDailyProductionCutSchedule] Error guardando lock anti-duplicados:", saveLockErr)
+        }
+      }
+
       return {
         success: true,
         type: "events_sent",
+        dryRun,
         date: serviceDateStr,
         eventsCount: events.length,
         results
@@ -1498,10 +1744,21 @@ export async function sendDailyProductionCutSchedule({
     }
 
     // 4. Caso B: Sin eventos cargados -> Enviar "Sin pedido"
+    if (dryRun) {
+      return {
+        success: true,
+        dryRun: true,
+        type: "no_order_simulation",
+        date: serviceDateStr,
+        dateFormatted: formattedDate,
+        message: "Simulación: Sin eventos cargados para esta fecha. Correspondería correo 'Sin pedido'."
+      }
+    }
+
     console.log(`[sendDailyProductionCutSchedule] Sin eventos cargados para ${serviceDateStr}. Enviando correo 'Sin pedido'.`)
     const html = generateNoOrderProductionHtml({ serviceDateFormatted: formattedDate })
     const subject = `ORDEN DE PRODUCCIÓN — PRIMER CORTE — SIN PEDIDO — ${formattedDate}`
-    const fromAddress = process.env.EMAIL_FROM || "Super Catering <onboarding@resend.dev>"
+    const fromAddress = "Al Paso y Al Galope <alpaso.algalope@gmail.com>"
 
     const sendRes = await sendEmail({
       to: [targetEmail],
@@ -1511,6 +1768,21 @@ export async function sendDailyProductionCutSchedule({
       from: fromAddress,
       replyTo: ccEmail || "fschottenfeld@gmail.com"
     })
+
+    if (!dryRun && sendRes.success) {
+      try {
+        const lockKey = `daily_cut_lock_${serviceDateStr}`
+        await supabase
+          .from("settings")
+          .upsert({
+            key: lockKey,
+            value: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          })
+      } catch (saveLockErr) {
+        console.warn("[sendDailyProductionCutSchedule] Error guardando lock anti-duplicados:", saveLockErr)
+      }
+    }
 
     return {
       success: sendRes.success,

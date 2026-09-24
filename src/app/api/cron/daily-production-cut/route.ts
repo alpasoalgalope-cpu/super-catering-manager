@@ -28,11 +28,15 @@ async function handleRequest(request: NextRequest) {
     const targetDate = searchParams.get("date") || undefined
     const targetEmail = searchParams.get("targetEmail") || undefined
     const ccEmail = searchParams.get("ccEmail") || undefined
+    const dryRun = searchParams.get("dryRun") === "true"
+    const force = searchParams.get("force") === "true"
 
     const result = await sendDailyProductionCutSchedule({
       targetDate,
       targetEmail,
-      ccEmail
+      ccEmail,
+      dryRun,
+      force
     })
 
     return NextResponse.json(result)

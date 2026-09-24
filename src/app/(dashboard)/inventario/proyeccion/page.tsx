@@ -45,6 +45,7 @@ interface EventSummary {
     quantity: number
     recipeName: string
     recipeId: string
+    companies?: string[]
   }[]
   missingRules?: string[]
 }
@@ -332,7 +333,7 @@ export default function ProyeccionInsumosPage() {
       let eventTotalPax = 0
       const missingRules: string[] = []
       const eventCompanies: { companyName: string, pax: number, adjustedSales: number }[] = []
-      const consolidatedDetails: Record<string, { quantity: number, recipeName: string, recipeId: string }> = {}
+      const consolidatedDetails: Record<string, { category: string, quantity: number, recipeName: string, recipeId: string, companies: string[] }> = {}
 
       // Crew viandas
       const eventCrewTotal = (m.event_bus_assignments || []).reduce((acc: number, ba: any) => acc + (ba.crew_count || 0), 0)
@@ -350,10 +351,13 @@ export default function ProyeccionInsumosPage() {
         if (tradRecipeId) {
           const recipe = maps.recipeMap[tradRecipeId]
           if (recipe) {
-            consolidatedDetails['traditional'] = { 
+            const recipeKey = `traditional__${recipe.id}`
+            consolidatedDetails[recipeKey] = { 
+              category: 'traditional',
               quantity: eventCrewTotal, 
               recipeName: recipe.nombre, 
-              recipeId: recipe.id 
+              recipeId: recipe.id,
+              companies: ['Tripulación']
             }
           }
         }
@@ -418,37 +422,58 @@ export default function ProyeccionInsumosPage() {
           const recipe = maps.recipeMap[cat.recipeId]
           if (!recipe) return
 
-          if (!consolidatedDetails[cat.id]) {
-            consolidatedDetails[cat.id] = { quantity: 0, recipeName: recipe.nombre, recipeId: recipe.id }
+          const recipeKey = `${cat.id}__${cat.recipeId}`
+          if (!consolidatedDetails[recipeKey]) {
+            consolidatedDetails[recipeKey] = {
+              category: cat.id,
+              quantity: 0,
+              recipeName: recipe.nombre,
+              recipeId: recipe.id,
+              companies: []
+            }
           }
-          consolidatedDetails[cat.id].quantity += catPax
+          consolidatedDetails[recipeKey].quantity += catPax
+          if (!consolidatedDetails[recipeKey].companies.includes(proj.company_name)) {
+            consolidatedDetails[recipeKey].companies.push(proj.company_name)
+          }
         })
 
         // Water
         if (rule?.includes_water && rawData.waterProduct) {
-          if (!consolidatedDetails['bebida']) {
-            consolidatedDetails['bebida'] = { quantity: 0, recipeName: 'Agua 600cc', recipeId: rawData.waterProduct.id }
+          const waterKey = `bebida__${rawData.waterProduct.id}`
+          if (!consolidatedDetails[waterKey]) {
+            consolidatedDetails[waterKey] = {
+              category: 'bebida',
+              quantity: 0,
+              recipeName: 'Agua 600cc',
+              recipeId: rawData.waterProduct.id,
+              companies: []
+            }
           }
-          consolidatedDetails['bebida'].quantity += adjustedSales
+          consolidatedDetails[waterKey].quantity += adjustedSales
+          if (!consolidatedDetails[waterKey].companies.includes(proj.company_name)) {
+            consolidatedDetails[waterKey].companies.push(proj.company_name)
+          }
         }
       })
 
       let finalEventAdjPax = 0
-      const finalDetails = Object.entries(consolidatedDetails).map(([catId, data]) => {
+      const finalDetails = Object.entries(consolidatedDetails).map(([key, data]) => {
         const roundedQty = Math.ceil(data.quantity)
-        if (catId !== 'bebida') finalEventAdjPax += roundedQty
+        if (data.category !== 'bebida') finalEventAdjPax += roundedQty
 
-        if (catId === 'traditional') dayCol.tradicional += roundedQty
-        if (catId === 'vegetarian') dayCol.vegetariano += roundedQty
-        if (catId === 'vegan') dayCol.vegano += roundedQty
-        if (catId === 'sin_tacc') dayCol.sintacc += roundedQty
-        if (catId === 'bebida') dayCol.bebidas += roundedQty
+        if (data.category === 'traditional') dayCol.tradicional += roundedQty
+        if (data.category === 'vegetarian') dayCol.vegetariano += roundedQty
+        if (data.category === 'vegan') dayCol.vegano += roundedQty
+        if (data.category === 'sin_tacc') dayCol.sintacc += roundedQty
+        if (data.category === 'bebida') dayCol.bebidas += roundedQty
 
         return {
-          category: catId,
+          category: data.category,
           quantity: roundedQty,
           recipeName: data.recipeName,
-          recipeId: data.recipeId
+          recipeId: data.recipeId,
+          companies: data.companies || []
         }
       })
 
@@ -1202,6 +1227,30 @@ export default function ProyeccionInsumosPage() {
                                             {comp.pax} <span className="opacity-40">→</span> <strong className={`${isSelected ? 'text-emerald-300' : 'text-emerald-600'} font-black`}>{comp.adjustedSales}</strong>
                                           </span>
                                         </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Desglose por Receta / Formato de Vianda */}
+                                {ev.details && ev.details.filter((d: any) => d.category !== 'bebida').length > 0 && (
+                                  <div className={`mt-2 pt-2 border-t space-y-1 ${isSelected ? 'border-white/10' : 'border-slate-200'}`}>
+                                    <p className={`text-[8px] font-black uppercase tracking-widest ${isSelected ? 'text-indigo-300' : 'text-slate-400'}`}>
+                                      Formatos / Recetas
+                                    </p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {ev.details.filter((d: any) => d.category !== 'bebida').map((d: any, dIdx: number) => (
+                                        <span
+                                          key={dIdx}
+                                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-bold border ${
+                                            isSelected
+                                              ? 'bg-white/10 border-white/15 text-indigo-100'
+                                              : 'bg-indigo-50/70 border-indigo-100 text-indigo-700'
+                                          }`}
+                                          title={d.companies?.length > 0 ? d.companies.join(', ') : ''}
+                                        >
+                                          <strong>{d.quantity}x</strong> {d.recipeName}
+                                        </span>
                                       ))}
                                     </div>
                                   </div>

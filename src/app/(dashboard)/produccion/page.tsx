@@ -181,21 +181,43 @@ export default function ProduccionPage() {
         const eventIds = eventsForDate.map(e => e.id)
 
         // 1. Find all sales headers for these events (Manual Wholesale)
-        const { data: headers, error: hErr } = await supabase
-          .from("event_sales_headers")
-          .select("id, company, company_name, coordinator_name, total_amount, event_master_id, pax_projected")
-          .or(`event_id.in.(${eventIds.join(',')}),event_master_id.in.(${eventIds.join(',')})`)
+        const [{ data: headers, error: hErr }, { data: rulesData }, { data: recipesData }] = await Promise.all([
+          supabase
+            .from("event_sales_headers")
+            .select("id, company, company_name, coordinator_name, total_amount, event_master_id, pax_projected")
+            .or(`event_id.in.(${eventIds.join(',')}),event_master_id.in.(${eventIds.join(',')})`),
+          supabase.from("commercial_rules").select("company_name, recipe_trad_id, recipe_veg_id, recipe_vegan_id, recipe_sintacc_id"),
+          supabase.from("recetas").select("id, nombre")
+        ])
 
         if (hErr) throw hErr
         const currentHeaders = headers || []
         const headerIds = currentHeaders.map((h: any) => h.id)
+
+        const recipeNameMap: Record<string, string> = {}
+        ;(recipesData || []).forEach((r: any) => {
+          recipeNameMap[r.id] = r.nombre
+        })
+
+        const ruleMap: Record<string, any> = {}
+        ;(rulesData || []).forEach((r: any) => {
+          if (r.company_name) {
+            const clean = r.company_name.toLowerCase().trim()
+            ruleMap[clean] = r
+          }
+        })
+
+        const headerCompMap: Record<string, string> = {}
+        currentHeaders.forEach((h: any) => {
+          headerCompMap[h.id] = (h.company_name || h.company || "").trim()
+        })
 
         // 2. Fetch all units linked to those headers
         let units: any[] = []
         if (headerIds.length > 0) {
           const { data: uData, error: uErr } = await supabase
             .from("event_sales_units")
-            .select("traditional, vegetarian, vegana, sin_tacc, water_qty, water, special_breakdown, sold_qty, liberated_qty, unit_name")
+            .select("traditional, vegetarian, vegana, sin_tacc, water_qty, water, special_breakdown, sold_qty, liberated_qty, unit_name, header_id, recipe_trad_id, recipe_veg_id, recipe_vegan_id, recipe_sintacc_id")
             .in("header_id", headerIds)
           if (uErr) throw uErr
           units = uData || []
@@ -245,6 +267,67 @@ export default function ProduccionPage() {
           traditional: [], vegetarian: [], vegana: [], sin_tacc: []
         }
 
+        const breakdownMap: Record<string, Record<string, { recipeName: string, qty: number, companies: Set<string> }>> = {
+          traditional: {},
+          vegetarian: {},
+          vegana: {},
+          sin_tacc: {}
+        }
+
+        units.forEach((u: any) => {
+          const comp = headerCompMap[u.header_id] || ""
+          const compClean = comp.toLowerCase()
+          const rule = ruleMap[compClean]
+
+          // Traditional
+          const tradQty = Number(u.traditional) || 0
+          if (tradQty > 0) {
+            const rId = u.recipe_trad_id || rule?.recipe_trad_id
+            const rName = (rId && recipeNameMap[rId]) || "Vianda Tradicional"
+            if (!breakdownMap.traditional[rName]) {
+              breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.traditional[rName].qty += tradQty
+            if (comp) breakdownMap.traditional[rName].companies.add(comp)
+          }
+
+          // Vegetarian
+          const vegQty = Number(u.vegetarian) || 0
+          if (vegQty > 0) {
+            const rId = u.recipe_veg_id || rule?.recipe_veg_id
+            const rName = (rId && recipeNameMap[rId]) || "Vianda Vegetariana"
+            if (!breakdownMap.vegetarian[rName]) {
+              breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.vegetarian[rName].qty += vegQty
+            if (comp) breakdownMap.vegetarian[rName].companies.add(comp)
+          }
+
+          // Vegana
+          const veganQty = Number(u.vegana) || 0
+          if (veganQty > 0) {
+            const rId = u.recipe_vegan_id || rule?.recipe_vegan_id
+            const rName = (rId && recipeNameMap[rId]) || "Vianda Vegana"
+            if (!breakdownMap.vegana[rName]) {
+              breakdownMap.vegana[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.vegana[rName].qty += veganQty
+            if (comp) breakdownMap.vegana[rName].companies.add(comp)
+          }
+
+          // Sin TACC
+          const sinQty = Number(u.sin_tacc) || 0
+          if (sinQty > 0) {
+            const rId = u.recipe_sintacc_id || rule?.recipe_sintacc_id
+            const rName = (rId && recipeNameMap[rId]) || "Vianda Sin TACC"
+            if (!breakdownMap.sin_tacc[rName]) {
+              breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.sin_tacc[rName].qty += sinQty
+            if (comp) breakdownMap.sin_tacc[rName].companies.add(comp)
+          }
+        })
+
         const totals = units.reduce((acc: any, u: any) => {
           if (u.special_breakdown) {
             try {
@@ -272,10 +355,50 @@ export default function ProduccionPage() {
         const uniqueCompanies = Array.from(new Set(currentHeaders.map((h: any) => h.company_name || h.company).filter(Boolean)))
 
         const items = [
-          { key: "traditional", label: "TRADICIONAL", qty: totals.trad, color: "bg-slate-900" },
-          { key: "vegetarian", label: "VEGETARIANA", qty: totals.veg, color: "bg-emerald-600" },
-          { key: "vegana", label: "VEGANA", qty: totals.vegan, color: "bg-emerald-500" },
-          { key: "sin_tacc", label: "SIN TACC", qty: totals.st, color: "bg-indigo-600" },
+          {
+            key: "traditional",
+            label: "TRADICIONAL",
+            qty: totals.trad,
+            color: "bg-slate-900",
+            recipeBreakdown: Object.values(breakdownMap.traditional).map(b => ({
+              recipeName: b.recipeName,
+              qty: b.qty,
+              companies: Array.from(b.companies)
+            }))
+          },
+          {
+            key: "vegetarian",
+            label: "VEGETARIANA",
+            qty: totals.veg,
+            color: "bg-emerald-600",
+            recipeBreakdown: Object.values(breakdownMap.vegetarian).map(b => ({
+              recipeName: b.recipeName,
+              qty: b.qty,
+              companies: Array.from(b.companies)
+            }))
+          },
+          {
+            key: "vegana",
+            label: "VEGANA",
+            qty: totals.vegan,
+            color: "bg-emerald-500",
+            recipeBreakdown: Object.values(breakdownMap.vegana).map(b => ({
+              recipeName: b.recipeName,
+              qty: b.qty,
+              companies: Array.from(b.companies)
+            }))
+          },
+          {
+            key: "sin_tacc",
+            label: "SIN TACC",
+            qty: totals.st,
+            color: "bg-indigo-600",
+            recipeBreakdown: Object.values(breakdownMap.sin_tacc).map(b => ({
+              recipeName: b.recipeName,
+              qty: b.qty,
+              companies: Array.from(b.companies)
+            }))
+          },
           { key: "water", label: "AGUA MINERAL", qty: totals.water, color: "bg-sky-500" },
         ]
 
@@ -349,13 +472,26 @@ export default function ProduccionPage() {
 
     let text = `*Pedido cargado* - ${formattedDate} - ${artists} - ${venues}\n\n`
     text += `*Total Sandwiches = ${totalSandwiches}*\n`
-    text += `* Tradicional: ${trad}\n`
+    const appendBreakdown = (categoryKey: string, baseLabel: string, baseQty: number) => {
+      let section = `* ${baseLabel}: ${baseQty}\n`
+      const item = consolidado.items.find((i: any) => i.key === categoryKey)
+      const rBreakdown = item?.recipeBreakdown || []
+      if (rBreakdown.length > 0) {
+        rBreakdown.forEach((rb: any) => {
+          const comps = rb.companies?.length > 0 ? ` (${rb.companies.join(', ')})` : ''
+          section += `   ↳ ${rb.qty}x ${rb.recipeName}${comps}\n`
+        })
+      }
+      return section
+    }
+
+    text += appendBreakdown('traditional', 'Tradicional', trad)
     if (specialsLines.length > 0) {
       text += specialsLines.join('\n') + '\n'
     }
-    text += `* Vegetariana: ${veg}\n`
-    text += `* Vegana: ${vegan}\n`
-    text += `* Sin tacc: ${st}\n`
+    text += appendBreakdown('vegetarian', 'Vegetariana', veg)
+    text += appendBreakdown('vegana', 'Vegana', vegan)
+    text += appendBreakdown('sin_tacc', 'Sin tacc', st)
     text += `* Aguas: ${water}`
 
     navigator.clipboard.writeText(text)
@@ -598,6 +734,16 @@ export default function ProduccionPage() {
               <div class="item-card">
                 <span class="item-label">${item.label}</span>
                 <span class="item-qty">${item.qty}</span>
+                ${(item.recipeBreakdown || []).length > 0 ? `
+                  <div style="margin-top: 8px; border-top: 1px dashed #cbd5e1; padding-top: 6px; font-size: 11px; text-align: left;">
+                    ${item.recipeBreakdown.map((rb: any) => `
+                      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                        <span style="font-weight: 700; color: #334155;">▸ ${rb.recipeName} <span style="font-weight: normal; color: #64748b; font-size: 9px;">(${rb.companies.join(', ')})</span></span>
+                        <strong style="color: #0f172a; font-weight: 900; margin-left: 6px;">${rb.qty}</strong>
+                      </div>
+                    `).join('')}
+                  </div>
+                ` : ''}
                 ${(consolidado.specials?.[item.key] || []).length > 0 ? `
                   <div class="special-box">
                     ${consolidado.specials[item.key].map((s:any) => `<div class="special-item">▸ ${s.qty > 0 ? s.qty + 'x ' : ''}"${s.note}"</div>`).join('')}
@@ -781,6 +927,28 @@ export default function ProduccionPage() {
                       <span className={`text-6xl sm:text-8xl md:text-9xl font-black tabular-nums tracking-tighter ${item.qty === 0 ? 'text-slate-200' : 'text-slate-900'}`}>
                         {item.qty}
                       </span>
+                      {item.recipeBreakdown && item.recipeBreakdown.length > 0 && (
+                        <div className="mt-3 w-full border-t border-slate-100 pt-3 flex flex-col gap-1.5 text-left">
+                          {item.recipeBreakdown.map((rb: any, rIdx: number) => (
+                            <div key={rIdx} className="flex justify-between items-center bg-slate-50 hover:bg-slate-100/80 px-3.5 py-2 rounded-2xl border border-slate-200/70 transition-colors">
+                              <div className="flex items-center gap-2 truncate mr-2">
+                                <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0"></span>
+                                <span className="font-extrabold text-slate-800 text-xs truncate">
+                                  {rb.recipeName}
+                                </span>
+                                {rb.companies?.length > 0 && (
+                                  <span className="text-[10px] text-slate-400 font-bold bg-white px-1.5 py-0.5 rounded-md border border-slate-200 shrink-0">
+                                    {rb.companies.join(', ')}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="font-black text-slate-900 tabular-nums text-sm bg-white px-2.5 py-1 rounded-xl border border-slate-200/80 shadow-2xs shrink-0">
+                                {rb.qty} <span className="text-[10px] text-slate-400 font-bold">un.</span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {itemSpecials.length > 0 && (
                         <div className="mt-3 w-full border-t-2 border-dashed border-slate-100 pt-3 flex flex-col gap-2">
                           {itemSpecials.map((s: any, i: number) => (

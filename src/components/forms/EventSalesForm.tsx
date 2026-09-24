@@ -146,6 +146,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   const [units, setUnits] = useState<UnitRecord[]>([newUnit("Micro 1")])
   const [paxOverride, setPaxOverride] = useState<number | null>(null)
   const [allowCommercialOverride, setAllowCommercialOverride] = useState(false)
+  const [recipeNameMap, setRecipeNameMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
@@ -159,6 +160,11 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
         setEvents(data || [])
         setLoadingEvents(false)
       })
+    supabase.from("recetas").select("id, nombre").then(({ data }) => {
+      const map: Record<string, string> = {}
+      data?.forEach((r: any) => { map[r.id] = r.nombre })
+      setRecipeNameMap(map)
+    })
   }, [])
 
   const today = useMemo(() => {
@@ -1494,13 +1500,22 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                       {/* Categories */}
                       <div className="grid grid-cols-2 gap-y-4 gap-x-6">
                         {[
-                          { key: 'traditional', label: 'Tradicional', price: activeRule?.price_base },
-                          { key: 'vegetarian', label: 'Vegetariana', price: activeRule?.price_base },
-                          { key: 'vegana', label: 'Vegana', price: activeRule?.price_base },
-                          { key: 'sin_tacc', label: 'Sin TACC', price: totals?.price_sintacc_effective },
-                        ].map(({ key, label, price }) => (
-                          <div key={key} className="space-y-1">
-                            <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">{label}</label>
+                          { key: 'traditional', label: 'Tradicional', price: activeRule?.price_base, recipeId: activeRule?.recipe_trad_id },
+                          { key: 'vegetarian', label: 'Vegetariana', price: activeRule?.price_base, recipeId: activeRule?.recipe_veg_id },
+                          { key: 'vegana', label: 'Vegana', price: activeRule?.price_base, recipeId: activeRule?.recipe_vegan_id },
+                          { key: 'sin_tacc', label: 'Sin TACC', price: totals?.price_sintacc_effective, recipeId: activeRule?.recipe_sintacc_id },
+                        ].map(({ key, label, price, recipeId }) => {
+                          const recipeName = recipeId ? recipeNameMap[recipeId] : null
+                          return (
+                            <div key={key} className="space-y-1">
+                              <div className="flex items-center justify-between">
+                                <label className="text-[10px] font-medium text-slate-500 uppercase tracking-wider">{label}</label>
+                                {recipeName && (
+                                  <span className="text-[9px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded truncate max-w-[120px]" title={recipeName}>
+                                    {recipeName}
+                                  </span>
+                                )}
+                              </div>
                             <input type="text" inputMode="numeric"
                               disabled={activeRule?.noRuleFound}
                               className="w-full p-2 border border-slate-200 rounded-xl text-center font-bold outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none disabled:bg-slate-100"
@@ -1513,7 +1528,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
                               </p>
                             )}
                           </div>
-                        ))}
+                        ) })}
                       </div>
 
                       {/* Water & Specials */}
