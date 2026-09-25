@@ -33,7 +33,7 @@ import {
 } from 'lucide-react'
 
 // WhatsApp Link Generator
-const WHATSAPP_PHONE = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '5491136940000'
+const WHATSAPP_PHONE = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER || '5491135109772'
 const DEFAULT_WA_MESSAGE = 'Hola! Quiero sumar Viandas Regreso a los viajes de mi empresa de traslados/turismo.'
 
 function getWhatsAppUrl(customText?: string) {
@@ -55,18 +55,6 @@ export default function LandingPage() {
   const [loginPassword, setLoginPassword] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
   const [loginError, setLoginError] = useState<string | null>(null)
-
-  // Interactive Calculator State
-  const [busesCount, setBusesCount] = useState<number>(3)
-  const [paxPerBus, setPaxPerBus] = useState<number>(50)
-  const [conversionRate, setConversionRate] = useState<number>(45) // 45% default conversion
-
-  // Calculations
-  const totalPax = busesCount * paxPerBus
-  const estimatedViandas = Math.round((totalPax * conversionRate) / 100)
-  const estimatedCommissionPerVianda = 1200 // Estimación promedio de ganancia/comisión por vianda
-  const estimatedExtraRevenue = estimatedViandas * estimatedCommissionPerVianda
-  const freeCrewMeals = busesCount * 2 // 2 viandas gratis por micro para chofer y coordinador
 
   // Quick Login Handler
   const handleQuickLogin = async (e: React.FormEvent) => {
@@ -136,9 +124,9 @@ export default function LandingPage() {
             <a href="#beneficios" className="hover:text-indigo-400 transition-colors">
               Beneficios B2B
             </a>
-            <a href="#calculadora" className="hover:text-indigo-400 transition-colors flex items-center gap-1.5 text-amber-300 hover:text-amber-200">
+            <a href="#alianzas" className="hover:text-indigo-400 transition-colors flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300">
               <Sparkles className="w-3.5 h-3.5" />
-              Calculá tus Ganancias
+              Alianzas B2B
             </a>
             <a href="#venues" className="hover:text-indigo-400 transition-colors">
               Estadios & Venues
@@ -209,11 +197,11 @@ export default function LandingPage() {
               Beneficios B2B
             </a>
             <a
-              href="#calculadora"
+              href="#alianzas"
               onClick={() => setMobileMenuOpen(false)}
-              className="block text-base font-bold text-amber-300 hover:text-amber-200"
+              className="block text-base font-bold text-emerald-400 hover:text-emerald-300"
             >
-              ✨ Calculá tus Ganancias
+              ✨ Alianzas B2B
             </a>
             <a
               href="#venues"
@@ -627,142 +615,73 @@ export default function LandingPage() {
       </section>
 
       {/* ─────────────────────────────────────────────────────────────
-          6. CALCULADORA INTERACTIVA DE INGRESOS EXTRA (B2B TOOL)
+          6. ACUERDOS COMERCIALES A MEDIDA (B2B)
       ───────────────────────────────────────────────────────────── */}
-      <section id="calculadora" className="py-20 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 border-y border-slate-800/80 relative">
+      <section id="alianzas" className="py-20 bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 border-y border-slate-800/80 relative">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
           
-          <div className="bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 rounded-[2.5rem] p-6 sm:p-12 shadow-2xl relative overflow-hidden">
+          <div className="bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-500/30 rounded-[2.5rem] p-8 sm:p-12 shadow-2xl relative overflow-hidden">
             
-            {/* Header */}
-            <div className="text-center max-w-2xl mx-auto space-y-3 mb-10">
-              <span className="text-xs font-black uppercase tracking-widest text-amber-400 bg-amber-950/80 border border-amber-500/30 px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5">
+            {/* Glow accent */}
+            <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative z-10 text-center max-w-3xl mx-auto space-y-4 mb-10">
+              <span className="text-xs font-black uppercase tracking-widest text-emerald-400 bg-emerald-950/80 border border-emerald-500/30 px-3.5 py-1.5 rounded-full inline-flex items-center gap-1.5">
                 <Sparkles className="w-3.5 h-3.5" />
-                Simulador de Rentabilidad
+                Alianzas Estratégicas B2B
               </span>
               <h2 className="text-2xl sm:text-4xl font-black text-white tracking-tight">
-                Calculá cuánto dinero extra puede generar tu empresa por viaje.
+                Condiciones comerciales diseñadas a la medida de tu flota.
               </h2>
-              <p className="text-slate-400 text-sm font-medium">
-                Ajustá los controles según la cantidad de micros que trasladas a recitales y comprobá el beneficio económico directo.
+              <p className="text-slate-300 text-sm sm:text-base font-medium leading-relaxed">
+                Cada empresa de traslados cuenta con distintas dinámicas, rutas y volúmenes de pasajeros. Establecemos esquemas personalizados y acuerdos convenientes para potenciar la rentabilidad de tus viajes.
               </p>
             </div>
 
-            {/* Sliders Area */}
-            <div className="grid md:grid-cols-2 gap-8 items-center">
-              
-              {/* Sliders Input Controls */}
-              <div className="space-y-6 bg-slate-950/60 p-6 rounded-3xl border border-slate-800">
-                {/* Control 1: Buses */}
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-slate-300">Cantidad de Micros / Combis:</span>
-                    <span className="text-indigo-400 font-mono text-lg bg-indigo-950 px-3 py-1 rounded-lg border border-indigo-500/30">
-                      {busesCount} {busesCount === 1 ? 'unidad' : 'unidades'}
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="1"
-                    max="15"
-                    step="1"
-                    value={busesCount}
-                    onChange={(e) => setBusesCount(parseInt(e.target.value))}
-                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                    <span>1 micro</span>
-                    <span>5 micros</span>
-                    <span>10 micros</span>
-                    <span>15 micros</span>
-                  </div>
+            {/* 3 Pillars */}
+            <div className="relative z-10 grid md:grid-cols-3 gap-6 mb-10">
+              <div className="bg-slate-950/70 border border-slate-800/80 p-6 rounded-2xl space-y-3 text-left">
+                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center">
+                  <DollarSign className="w-5 h-5" />
                 </div>
-
-                {/* Control 2: Pax per bus */}
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-slate-300">Pasajeros promedio por micro:</span>
-                    <span className="text-slate-200 font-mono text-base bg-slate-800 px-3 py-1 rounded-lg">
-                      {paxPerBus} pasajeros
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="20"
-                    max="60"
-                    step="5"
-                    value={paxPerBus}
-                    onChange={(e) => setPaxPerBus(parseInt(e.target.value))}
-                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                    <span>20 (Combi)</span>
-                    <span>45 (Micro Estándar)</span>
-                    <span>60 (Doble Piso)</span>
-                  </div>
-                </div>
-
-                {/* Control 3: Adoption Rate */}
-                <div className="space-y-2">
-                  <div className="flex justify-between items-center text-sm font-bold">
-                    <span className="text-slate-300">Estimación de compra:</span>
-                    <span className="text-emerald-400 font-mono text-base bg-emerald-950 px-3 py-1 rounded-lg border border-emerald-500/30">
-                      {conversionRate}% de pasajeros
-                    </span>
-                  </div>
-                  <input
-                    type="range"
-                    min="25"
-                    max="80"
-                    step="5"
-                    value={conversionRate}
-                    onChange={(e) => setConversionRate(parseInt(e.target.value))}
-                    className="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-                  />
-                  <div className="flex justify-between text-[10px] text-slate-500 font-mono">
-                    <span>25% (Conservador)</span>
-                    <span>45% (Promedio habitual)</span>
-                    <span>80% (Alta demanda)</span>
-                  </div>
-                </div>
+                <h3 className="text-base font-black text-white">Comisiones por Viaje</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Esquemas de rentabilidad directa acordados según la escala de tus viajes, con liquidaciones claras y transparentes al finalizar cada evento.
+                </p>
               </div>
 
-              {/* Simulation Result Card */}
-              <div className="bg-gradient-to-br from-indigo-950/70 via-slate-900 to-emerald-950/70 border border-indigo-400/30 p-6 sm:p-8 rounded-3xl space-y-6 shadow-xl relative">
-                <div className="space-y-1 text-center">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">
-                    Ganancia Estimada para tu Empresa
-                  </span>
-                  <div className="text-4xl sm:text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 to-sky-300 font-mono">
-                    ${estimatedExtraRevenue.toLocaleString('es-AR')}
-                  </div>
-                  <span className="text-[11px] font-semibold text-emerald-400/90 block">
-                    Por viaje / evento (sin inversión previa)
-                  </span>
+              <div className="bg-slate-950/70 border border-slate-800/80 p-6 rounded-2xl space-y-3 text-left">
+                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center">
+                  <Users className="w-5 h-5" />
                 </div>
-
-                <div className="space-y-3 pt-4 border-t border-slate-800 text-xs">
-                  <div className="flex justify-between items-center py-2 px-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-slate-300 font-medium">Viandas estimadas a entregar:</span>
-                    <span className="text-white font-mono font-bold text-sm">{estimatedViandas} unidades</span>
-                  </div>
-                  <div className="flex justify-between items-center py-2 px-3 rounded-xl bg-slate-950/60 border border-slate-800">
-                    <span className="text-slate-300 font-medium">Comida gratis para choferes/coordis:</span>
-                    <span className="text-emerald-400 font-mono font-bold text-sm">+{freeCrewMeals} viandas bonificadas</span>
-                  </div>
-                </div>
-
-                <a
-                  href={getWhatsAppUrl(`Hola! Hice la simulación en la web para ${busesCount} micros (${totalPax} pax aprox) y me interesa sumar Viandas Regreso para generar comisiones en mis viajes.`)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="w-full inline-flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg transition-transform hover:scale-[1.02] active:scale-[0.98]"
-                >
-                  <MessageCircle className="w-4 h-4 fill-slate-950" />
-                  <span>Quiero activar esta ganancia en mi flota</span>
-                </a>
+                <h3 className="text-base font-black text-white">Tripulación Cubierta</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Viandas bonificadas para los choferes y coordinadores de tus unidades, asegurando su cena sin incrementar tus costos de viáticos.
+                </p>
               </div>
 
+              <div className="bg-slate-950/70 border border-slate-800/80 p-6 rounded-2xl space-y-3 text-left">
+                <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 text-sky-400 flex items-center justify-center">
+                  <Truck className="w-5 h-5" />
+                </div>
+                <h3 className="text-base font-black text-white">Logística Dedicada</h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  Coordinación personalizada con tu equipo en el venue para entregas exactas en puerta de micro, sin demoras ni trámites previos.
+                </p>
+              </div>
+            </div>
+
+            {/* Direct CTA */}
+            <div className="relative z-10 flex flex-col sm:flex-row items-center justify-center gap-4 pt-2">
+              <a
+                href={getWhatsAppUrl('Hola! Me gustaría conversar sobre una propuesta comercial de Viandas Regreso para los viajes de mi empresa de traslados.')}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full sm:w-auto inline-flex items-center justify-center gap-3 px-8 py-4 text-xs font-black uppercase tracking-wider text-slate-950 bg-gradient-to-r from-emerald-400 via-emerald-500 to-emerald-400 hover:from-emerald-300 hover:to-emerald-400 rounded-2xl shadow-xl shadow-emerald-950/60 transition-transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <MessageCircle className="w-4 h-4 fill-slate-950" />
+                <span>Solicitar Propuesta para mi Empresa</span>
+              </a>
             </div>
 
           </div>
@@ -891,7 +810,7 @@ export default function LandingPage() {
             <div className="bg-slate-950/70 p-6 rounded-2xl border border-slate-800 space-y-3">
               <div className="flex text-amber-400 text-xs">★★★★★</div>
               <p className="text-xs text-slate-300 italic leading-relaxed">
-                &ldquo;El tema de los celíacos y vegetarianos siempre era un problema. Con Viandas Regreso viene todo sellado y rotulado con nombre. Cero quejas de los pasajeros y los choferes viajan chochos con su vianda gratis.&rdquo;
+                &ldquo;El tema de los celíacos y vegetarianos siempre era un problema. Con Viandas Regreso viene todo sellado y rotulado con nombre. Cero quejas de los pasajeros y los choferes viajan tranquilos con su comida resuelta y bonificada.&rdquo;
               </p>
               <div className="pt-2 border-t border-slate-800 text-[11px]">
                 <div className="font-bold text-white">Coordinador General de Viajes</div>
@@ -1078,7 +997,7 @@ export default function LandingPage() {
               <ul className="space-y-1.5 text-slate-400">
                 <li><a href="#como-funciona" className="hover:text-white transition-colors">Cómo Funciona</a></li>
                 <li><a href="#beneficios" className="hover:text-white transition-colors">Beneficios B2B</a></li>
-                <li><a href="#calculadora" className="hover:text-white transition-colors">Calculadora de Ganancias</a></li>
+                <li><a href="#alianzas" className="hover:text-white transition-colors">Alianzas B2B</a></li>
                 <li><a href="#venues" className="hover:text-white transition-colors">Venues y Estadios</a></li>
                 <li><a href="#faqs" className="hover:text-white transition-colors">Preguntas Frecuentes</a></li>
               </ul>
@@ -1093,7 +1012,7 @@ export default function LandingPage() {
                 <li className="flex items-center gap-2">
                   <Phone className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
                   <a href={getWhatsAppUrl()} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">
-                    Atención por WhatsApp
+                    +54 9 11 3510-9772 (WhatsApp)
                   </a>
                 </li>
                 <li className="flex items-center gap-2">
@@ -1180,7 +1099,7 @@ export default function LandingPage() {
                     required
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="usuario@supercatering.com"
+                    placeholder="usuario@viandas-regreso.com.ar"
                     className="w-full pl-10 pr-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-xs placeholder:text-slate-600 focus:outline-none focus:border-indigo-500 transition-colors"
                   />
                 </div>
