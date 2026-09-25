@@ -73,6 +73,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
   
   // Filters for Pedidos
   const [searchTerm, setSearchTerm] = useState('')
+  const [selectedOrderDateFilter, setSelectedOrderDateFilter] = useState('ALL')
   const [selectedEventFilter, setSelectedEventFilter] = useState('ALL')
   const [selectedCompanyFilter, setSelectedCompanyFilter] = useState('ALL')
   const [selectedCoordinatorFilter, setSelectedCoordinatorFilter] = useState('ALL')
@@ -449,9 +450,52 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
   }, [ordersList])
 
 
-  // Extract unique coordinators / buses based on selected event & company
+  // Extract unique travel dates from orders (sorted closest upcoming -> furthest, then past DESC)
+  const uniqueOrderDates = useMemo(() => {
+    const today = new Date().toISOString().split('T')[0]
+    const dateCounts = new Map<string, number>()
+
+    ordersList.forEach(o => {
+      const rawDate = (o.travel_date || o.online_store_events?.events_master?.event_date || '').split('T')[0]
+      if (rawDate) {
+        dateCounts.set(rawDate, (dateCounts.get(rawDate) || 0) + 1)
+      }
+    })
+
+    const dateList = Array.from(dateCounts.entries()).map(([date, count]) => {
+      let formatted = date
+      try {
+        const [y, m, d] = date.split('-')
+        if (y && m && d) formatted = `${Number(d)}/${Number(m)}/${y}`
+      } catch (e) {}
+
+      return {
+        date,
+        formatted,
+        count
+      }
+    })
+
+    const upcoming = dateList
+      .filter(item => item.date >= today)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    const past = dateList
+      .filter(item => item.date < today)
+      .sort((a, b) => b.date.localeCompare(a.date))
+
+    return [...upcoming, ...past]
+  }, [ordersList])
+
+  // Extract unique coordinators / buses based on selected date, event & company
   const uniqueCoordinators = useMemo(() => {
     let pool = ordersList
+    if (selectedOrderDateFilter !== 'ALL') {
+      pool = pool.filter(o => {
+        const d = (o.travel_date || o.online_store_events?.events_master?.event_date || '').split('T')[0]
+        return d === selectedOrderDateFilter
+      })
+    }
     if (selectedEventFilter !== 'ALL') {
       pool = pool.filter(o => 
         o.online_store_events?.event_master_id === selectedEventFilter || 
@@ -487,7 +531,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
       unassignedCount,
       totalCount: pool.length
     }
-  }, [ordersList, selectedEventFilter, selectedCompanyFilter])
+  }, [ordersList, selectedOrderDateFilter, selectedEventFilter, selectedCompanyFilter])
 
   // Filtered Orders
   const filteredOrders = useMemo(() => {
@@ -500,6 +544,14 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
         order.bus_identifier?.toLowerCase().includes(searchTerm.toLowerCase())
 
       if (!matchesSearch) return false
+
+      // 1b. Date filter (travel date independent of events)
+      if (selectedOrderDateFilter !== 'ALL') {
+        const d = (order.travel_date || order.online_store_events?.events_master?.event_date || '').split('T')[0]
+        if (d !== selectedOrderDateFilter) {
+          return false
+        }
+      }
 
       // 2. Event filter
       if (selectedEventFilter !== 'ALL') {
@@ -540,7 +592,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
 
       return true
     })
-  }, [ordersList, searchTerm, selectedEventFilter, selectedCompanyFilter, selectedCoordinatorFilter, selectedStatusFilter])
+  }, [ordersList, searchTerm, selectedOrderDateFilter, selectedEventFilter, selectedCompanyFilter, selectedCoordinatorFilter, selectedStatusFilter])
 
   // Dynamic Combo Production Scorecards (calculated from filtered orders or paid subset)
   const productionMetrics = useMemo(() => {
@@ -1302,7 +1354,27 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
               <h3 className="text-sm font-black uppercase tracking-wider">Filtrar Pedidos</h3>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 flex-1 lg:max-w-5xl">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 flex-1 lg:max-w-6xl">
+              {/* Travel Date Filter (Independent of events) */}
+              <div>
+                <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Fecha Viaje</label>
+                <select
+                  value={selectedOrderDateFilter}
+                  onChange={e => {
+                    setSelectedOrderDateFilter(e.target.value)
+                    setSelectedCoordinatorFilter('ALL')
+                  }}
+                  className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs font-bold text-slate-800 outline-none focus:border-indigo-500"
+                >
+                  <option value="ALL">Todas las Fechas ({uniqueOrderDates.length})</option>
+                  {uniqueOrderDates.map(d => (
+                    <option key={d.date} value={d.date}>
+                      {d.formatted} ({d.count})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* Event Filter */}
               <div>
                 <label className="text-[10px] font-black uppercase tracking-widest text-slate-400 block mb-1">Evento</label>

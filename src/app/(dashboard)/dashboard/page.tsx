@@ -282,7 +282,7 @@ export default function DashboardPage() {
               `)
               .order("event_date", { ascending: true }),
            supabase.from("clients").select("id", { count: "exact" }),
-           supabase.from("event_sales_headers").select("event_master_id, total_amount, total_sold"),
+           supabase.from("event_sales_headers").select("event_master_id, total_amount, event_sales_units(traditional, vegetarian, vegana, sin_tacc)"),
            supabase.from("purchase_orders").select("costo_total").eq("estado", "PENDIENTE"),
            supabase.from("online_store_events").select("id, event_master_id, slug, title, is_active")
         ])
@@ -305,10 +305,14 @@ export default function DashboardPage() {
         const soldByMaster: Record<string, number> = {}
         const companySalesAggr: Record<string, number> = {}
 
-        salesHeaders?.forEach(sh => {
+        salesHeaders?.forEach((sh: any) => {
            if (sh.event_master_id) {
               revenueByMaster[sh.event_master_id] = (revenueByMaster[sh.event_master_id] || 0) + (Number(sh.total_amount) || 0)
-              soldByMaster[sh.event_master_id] = (soldByMaster[sh.event_master_id] || 0) + (Number(sh.total_sold) || 0)
+              let uSold = 0
+              sh.event_sales_units?.forEach((u: any) => {
+                 uSold += (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
+              })
+              soldByMaster[sh.event_master_id] = (soldByMaster[sh.event_master_id] || 0) + uSold
            }
         })
 

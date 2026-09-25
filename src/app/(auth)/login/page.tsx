@@ -28,7 +28,7 @@ export default function LoginPage() {
       setError("Credenciales inválidas. Por favor intente de nuevo.")
       setLoading(false)
     } else {
-      router.push("/")
+      router.push("/dashboard")
       router.refresh()
     }
   }

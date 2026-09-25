@@ -65,13 +65,17 @@ export async function POST(request: NextRequest) {
 
         // Trigger transactional email if approved
         if (orderStatus === "paid") {
-          sendOrderConfirmationEmail(orderId).catch(mailErr => {
+          try {
+            await sendOrderConfirmationEmail(orderId)
+          } catch (mailErr) {
             console.error("[Webhook Email Error]", mailErr)
-          })
+          }
         } else if (orderStatus === "pending_payment" || mpStatus === "in_process" || mpStatus === "pending") {
-          sendOrderPendingEmail(orderId).catch(mailErr => {
+          try {
+            await sendOrderPendingEmail(orderId)
+          } catch (mailErr) {
             console.error("[Webhook Pending Email Error]", mailErr)
-          })
+          }
         }
       }
     }

@@ -1,5 +1,16 @@
-import { createClient } from "@/lib/supabase/server"
+import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 import nodemailer from "nodemailer"
+
+function getEmailSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+  return createSupabaseClient(url, key, {
+    auth: { persistSession: false },
+    global: {
+      fetch: (u, options) => fetch(u, { ...options, cache: "no-store" })
+    }
+  })
+}
 
 interface SendEmailParams {
   to: string | string[]
@@ -12,188 +23,56 @@ interface SendEmailParams {
 }
 
 export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: SendEmailParams) {
-  const fromEmail = from || process.env.EMAIL_FROM || "Al Paso y Al Galope <alpaso.algalope@gmail.com>"
-  const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "alpaso.algalope@gmail.com"
-  const adminNotify = process.env.ADMIN_NOTIFY_EMAIL || "alpaso.algalope@gmail.com"
+  const gmailUser = process.env.EMAIL_USER || process.env.SMTP_USER || process.env.GMAIL_USER || "alpaso.algalope@gmail.com"
+  const gmailPass = (process.env.EMAIL_PASS || process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "")
+  const fromEmail = from || process.env.EMAIL_FROM || `Al Paso y Al Galope <${gmailUser}>`
+  const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || gmailUser
+  const adminNotify = process.env.ADMIN_NOTIFY_EMAIL || gmailUser
   const toList = Array.isArray(to) ? to : [to]
   const notifyBcc = bcc || (adminNotify && !toList.includes(adminNotify) ? [adminNotify] : [])
-  const resendApiKey = process.env.RESEND_API_KEY
-  const sendgridApiKey = process.env.SENDGRID_API_KEY
 
-  // 1. PRIORIDAD MÁXIMA: GMAIL OFICIAL (Al Paso y Al Galope)
-  const gmailPass = (process.env.GMAIL_APP_PASSWORD || "jddz xpto ejrr nefp").replace(/\s+/g, "")
-  const gmailUser = process.env.GMAIL_USER || "alpaso.algalope@gmail.com"
-
-  if (gmailPass && gmailUser) {
-    try {
-      const transporter = nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-          user: gmailUser,
-          pass: gmailPass
-        }
-      })
-
-      const mailOptions: any = {
-        from: `Al Paso y Al Galope <${gmailUser}>`,
-        to: toList,
-        subject,
-        html,
-        replyTo: replyToEmail
-      }
-
-      if (cc && cc.length > 0) {
-        mailOptions.cc = cc
-      }
-      if (notifyBcc && notifyBcc.length > 0) {
-        mailOptions.bcc = notifyBcc
-      }
-
-      const info = await transporter.sendMail(mailOptions)
-      console.log(`[Gmail Success] Email enviado a ${toList.join(', ')} (ID: ${info.messageId})`)
-      return { success: true, provider: "gmail", id: info.messageId }
-    } catch (gmailErr: any) {
-      console.error("[Gmail Error]", gmailErr)
-      // Si falla Gmail por algún motivo, continúa como fallback a Resend
-    }
+  if (!gmailPass) {
+    console.error("[Email Error] No se encontró EMAIL_PASS ni SMTP_PASSWORD en las variables de entorno.")
+    return { success: false, error: "Credenciales de correo no configuradas (EMAIL_PASS / SMTP_PASSWORD)" }
   }
 
-  // 2. RESPALDO: RESEND (REST API)
-  if (resendApiKey) {
-    try {
-      const payload: any = {
-        from: fromEmail,
-        to: toList,
-        reply_to: replyToEmail,
-        subject,
-        html
-      }
-      if (cc && cc.length > 0) {
-        payload.cc = cc
-      }
-      if (notifyBcc.length > 0) {
-        payload.bcc = notifyBcc
-      }
+  try {
+    const transporter = nodemailer.createTransport({
+      service: "gmail",
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: {
+        user: gmailUser,
+        pass: gmailPass
+      },
+      connectionTimeout: 5000, // Timeout de 5s para establecer conexión
+      greetingTimeout: 5000,   // Timeout de 5s para saludo SMTP
+      socketTimeout: 5000       // Timeout de 5s de inactividad de socket
+    })
 
-      const response = await fetch("https://api.resend.com/emails", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${resendApiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(payload)
-      })
-
-      const data = await response.json()
-      if (!response.ok) {
-        console.error("[Resend Error]", data)
-
-        // Fallback automático si Resend está en Sandbox (sin dominio verificado)
-        const isSandboxRestricted = typeof data.message === "string" && 
-          data.message.includes("You can only send testing emails to your own email address")
-        
-        const isAlreadyOnlyOwner = toList.length === 1 && 
-          toList[0].toLowerCase() === "fschottenfeld@gmail.com" && 
-          (!cc || cc.length === 0) && 
-          (!notifyBcc || notifyBcc.length === 0)
-
-        if (isSandboxRestricted && !isAlreadyOnlyOwner) {
-          console.warn("[Resend Fallback] Sandbox mode detectado. Reintentando exclusivamente a fschottenfeld@gmail.com")
-          const fallbackPayload: any = {
-            from: fromEmail,
-            to: ["fschottenfeld@gmail.com"],
-            reply_to: replyToEmail,
-            subject: `[MODO PRUEBA RESEND] ${subject}`,
-            html: `<div style="background-color: #fef3c7; border: 1px solid #f59e0b; padding: 14px; border-radius: 8px; margin-bottom: 20px; font-family: sans-serif; font-size: 13px; color: #92400e;">
-              <strong>⚠️ AVISO DE MODO PRUEBA (RESEND):</strong><br>
-              Este correo iba dirigido originalmente a: <strong>${toList.join(', ')}</strong>${cc && cc.length > 0 ? ` (CC: ${cc.join(', ')})` : ''}.<br>
-              Como tu cuenta de Resend todavía está en modo prueba (sandbox con remitente de prueba), Resend únicamente permite enviar correos a tu dirección registrada (<strong>fschottenfeld@gmail.com</strong>).<br>
-              Para que los correos le lleguen directo a Graciela y clientes, recuerda verificar tu dominio en <a href="https://resend.com/domains" target="_blank" style="color: #b45309; text-decoration: underline;">resend.com/domains</a>.
-            </div>` + html
-          }
-
-          const fallbackRes = await fetch("https://api.resend.com/emails", {
-            method: "POST",
-            headers: {
-              "Authorization": `Bearer ${resendApiKey}`,
-              "Content-Type": "application/json"
-            },
-            body: JSON.stringify(fallbackPayload)
-          })
-
-          const fallbackData = await fallbackRes.json()
-          if (fallbackRes.ok) {
-            console.log(`[Resend Fallback Success] Email enviado a fschottenfeld@gmail.com (ID: ${fallbackData.id})`)
-            return { 
-              success: true, 
-              provider: "resend-sandbox-fallback", 
-              id: fallbackData.id,
-              warning: "Enviado a fschottenfeld@gmail.com debido a restricciones de Sandbox de Resend" 
-            }
-          }
-        }
-
-        return { success: false, error: data.message || "Error al enviar con Resend" }
-      }
-
-      console.log(`[Resend Success] Email enviado a ${to} (Copia a: ${notifyBcc.join(', ')}) (ID: ${data.id})`)
-      return { success: true, provider: "resend", id: data.id }
-    } catch (err: any) {
-      console.error("[Resend Exception]", err)
-      return { success: false, error: err.message }
+    const mailOptions: any = {
+      from: fromEmail,
+      to: toList,
+      subject,
+      html,
+      replyTo: replyToEmail
     }
-  }
 
-  // 2. FALLBACK: SENDGRID (REST API)
-  if (sendgridApiKey) {
-    try {
-      const personalization: any = { to: toList.map(e => ({ email: e })) }
-      if (cc && cc.length > 0) {
-        personalization.cc = cc.map(e => ({ email: e }))
-      }
-      if (notifyBcc.length > 0) {
-        personalization.bcc = notifyBcc.map(e => ({ email: e }))
-      }
-
-      const response = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${sendgridApiKey}`,
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          personalizations: [personalization],
-          from: { email: fromEmail.includes("<") ? fromEmail.match(/<([^>]+)>/)?.[1] || fromEmail : fromEmail },
-          reply_to: { email: replyToEmail },
-          subject,
-          content: [{ type: "text/html", value: html }]
-        })
-      })
-
-      if (!response.ok) {
-        const errText = await response.text()
-        console.error("[SendGrid Error]", errText)
-        return { success: false, error: errText }
-      }
-
-      console.log(`[SendGrid Success] Email enviado a ${to}`)
-      return { success: true, provider: "sendgrid" }
-    } catch (err: any) {
-      console.error("[SendGrid Exception]", err)
-      return { success: false, error: err.message }
+    if (cc && cc.length > 0) {
+      mailOptions.cc = cc
     }
+    if (notifyBcc && notifyBcc.length > 0) {
+      mailOptions.bcc = notifyBcc
+    }
+
+    const info = await transporter.sendMail(mailOptions)
+    console.log(`[Gmail Success] Email enviado a ${toList.join(', ')} (ID: ${info.messageId})`)
+    return { success: true, provider: "gmail", id: info.messageId }
+  } catch (gmailErr: any) {
+    console.error("[Gmail Error]", gmailErr)
+    return { success: false, error: gmailErr?.message || "Error al enviar correo por Gmail" }
   }
-
-  // 3. FALLBACK DEV / LOGS (Simulación si no hay API Key configurada todavía)
-  console.log("==========================================================")
-  console.log("📧 [SIMULACIÓN DE CORREO TRANSACCIONAL]")
-  console.log(`Para: ${to}`)
-  console.log(`Reply-To: ${replyToEmail}`)
-  console.log(`De: ${fromEmail}`)
-  console.log(`Asunto: ${subject}`)
-  console.log("==========================================================")
-
-  return { success: true, provider: "simulated", message: "Email simulado en consola (configure RESEND_API_KEY para envíos reales)" }
 }
 
 export function generateOrderConfirmationHtml(order: {
@@ -368,7 +247,7 @@ export function generateOrderConfirmationHtml(order: {
 
 export async function sendOrderConfirmationEmail(orderId: string, options?: { force?: boolean }) {
   try {
-    const supabase = await createClient()
+    const supabase = getEmailSupabaseClient()
 
     // 1. Fetch order details with customer and store
     const { data: order, error } = await supabase
@@ -642,7 +521,7 @@ export function generateOrderPendingHtml(order: {
 
 export async function sendOrderPendingEmail(orderId: string) {
   try {
-    const supabase = await createClient()
+    const supabase = getEmailSupabaseClient()
 
     const { data: order, error } = await supabase
       .from("online_orders")
@@ -771,6 +650,67 @@ export interface FirstCutItemSummary {
   grandWater: number
 }
 
+function isPbtRecipe(name: string): boolean {
+  const norm = (name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+  return norm.includes("pbt") || norm.includes("pebete")
+}
+
+function renderBreadDetail(items?: { recipeName: string; qty: number; companies?: string[] }[]): string {
+  if (!items || items.length === 0) return ""
+
+  let ciabatta = 0
+  let pbt = 0
+
+  items.forEach(it => {
+    if (isPbtRecipe(it.recipeName)) {
+      pbt += Number(it.qty) || 0
+    } else {
+      ciabatta += Number(it.qty) || 0
+    }
+  })
+
+  if (ciabatta === 0 && pbt === 0) return ""
+
+  // Si hay mezcla de panes (Ciabatta y Pebete PBT):
+  if (ciabatta > 0 && pbt > 0) {
+    return `
+      <div style="margin-top: 6px; padding: 6px 10px; background-color: #f1f5f9; border-radius: 6px; border-left: 3px solid #0f172a; font-size: 11px; line-height: 1.4;">
+        <strong style="color: #0f172a; display: block; margin-bottom: 2px;">Tipo de pan:</strong>
+        <div style="color: #334155; margin-bottom: 2px;">• <strong>${ciabatta} un.</strong> en Pan Ciabatta</div>
+        <div style="color: #991b1b; font-weight: 700;">• <strong>${pbt} un.</strong> en Pan Pebete (PBT)</div>
+      </div>
+    `
+  }
+
+  // Si todos son Pebete (PBT):
+  if (pbt > 0 && ciabatta === 0) {
+    return `
+      <div style="margin-top: 6px; padding: 6px 10px; background-color: #fee2e2; border-radius: 6px; border-left: 3px solid #dc2626; font-size: 11px; line-height: 1.4;">
+        <strong style="color: #991b1b; display: block; margin-bottom: 2px;">Tipo de pan:</strong>
+        <div style="color: #991b1b; font-weight: 700;">• <strong>${pbt} un.</strong> en Pan Pebete (PBT)</div>
+      </div>
+    `
+  }
+
+  // Si todos son Pan Ciabatta:
+  return `
+    <div style="margin-top: 6px; padding: 6px 10px; background-color: #f1f5f9; border-radius: 6px; border-left: 3px solid #0f172a; font-size: 11px; line-height: 1.4;">
+      <strong style="color: #0f172a; display: block; margin-bottom: 2px;">Tipo de pan:</strong>
+      <div style="color: #334155;">• <strong>${ciabatta} un.</strong> en Pan Ciabatta</div>
+    </div>
+  `
+}
+
+function formatTradPackaging(ciabatta: number, pbt: number): string {
+  if (ciabatta > 0 && pbt > 0) {
+    return `<div>${formatPackaging(ciabatta, 'Ciabatta')}</div><div style="margin-top: 4px; color: #991b1b;">${formatPackaging(pbt, 'Pebete PBT')}</div>`
+  }
+  if (pbt > 0) {
+    return `<span style="color: #991b1b; font-weight: 700;">${formatPackaging(pbt, 'Pebete PBT')}</span>`
+  }
+  return formatPackaging(ciabatta, 'Tradicional')
+}
+
 function formatPackaging(qty: number, label: string): string {
   if (qty <= 0) return `— (Sin producción requerida)`
   const full = Math.floor(qty / 10)
@@ -890,18 +830,21 @@ export function generateFirstCutProductionHtml(data: FirstCutItemSummary): strin
                     </td>
                     <td style="padding: 12px 14px; color: #475569; font-size: 12px;">
                       Jamón, queso, lechuga y tomate
-                      ${data.recipeBreakdown?.traditional && data.recipeBreakdown.traditional.length > 0 && (data.recipeBreakdown.traditional.length > 1 || !data.recipeBreakdown.traditional[0].recipeName.toLowerCase().includes('ciabatta')) ? `
-                        <div style="margin-top: 6px; padding: 6px 8px; background-color: #f1f5f9; border-radius: 6px; border-left: 3px solid #0f172a; font-size: 11px; line-height: 1.4;">
-                          <strong style="color: #0f172a; display: block; margin-bottom: 2px;">Formatos / Recetas específicas:</strong>
-                          ${data.recipeBreakdown.traditional.map(b => `<div style="color: #334155; margin-bottom: 2px;">• <strong>${b.qty} un. ${b.recipeName}</strong> <span style="color: #64748b;">(${b.companies.join(', ')})</span></div>`).join('')}
-                        </div>
-                      ` : ''}
+                      ${renderBreadDetail(data.recipeBreakdown?.traditional)}
                     </td>
                     <td align="center" style="padding: 12px 14px; font-weight: 900; color: #0f172a; font-size: 15px;">
                       ${data.grandTrad} un.
                     </td>
                     <td style="padding: 12px 14px; color: #334155; font-size: 12px; font-weight: 700;">
-                      ${formatPackaging(data.grandTrad, 'Tradicional')}
+                      ${(() => {
+                        let c = 0, p = 0
+                        data.recipeBreakdown?.traditional?.forEach(it => {
+                          if (isPbtRecipe(it.recipeName)) p += Number(it.qty) || 0
+                          else c += Number(it.qty) || 0
+                        })
+                        if (c === 0 && p === 0) c = data.grandTrad
+                        return formatTradPackaging(c, p)
+                      })()}
                     </td>
                   </tr>
 
@@ -912,6 +855,7 @@ export function generateFirstCutProductionHtml(data: FirstCutItemSummary): strin
                     </td>
                     <td style="padding: 12px 14px; color: #475569; font-size: 12px;">
                       Queso, huevo, lechuga y tomate
+                      ${renderBreadDetail(data.recipeBreakdown?.vegetarian)}
                     </td>
                     <td align="center" style="padding: 12px 14px; font-weight: 900; color: #0f172a; font-size: 15px;">
                       ${data.grandVeg} un.
@@ -944,7 +888,8 @@ export function generateFirstCutProductionHtml(data: FirstCutItemSummary): strin
                       🌱 Sándwich Vegano
                     </td>
                     <td style="padding: 12px 14px; color: #475569; font-size: 12px;">
-                      Vegetales frescos y aderezo vegano en pan ciabatta
+                      Vegetales frescos y aderezo vegano
+                      ${renderBreadDetail(data.recipeBreakdown?.vegana)}
                     </td>
                     <td align="center" style="padding: 12px 14px; font-weight: 900; color: #0f172a; font-size: 15px;">
                       ${data.grandVegan} un.
@@ -1033,7 +978,7 @@ export async function sendFirstCutProductionEmail({
   dryRun?: boolean
 }) {
   try {
-    const supabase = await createClient()
+    const supabase = getEmailSupabaseClient()
 
     // 1. Fetch Event Master
     let eventQuery = supabase
@@ -1079,6 +1024,10 @@ export async function sendFirstCutProductionEmail({
       supabase.from("recetas").select("id, nombre")
     ])
 
+    const normalizeStr = (str: string) => {
+      return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
+    }
+
     const recipeNameMap: Record<string, string> = {}
     recetasList?.forEach((r: any) => {
       if (r.id && r.nombre) recipeNameMap[r.id] = r.nombre
@@ -1088,10 +1037,6 @@ export async function sendFirstCutProductionEmail({
     rules?.forEach((r: any) => {
       if (r.company_name) ruleMap[normalizeStr(r.company_name)] = r
     })
-
-    const normalizeStr = (str: string) => {
-      return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
-    }
 
     const getFactor = (companyName: string): number => {
       const clean = normalizeStr(companyName)
@@ -1123,13 +1068,13 @@ export async function sendFirstCutProductionEmail({
       .select(`
         id,
         company_name,
-        total_sold,
-        water_quantity,
         event_sales_units (
           traditional,
           vegetarian,
           vegana,
           sin_tacc,
+          water_qty,
+          water,
           recipe_trad_id,
           recipe_veg_id,
           recipe_vegan_id,
@@ -1185,21 +1130,25 @@ export async function sendFirstCutProductionEmail({
         let hVeg = 0
         let hSin = 0
         let hVegana = 0
+        let hWater = 0
 
         sh.event_sales_units?.forEach((u: any) => {
           const tradQty = Number(u.traditional) || 0
           const vegQty = Number(u.vegetarian) || 0
           const sinQty = Number(u.sin_tacc) || 0
           const veganQty = Number(u.vegana) || 0
+          const waterQty = Number(u.water_qty) || Number(u.water) || 0
 
           hTrad += tradQty
           hVeg += vegQty
           hSin += sinQty
           hVegana += veganQty
+          hWater += waterQty
 
           if (tradQty > 0) {
             const rId = u.recipe_trad_id || rule?.recipe_trad_id
-            const rName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+            const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+            const rName = isPbtRecipe(rawRName) ? "Pebete Jamón y Queso (PBT)" : "Ciabatta Tradicional"
             if (!breakdownMap.traditional[rName]) {
               breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
             }
@@ -1209,7 +1158,8 @@ export async function sendFirstCutProductionEmail({
 
           if (vegQty > 0) {
             const rId = u.recipe_veg_id || rule?.recipe_veg_id
-            const rName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+            const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+            const rName = isPbtRecipe(rawRName) ? "Pebete Veggie (PBT)" : "Ciabatta Vegetariana"
             if (!breakdownMap.vegetarian[rName]) {
               breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
             }
@@ -1219,7 +1169,8 @@ export async function sendFirstCutProductionEmail({
 
           if (veganQty > 0) {
             const rId = u.recipe_vegan_id || rule?.recipe_vegan_id
-            const rName = (rId && recipeNameMap[rId]) || "Sándwich Vegano"
+            const rawRName = (rId && recipeNameMap[rId]) || "Sándwich Vegano"
+            const rName = isPbtRecipe(rawRName) ? "Pebete Vegano (PBT)" : "Sándwich Vegano"
             if (!breakdownMap.vegana[rName]) {
               breakdownMap.vegana[rName] = { recipeName: rName, qty: 0, companies: new Set() }
             }
@@ -1239,7 +1190,6 @@ export async function sendFirstCutProductionEmail({
         })
 
         const hTotal = hTrad + hVeg + hSin + hVegana
-        const hWater = Number(sh.water_quantity) || 0
 
         soldTrad += hTrad
         soldVeg += hVeg
@@ -1248,10 +1198,9 @@ export async function sendFirstCutProductionEmail({
         soldWater += hWater
 
         const compTradRecipe = rule?.recipe_trad_id && recipeNameMap[rule.recipe_trad_id]
+        const isPbtWholesale = isPbtRecipe(compTradRecipe || "")
         const sourceLabel = comp
-          ? (compTradRecipe && !compTradRecipe.toLowerCase().includes("ciabatta")
-              ? `Mayorista: ${comp} (${compTradRecipe})`
-              : `Mayorista: ${comp}`)
+          ? (isPbtWholesale ? `Mayorista: ${comp} (Pebete PBT)` : `Mayorista: ${comp}`)
           : "Ventas por Evento"
 
         soldSources.push({
@@ -1402,7 +1351,8 @@ export async function sendFirstCutProductionEmail({
       if (trad > 0) {
         const rule = ruleMap[compClean]
         const rId = rule?.recipe_trad_id
-        const rName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+        const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+        const rName = isPbtRecipe(rawRName) ? "Pebete Jamón y Queso (PBT)" : "Ciabatta Tradicional"
         if (!breakdownMap.traditional[rName]) {
           breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
         }
@@ -1412,7 +1362,8 @@ export async function sendFirstCutProductionEmail({
       if (vegRaw > 0) {
         const rule = ruleMap[compClean]
         const rId = rule?.recipe_veg_id
-        const rName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+        const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+        const rName = isPbtRecipe(rawRName) ? "Pebete Veggie (PBT)" : "Ciabatta Vegetariana"
         if (!breakdownMap.vegetarian[rName]) {
           breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
         }
@@ -1631,7 +1582,7 @@ export async function sendDailyProductionCutSchedule({
   force?: boolean
 } = {}) {
   try {
-    const supabase = await createClient()
+    const supabase = getEmailSupabaseClient()
 
     // 1. Determinar fecha del servicio (mañana en America/Argentina/Buenos_Aires)
     let serviceDateStr = targetDate
@@ -1718,7 +1669,8 @@ export async function sendDailyProductionCutSchedule({
         })
       }
 
-      if (!dryRun) {
+      const anySuccess = results.some(r => r.res?.success)
+      if (!dryRun && anySuccess) {
         try {
           const lockKey = `daily_cut_lock_${serviceDateStr}`
           await supabase

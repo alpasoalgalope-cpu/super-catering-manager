@@ -64,7 +64,7 @@ export default function MonthlyScheduleCalendar({ events = [], role = null }: Pr
             .order('event_date', { ascending: true }),
           supabase.from('commercial_rules').select('*'),
           supabase.from('clients').select('name, conversion_factor'),
-          supabase.from('event_sales_headers').select('event_master_id, total_amount, total_sold')
+          supabase.from('event_sales_headers').select('event_master_id, total_amount, event_sales_units(traditional, vegetarian, vegana, sin_tacc)')
         ]);
 
         if (masters) {
@@ -80,10 +80,14 @@ export default function MonthlyScheduleCalendar({ events = [], role = null }: Pr
 
           const revenueByMaster: Record<string, number> = {};
           const soldByMaster: Record<string, number> = {};
-          salesHeaders?.forEach(sh => {
+          salesHeaders?.forEach((sh: any) => {
             if (sh.event_master_id) {
               revenueByMaster[sh.event_master_id] = (revenueByMaster[sh.event_master_id] || 0) + (Number(sh.total_amount) || 0);
-              soldByMaster[sh.event_master_id] = (soldByMaster[sh.event_master_id] || 0) + (Number(sh.total_sold) || 0);
+              let uSold = 0;
+              sh.event_sales_units?.forEach((u: any) => {
+                uSold += (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0);
+              });
+              soldByMaster[sh.event_master_id] = (soldByMaster[sh.event_master_id] || 0) + uSold;
             }
           });
 

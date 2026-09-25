@@ -32,14 +32,18 @@ export default async function ConfirmationPage({ params, searchParams }: Props) 
       .eq('id', order_id)
 
     // Send confirmation email (has anti-duplicate check internally)
-    sendOrderConfirmationEmail(order_id).catch(err => {
+    try {
+      await sendOrderConfirmationEmail(order_id)
+    } catch (err) {
       console.error("[Confirmation Page Email Error]", err)
-    })
+    }
   } else if (order_id && status === 'pending') {
     // Send pending email (has anti-duplicate check internally)
-    sendOrderPendingEmail(order_id).catch(err => {
+    try {
+      await sendOrderPendingEmail(order_id)
+    } catch (err) {
       console.error("[Confirmation Page Pending Email Error]", err)
-    })
+    }
   }
 
   const renderContent = () => {

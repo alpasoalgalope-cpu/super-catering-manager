@@ -31,7 +31,9 @@ export async function middleware(request: NextRequest) {
 
   // 1. Public and Auth paths
   const isAuthPage = request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register')
+  const isLandingPage = request.nextUrl.pathname === '/'
   const isPublicRoute = isAuthPage || 
+                        isLandingPage ||
                         request.nextUrl.pathname.startsWith('/tienda') || 
                         request.nextUrl.pathname.startsWith('/api/mercadopago') ||
                         request.nextUrl.pathname.startsWith('/api/cron') ||
@@ -42,9 +44,9 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL('/login', request.url))
   }
 
-  // 2. If user is logged in and tries to access login or register -> redirect to home
+  // 2. If user is logged in and tries to access login or register -> redirect to dashboard
   if (user && isAuthPage) {
-    return NextResponse.redirect(new URL('/', request.url))
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   // 3. RBAC Check

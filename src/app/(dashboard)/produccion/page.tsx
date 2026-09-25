@@ -246,13 +246,21 @@ export default function ProduccionPage() {
             sold: 0, 
             liberated: 0, 
             items: [
-              { key: "traditional", label: "TRADICIONAL", qty: 0, color: "bg-slate-900" },
-              { key: "vegetarian", label: "VEGETARIANA", qty: 0, color: "bg-emerald-600" },
-              { key: "vegana", label: "VEGANA", qty: 0, color: "bg-emerald-500" },
-              { key: "sin_tacc", label: "SIN TACC", qty: 0, color: "bg-indigo-600" },
-              { key: "water", label: "AGUA MINERAL", qty: 0, color: "bg-sky-500" },
+              { key: "trad_ciabatta", label: "TRADICIONAL CIABATTA", bread: "CIABATTA", qty: 0, color: "bg-slate-900", isPbt: false },
+              { key: "trad_pebete", label: "TRADICIONAL PEBETE", bread: "PEBETE", qty: 0, color: "bg-amber-600", isPbt: true },
+              { key: "veg_ciabatta", label: "VEGETARIANA CIABATTA", bread: "CIABATTA", qty: 0, color: "bg-emerald-600", isPbt: false },
+              { key: "veg_pebete", label: "VEGETARIANA PEBETE", bread: "PEBETE", qty: 0, color: "bg-amber-600", isPbt: true },
+              { key: "vegan_ciabatta", label: "VEGANA CIABATTA", bread: "CIABATTA", qty: 0, color: "bg-emerald-500", isPbt: false },
+              { key: "vegan_pebete", label: "VEGANA PEBETE", bread: "PEBETE", qty: 0, color: "bg-amber-600", isPbt: true },
+              { key: "sin_tacc", label: "SIN TACC", bread: "SIN TACC", qty: 0, color: "bg-indigo-600", isPbt: false },
+              { key: "water", label: "AGUA MINERAL", bread: "BEBIDA", qty: 0, color: "bg-sky-500", isPbt: false },
             ], 
-            specials: { traditional: [], vegetarian: [], vegana: [], sin_tacc: [] }, 
+            specials: {
+              trad_ciabatta: [], trad_pebete: [],
+              veg_ciabatta: [], veg_pebete: [],
+              vegan_ciabatta: [], vegan_pebete: [],
+              sin_tacc: []
+            }, 
             companies: [], 
             headerCount: 0, 
             headers: [], 
@@ -263,15 +271,30 @@ export default function ProduccionPage() {
         }
 
         // 4. Aggregation ONLY from Ventas por Evento (event_sales_units)
-        const specialsMap: Record<string, { qty: number; note: string }[]> = {
-          traditional: [], vegetarian: [], vegana: [], sin_tacc: []
+        const isPbtRecipe = (name: string): boolean => {
+          const norm = (name || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+          return norm.includes("pbt") || norm.includes("pebete")
         }
 
-        const breakdownMap: Record<string, Record<string, { recipeName: string, qty: number, companies: Set<string> }>> = {
-          traditional: {},
-          vegetarian: {},
-          vegana: {},
-          sin_tacc: {}
+        let tradCiabatta = 0
+        let tradPbt = 0
+        let vegCiabatta = 0
+        let vegPbt = 0
+        let veganCiabatta = 0
+        let veganPbt = 0
+        let sinTacc = 0
+        let water = 0
+        let sold = 0
+        let liberated = 0
+
+        const specialsMap: Record<string, { qty: number; note: string }[]> = {
+          trad_ciabatta: [],
+          trad_pebete: [],
+          veg_ciabatta: [],
+          veg_pebete: [],
+          vegan_ciabatta: [],
+          vegan_pebete: [],
+          sin_tacc: []
         }
 
         units.forEach((u: any) => {
@@ -281,134 +304,147 @@ export default function ProduccionPage() {
 
           // Traditional
           const tradQty = Number(u.traditional) || 0
+          const tradRId = u.recipe_trad_id || rule?.recipe_trad_id
+          const tradRName = (tradRId && recipeNameMap[tradRId]) || "Vianda Tradicional"
+          const tradIsPbt = isPbtRecipe(tradRName)
           if (tradQty > 0) {
-            const rId = u.recipe_trad_id || rule?.recipe_trad_id
-            const rName = (rId && recipeNameMap[rId]) || "Vianda Tradicional"
-            if (!breakdownMap.traditional[rName]) {
-              breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
-            }
-            breakdownMap.traditional[rName].qty += tradQty
-            if (comp) breakdownMap.traditional[rName].companies.add(comp)
+            if (tradIsPbt) tradPbt += tradQty
+            else tradCiabatta += tradQty
           }
 
           // Vegetarian
           const vegQty = Number(u.vegetarian) || 0
+          const vegRId = u.recipe_veg_id || rule?.recipe_veg_id
+          const vegRName = (vegRId && recipeNameMap[vegRId]) || "Vianda Vegetariana"
+          const vegIsPbt = isPbtRecipe(vegRName)
           if (vegQty > 0) {
-            const rId = u.recipe_veg_id || rule?.recipe_veg_id
-            const rName = (rId && recipeNameMap[rId]) || "Vianda Vegetariana"
-            if (!breakdownMap.vegetarian[rName]) {
-              breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
-            }
-            breakdownMap.vegetarian[rName].qty += vegQty
-            if (comp) breakdownMap.vegetarian[rName].companies.add(comp)
+            if (vegIsPbt) vegPbt += vegQty
+            else vegCiabatta += vegQty
           }
 
           // Vegana
           const veganQty = Number(u.vegana) || 0
+          const veganRId = u.recipe_vegan_id || rule?.recipe_vegan_id
+          const veganRName = (veganRId && recipeNameMap[veganRId]) || "Vianda Vegana"
+          const veganIsPbt = isPbtRecipe(veganRName)
           if (veganQty > 0) {
-            const rId = u.recipe_vegan_id || rule?.recipe_vegan_id
-            const rName = (rId && recipeNameMap[rId]) || "Vianda Vegana"
-            if (!breakdownMap.vegana[rName]) {
-              breakdownMap.vegana[rName] = { recipeName: rName, qty: 0, companies: new Set() }
-            }
-            breakdownMap.vegana[rName].qty += veganQty
-            if (comp) breakdownMap.vegana[rName].companies.add(comp)
+            if (veganIsPbt) veganPbt += veganQty
+            else veganCiabatta += veganQty
           }
 
           // Sin TACC
           const sinQty = Number(u.sin_tacc) || 0
           if (sinQty > 0) {
-            const rId = u.recipe_sintacc_id || rule?.recipe_sintacc_id
-            const rName = (rId && recipeNameMap[rId]) || "Vianda Sin TACC"
-            if (!breakdownMap.sin_tacc[rName]) {
-              breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
-            }
-            breakdownMap.sin_tacc[rName].qty += sinQty
-            if (comp) breakdownMap.sin_tacc[rName].companies.add(comp)
+            sinTacc += sinQty
           }
-        })
 
-        const totals = units.reduce((acc: any, u: any) => {
+          // Other counts
+          water += (Number(u.water_qty) || Number(u.water) || 0)
+          sold += (Number(u.sold_qty) || 0)
+          liberated += (Number(u.liberated_qty) || 0)
+
+          // Specials
           if (u.special_breakdown) {
             try {
               const details = JSON.parse(u.special_breakdown)
               if (Array.isArray(details)) {
                 details.forEach((d: any) => {
-                  if ((Number(d.qty) > 0 || (d.note && d.note.trim() !== "")) && specialsMap[d.type]) {
-                    specialsMap[d.type].push({ qty: Number(d.qty) || 0, note: d.note })
+                  const sQty = Number(d.qty) || 0
+                  const sNote = (d.note || '').trim()
+                  if (sQty > 0 || sNote !== '') {
+                    if (d.type === 'traditional') {
+                      const targetKey = tradIsPbt ? 'trad_pebete' : 'trad_ciabatta'
+                      specialsMap[targetKey].push({ qty: sQty, note: sNote })
+                    } else if (d.type === 'vegetarian') {
+                      const targetKey = vegIsPbt ? 'veg_pebete' : 'veg_ciabatta'
+                      specialsMap[targetKey].push({ qty: sQty, note: sNote })
+                    } else if (d.type === 'vegana') {
+                      const targetKey = veganIsPbt ? 'vegan_pebete' : 'vegan_ciabatta'
+                      specialsMap[targetKey].push({ qty: sQty, note: sNote })
+                    } else if (d.type === 'sin_tacc') {
+                      specialsMap.sin_tacc.push({ qty: sQty, note: sNote })
+                    }
                   }
                 })
               }
             } catch (e) { /* ignore parse error */ }
           }
-          return {
-            trad: acc.trad + (Number(u.traditional) || 0),
-            veg: acc.veg + (Number(u.vegetarian) || 0),
-            vegan: acc.vegan + (Number(u.vegana) || 0),
-            st: acc.st + (Number(u.sin_tacc) || 0),
-            water: acc.water + (Number(u.water_qty) || Number(u.water) || 0),
-            sold: acc.sold + (Number(u.sold_qty) || 0),
-            liberated: acc.liberated + (Number(u.liberated_qty) || 0),
-          }
-        }, { trad: 0, veg: 0, vegan: 0, st: 0, water: 0, sold: 0, liberated: 0 })
-
-        const uniqueCompanies = Array.from(new Set(currentHeaders.map((h: any) => h.company_name || h.company).filter(Boolean)))
+        })
 
         const items = [
           {
-            key: "traditional",
-            label: "TRADICIONAL",
-            qty: totals.trad,
+            key: "trad_ciabatta",
+            label: "TRADICIONAL CIABATTA",
+            bread: "CIABATTA",
+            qty: tradCiabatta,
             color: "bg-slate-900",
-            recipeBreakdown: Object.values(breakdownMap.traditional).map(b => ({
-              recipeName: b.recipeName,
-              qty: b.qty,
-              companies: Array.from(b.companies)
-            }))
+            isPbt: false
           },
           {
-            key: "vegetarian",
-            label: "VEGETARIANA",
-            qty: totals.veg,
+            key: "trad_pebete",
+            label: "TRADICIONAL PEBETE",
+            bread: "PEBETE",
+            qty: tradPbt,
+            color: "bg-amber-600",
+            isPbt: true
+          },
+          {
+            key: "veg_ciabatta",
+            label: "VEGETARIANA CIABATTA",
+            bread: "CIABATTA",
+            qty: vegCiabatta,
             color: "bg-emerald-600",
-            recipeBreakdown: Object.values(breakdownMap.vegetarian).map(b => ({
-              recipeName: b.recipeName,
-              qty: b.qty,
-              companies: Array.from(b.companies)
-            }))
+            isPbt: false
           },
           {
-            key: "vegana",
-            label: "VEGANA",
-            qty: totals.vegan,
+            key: "veg_pebete",
+            label: "VEGETARIANA PEBETE",
+            bread: "PEBETE",
+            qty: vegPbt,
+            color: "bg-amber-600",
+            isPbt: true
+          },
+          {
+            key: "vegan_ciabatta",
+            label: "VEGANA CIABATTA",
+            bread: "CIABATTA",
+            qty: veganCiabatta,
             color: "bg-emerald-500",
-            recipeBreakdown: Object.values(breakdownMap.vegana).map(b => ({
-              recipeName: b.recipeName,
-              qty: b.qty,
-              companies: Array.from(b.companies)
-            }))
+            isPbt: false
+          },
+          {
+            key: "vegan_pebete",
+            label: "VEGANA PEBETE",
+            bread: "PEBETE",
+            qty: veganPbt,
+            color: "bg-amber-600",
+            isPbt: true
           },
           {
             key: "sin_tacc",
             label: "SIN TACC",
-            qty: totals.st,
+            bread: "SIN TACC",
+            qty: sinTacc,
             color: "bg-indigo-600",
-            recipeBreakdown: Object.values(breakdownMap.sin_tacc).map(b => ({
-              recipeName: b.recipeName,
-              qty: b.qty,
-              companies: Array.from(b.companies)
-            }))
+            isPbt: false
           },
-          { key: "water", label: "AGUA MINERAL", qty: totals.water, color: "bg-sky-500" },
+          { 
+            key: "water", 
+            label: "AGUA MINERAL", 
+            bread: "BEBIDA", 
+            qty: water, 
+            color: "bg-sky-500",
+            isPbt: false
+          },
         ]
 
         setConsolidado({
-          total: totals.trad + totals.veg + totals.vegan + totals.st,
-          sold: totals.sold,
-          liberated: totals.liberated,
+          total: tradCiabatta + tradPbt + vegCiabatta + vegPbt + veganCiabatta + veganPbt + sinTacc,
+          sold,
+          liberated,
           items,
           specials: specialsMap,
-          companies: uniqueCompanies,
+          companies: [],
           headerCount: currentHeaders.length,
           headers: currentHeaders,
           units,
@@ -436,64 +472,73 @@ export default function ProduccionPage() {
     if (!consolidado || !selectedDate) return
     
     const formattedDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')
-    const artists = eventsForSelectedDate.map(e => e.show_name).join(' + ')
-    const venues = eventsForSelectedDate.map(e => e.venue_name || e.venue).join(' + ')
+    const artists = eventsForSelectedDate.map(e => e.show_name).filter(Boolean).join(' + ')
+    const venues = eventsForSelectedDate.map(e => e.venue_name || e.venue).filter(Boolean).join(' + ')
     
-    let trad = consolidado.items.find((i: any) => i.key === 'traditional')?.qty || 0
-    let veg = consolidado.items.find((i: any) => i.key === 'vegetarian')?.qty || 0
-    let vegan = consolidado.items.find((i: any) => i.key === 'vegana')?.qty || 0
-    let st = consolidado.items.find((i: any) => i.key === 'sin_tacc')?.qty || 0
-    const water = consolidado.items.find((i: any) => i.key === 'water')?.qty || 0
+    const getItemQty = (k: string) => consolidado.items.find((i: any) => i.key === k)?.qty || 0
     
-    // Group and format individual specials
-    const specialsLines: string[] = []
-    let specialsTotalQty = 0
+    const tradCiabatta = getItemQty('trad_ciabatta')
+    const tradPbt = getItemQty('trad_pebete')
+    const vegCiabatta = getItemQty('veg_ciabatta')
+    const vegPbt = getItemQty('veg_pebete')
+    const veganCiabatta = getItemQty('vegan_ciabatta')
+    const veganPbt = getItemQty('vegan_pebete')
+    const sinTacc = getItemQty('sin_tacc')
+    const water = getItemQty('water')
+    
+    const totalFood = consolidado.total
 
-    Object.entries(consolidado.specials || {}).forEach(([categoryKey, list]: [string, any]) => {
+    // Specials extraction
+    const specialsLines: string[] = []
+    const specialsLabels: Record<string, string> = {
+      trad_ciabatta: 'Tradicional Ciabatta',
+      trad_pebete: 'Tradicional Pebete',
+      veg_ciabatta: 'Vegetariana Ciabatta',
+      veg_pebete: 'Vegetariana Pebete',
+      vegan_ciabatta: 'Vegana Ciabatta',
+      vegan_pebete: 'Vegana Pebete',
+      sin_tacc: 'Sin TACC'
+    }
+
+    Object.entries(consolidado.specials || {}).forEach(([catKey, list]: [string, any]) => {
       if (Array.isArray(list)) {
         list.forEach((s: any) => {
           const qty = Number(s.qty) || 1
-          const note = s.note || ''
-          if (note.trim() !== '') {
-            specialsLines.push(`* Especial ${note}: ${qty}`)
-            specialsTotalQty += qty
-            
-            // Subtract from the base category to avoid double-counting
-            if (categoryKey === 'traditional') trad = Math.max(0, trad - qty)
-            else if (categoryKey === 'vegetarian') veg = Math.max(0, veg - qty)
-            else if (categoryKey === 'vegana') vegan = Math.max(0, vegan - qty)
-            else if (categoryKey === 'sin_tacc') st = Math.max(0, st - qty)
+          const note = (s.note || '').trim()
+          if (note) {
+            const catName = specialsLabels[catKey] || 'Vianda'
+            specialsLines.push(`• ${qty > 0 ? `*${qty}x* ` : ''}${catName}: _"${note}"_`)
           }
         })
       }
     })
 
-    const totalSandwiches = trad + veg + vegan + st + specialsTotalQty
+    const lines: string[] = [
+      `👨‍🍳 *PLAN DE COCINA — ${formattedDate}*`,
+      `📍 *${artists}* ${venues ? `(${venues})` : ''}`,
+      ``,
+      `🥪 *TOTAL SÁNDWICHES: ${totalFood} un.*`,
+      `───────────────────`
+    ]
 
-    let text = `*Pedido cargado* - ${formattedDate} - ${artists} - ${venues}\n\n`
-    text += `*Total Sandwiches = ${totalSandwiches}*\n`
-    const appendBreakdown = (categoryKey: string, baseLabel: string, baseQty: number) => {
-      let section = `* ${baseLabel}: ${baseQty}\n`
-      const item = consolidado.items.find((i: any) => i.key === categoryKey)
-      const rBreakdown = item?.recipeBreakdown || []
-      if (rBreakdown.length > 0) {
-        rBreakdown.forEach((rb: any) => {
-          const comps = rb.companies?.length > 0 ? ` (${rb.companies.join(', ')})` : ''
-          section += `   ↳ ${rb.qty}x ${rb.recipeName}${comps}\n`
-        })
-      }
-      return section
-    }
+    if (tradCiabatta > 0) lines.push(`• *${tradCiabatta} un.* TRADICIONAL CIABATTA`)
+    if (tradPbt > 0) lines.push(`• *${tradPbt} un.* TRADICIONAL PEBETE 🚨 *(PAN PEBETE)*`)
+    if (vegCiabatta > 0) lines.push(`• *${vegCiabatta} un.* VEGETARIANA CIABATTA`)
+    if (vegPbt > 0) lines.push(`• *${vegPbt} un.* VEGETARIANA PEBETE 🚨 *(PAN PEBETE)*`)
+    if (veganCiabatta > 0) lines.push(`• *${veganCiabatta} un.* VEGANA CIABATTA`)
+    if (veganPbt > 0) lines.push(`• *${veganPbt} un.* VEGANA PEBETE 🚨 *(PAN PEBETE)*`)
+    if (sinTacc > 0) lines.push(`• *${sinTacc} un.* SIN TACC`)
 
-    text += appendBreakdown('traditional', 'Tradicional', trad)
+    lines.push(`───────────────────`)
+    lines.push(`💧 *AGUAS MINERALES: ${water} un.*`)
+
     if (specialsLines.length > 0) {
-      text += specialsLines.join('\n') + '\n'
+      lines.push(``)
+      lines.push(`⚠️ *Pedidos Especiales:*`)
+      lines.push(...specialsLines)
     }
-    text += appendBreakdown('vegetarian', 'Vegetariana', veg)
-    text += appendBreakdown('vegana', 'Vegana', vegan)
-    text += appendBreakdown('sin_tacc', 'Sin tacc', st)
-    text += `* Aguas: ${water}`
 
+    const text = lines.join('\n')
     navigator.clipboard.writeText(text)
     alert("Copiado al portapapeles para WhatsApp (Cocina)")
   }
@@ -502,14 +547,15 @@ export default function ProduccionPage() {
     if (!consolidado || !selectedDate) return
     
     const formattedDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-AR')
-    const artists = eventsForSelectedDate.map(e => e.show_name).join(' + ')
-    const venues = eventsForSelectedDate.map(e => e.venue_name || e.venue).join(' + ')
+    const artists = eventsForSelectedDate.map(e => e.show_name).filter(Boolean).join(' + ')
+    const venues = eventsForSelectedDate.map(e => e.venue_name || e.venue).filter(Boolean).join(' + ')
     
-    const trad = consolidado.items.find((i: any) => i.key === 'traditional')?.qty || 0
-    const veg = consolidado.items.find((i: any) => i.key === 'vegetarian')?.qty || 0
-    const vegan = consolidado.items.find((i: any) => i.key === 'vegana')?.qty || 0
-    const st = consolidado.items.find((i: any) => i.key === 'sin_tacc')?.qty || 0
-    const water = consolidado.items.find((i: any) => i.key === 'water')?.qty || 0
+    const getItemQty = (k: string) => consolidado.items.find((i: any) => i.key === k)?.qty || 0
+    const trad = getItemQty('trad_ciabatta') + getItemQty('trad_pebete')
+    const veg = getItemQty('veg_ciabatta') + getItemQty('veg_pebete')
+    const vegan = getItemQty('vegan_ciabatta') + getItemQty('vegan_pebete')
+    const st = getItemQty('sin_tacc')
+    const water = getItemQty('water')
     const totalFood = consolidado.total
 
     let text = `*Hoja de Ruta Fletero* - ${formattedDate}\n`
@@ -697,15 +743,16 @@ export default function ProduccionPage() {
             .stat-box { text-align: center; }
             .stat-label { font-size: 9px; font-weight: 900; color: #94a3b8; text-transform: uppercase; }
             .stat-value { font-size: 24px; font-weight: 900; }
-            .items-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 20px; }
+            .items-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 20px; }
             .item-card { border: 2px solid #0f172a; border-radius: 15px; padding: 15px; text-align: center; }
-            .item-label { font-size: 14px; font-weight: 900; color: #94a3b8; text-transform: uppercase; }
-            .item-qty { font-size: 56px; font-weight: 900; display: block; margin: 5px 0; line-height: 1; }
-            .special-box { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 10px; margin-top: 10px; text-align: left; }
-            .special-item { font-size: 12px; font-weight: 800; color: #92400e; margin-bottom: 2px; }
-            .total-banner { grid-column: span 2; background: #0f172a; color: white; padding: 20px; border-radius: 15px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; }
-            .total-label { font-size: 16px; font-weight: 900; text-transform: uppercase; color: #94a3b8; }
-            .total-value { font-size: 56px; font-weight: 900; line-height: 1; }
+            .item-card.pbt-card { border-color: #d97706; background-color: #fffbeb; }
+            .item-label { font-size: 11px; font-weight: 900; color: #64748b; text-transform: uppercase; }
+            .item-qty { font-size: 42px; font-weight: 900; display: block; margin: 4px 0; line-height: 1; }
+            .special-box { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 10px; padding: 8px; margin-top: 8px; text-align: left; }
+            .special-item { font-size: 11px; font-weight: 800; color: #92400e; margin-bottom: 2px; }
+            .total-banner { grid-column: 1 / -1; background: #0f172a; color: white; padding: 16px 20px; border-radius: 15px; display: flex; justify-content: space-between; align-items: center; margin-top: 15px; }
+            .total-label { font-size: 14px; font-weight: 900; text-transform: uppercase; color: #94a3b8; }
+            .total-value { font-size: 42px; font-weight: 900; line-height: 1; }
             .footer { margin-top: 20px; text-align: center; font-size: 9px; color: #94a3b8; font-style: italic; border-top: 1px solid #eee; padding-top: 10px; }
           </style>
         </head>
@@ -731,19 +778,9 @@ export default function ProduccionPage() {
 
           <div class="items-grid">
             ${consolidado.items.map((item:any) => `
-              <div class="item-card">
+              <div class="item-card ${item.isPbt && item.qty > 0 ? 'pbt-card' : ''}">
                 <span class="item-label">${item.label}</span>
-                <span class="item-qty">${item.qty}</span>
-                ${(item.recipeBreakdown || []).length > 0 ? `
-                  <div style="margin-top: 8px; border-top: 1px dashed #cbd5e1; padding-top: 6px; font-size: 11px; text-align: left;">
-                    ${item.recipeBreakdown.map((rb: any) => `
-                      <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
-                        <span style="font-weight: 700; color: #334155;">▸ ${rb.recipeName} <span style="font-weight: normal; color: #64748b; font-size: 9px;">(${rb.companies.join(', ')})</span></span>
-                        <strong style="color: #0f172a; font-weight: 900; margin-left: 6px;">${rb.qty}</strong>
-                      </div>
-                    `).join('')}
-                  </div>
-                ` : ''}
+                <span class="item-qty" style="${item.isPbt && item.qty > 0 ? 'color: #b45309;' : ''}">${item.qty}</span>
                 ${(consolidado.specials?.[item.key] || []).length > 0 ? `
                   <div class="special-box">
                     ${consolidado.specials[item.key].map((s:any) => `<div class="special-item">▸ ${s.qty > 0 ? s.qty + 'x ' : ''}"${s.note}"</div>`).join('')}
@@ -755,7 +792,7 @@ export default function ProduccionPage() {
             <div class="total-banner">
               <div>
                 <p class="total-label">Total Producción Comida</p>
-                <p style="margin:0; font-size:12px; color:#6366f1; font-weight:bold;">Suma consolidada de todas las empresas</p>
+                <p style="margin:0; font-size:11px; color:#a5b4fc; font-weight:bold;">Suma consolidada de todas las viandas</p>
               </div>
               <span class="total-value">${consolidado.total}</span>
             </div>
@@ -892,17 +929,6 @@ export default function ProduccionPage() {
                   ))}
                 </div>
 
-                {/* Companies */}
-                {consolidado.companies?.length > 0 && (
-                  <div className="flex flex-wrap justify-center gap-1.5 mt-3">
-                    {consolidado.companies.map((c: string) => (
-                      <span key={c} className="flex items-center gap-1 bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded-full text-xs font-bold border border-indigo-200">
-                        <Building2 size={11} /> {c}
-                      </span>
-                    ))}
-                  </div>
-                )}
-
                 {/* PAX Summary */}
                 <div className="flex justify-center gap-4 sm:gap-6 mt-4">
                   <div className="text-center">
@@ -918,63 +944,93 @@ export default function ProduccionPage() {
               </div>
 
               {/* Category Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 md:gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-5">
                 {consolidado.items.map((item: any) => {
                   const itemSpecials = consolidado.specials?.[item.key] || []
+                  const isZero = item.qty === 0
+                  const isPbt = !!item.isPbt
+                  
                   return (
-                    <div key={item.label} className="bg-white border-2 border-slate-900 rounded-3xl md:rounded-[3rem] p-6 sm:p-10 flex flex-col items-center justify-center text-center gap-1 sm:gap-2">
-                      <span className="text-sm sm:text-xl font-black text-slate-400 uppercase tracking-widest">{item.label}</span>
-                      <span className={`text-6xl sm:text-8xl md:text-9xl font-black tabular-nums tracking-tighter ${item.qty === 0 ? 'text-slate-200' : 'text-slate-900'}`}>
-                        {item.qty}
-                      </span>
-                      {item.recipeBreakdown && item.recipeBreakdown.length > 0 && (
-                        <div className="mt-3 w-full border-t border-slate-100 pt-3 flex flex-col gap-1.5 text-left">
-                          {item.recipeBreakdown.map((rb: any, rIdx: number) => (
-                            <div key={rIdx} className="flex justify-between items-center bg-slate-50 hover:bg-slate-100/80 px-3.5 py-2 rounded-2xl border border-slate-200/70 transition-colors">
-                              <div className="flex items-center gap-2 truncate mr-2">
-                                <span className="w-2 h-2 rounded-full bg-indigo-500 shrink-0"></span>
-                                <span className="font-extrabold text-slate-800 text-xs truncate">
-                                  {rb.recipeName}
-                                </span>
-                                {rb.companies?.length > 0 && (
-                                  <span className="text-[10px] text-slate-400 font-bold bg-white px-1.5 py-0.5 rounded-md border border-slate-200 shrink-0">
-                                    {rb.companies.join(', ')}
-                                  </span>
-                                )}
-                              </div>
-                              <span className="font-black text-slate-900 tabular-nums text-sm bg-white px-2.5 py-1 rounded-xl border border-slate-200/80 shadow-2xs shrink-0">
-                                {rb.qty} <span className="text-[10px] text-slate-400 font-bold">un.</span>
-                              </span>
-                            </div>
-                          ))}
+                    <div 
+                      key={item.key} 
+                      className={`rounded-3xl p-5 sm:p-6 flex flex-col items-center justify-between text-center transition-all ${
+                        isPbt && !isZero 
+                          ? 'bg-amber-50/50 border-2 border-amber-500 shadow-md ring-2 ring-amber-400/20' 
+                          : isZero
+                            ? 'bg-slate-50/70 border border-slate-200 opacity-60'
+                            : 'bg-white border-2 border-slate-900 shadow-xs'
+                      }`}
+                    >
+                      {/* Header Badge & Label */}
+                      <div className="flex flex-col items-center gap-1.5 w-full">
+                        <div className="flex items-center gap-1.5">
+                          {isPbt ? (
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+                              isZero ? 'bg-slate-200 text-slate-500' : 'bg-amber-500 text-white animate-pulse'
+                            }`}>
+                              🚨 Pan Pebete
+                            </span>
+                          ) : item.bread === 'CIABATTA' ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-slate-100 text-slate-600">
+                              🥖 Pan Ciabatta
+                            </span>
+                          ) : item.key === 'sin_tacc' ? (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-indigo-100 text-indigo-700">
+                              🌾 Sin TACC
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-sky-100 text-sky-700">
+                              💧 Bebida
+                            </span>
+                          )}
                         </div>
-                      )}
-                      {itemSpecials.length > 0 && (
-                        <div className="mt-3 w-full border-t-2 border-dashed border-slate-100 pt-3 flex flex-col gap-2">
+                        <span className="text-xs sm:text-sm font-black text-slate-600 uppercase tracking-wider leading-tight min-h-[32px] flex items-center justify-center">
+                          {item.label}
+                        </span>
+                      </div>
+
+                      {/* Big Quantity */}
+                      <div className="my-3 sm:my-4">
+                        <span className={`text-6xl sm:text-7xl font-black tabular-nums tracking-tighter ${
+                          isZero ? 'text-slate-200' : isPbt ? 'text-amber-600' : 'text-slate-900'
+                        }`}>
+                          {item.qty}
+                        </span>
+                        <span className="text-[11px] font-extrabold text-slate-400 block -mt-1 uppercase tracking-wider">unidades</span>
+                      </div>
+
+                      {/* Specials */}
+                      {itemSpecials.length > 0 ? (
+                        <div className="w-full border-t border-dashed border-amber-300 pt-2 flex flex-col gap-1 text-left">
                           {itemSpecials.map((s: any, i: number) => (
-                            <div key={i} className="flex justify-between items-center bg-amber-50 p-2.5 sm:p-3 rounded-2xl border border-amber-200">
-                              {s.qty > 0 && <span className="text-xl sm:text-3xl font-black text-amber-600">{s.qty}</span>}
-                              <span className={`${s.qty > 0 ? 'text-xs' : 'text-sm'} font-black text-amber-900 uppercase italic`}>"{s.note}"</span>
+                            <div key={i} className="bg-amber-100/90 px-2.5 py-1.5 rounded-xl border border-amber-300 text-amber-900 text-xs font-black flex items-center justify-between">
+                              {s.qty > 0 && <span className="text-amber-700 mr-1.5 font-black">{s.qty}x</span>}
+                              <span className="italic uppercase truncate">"{s.note}"</span>
                             </div>
                           ))}
                         </div>
+                      ) : (
+                        <div className="h-1" />
                       )}
                     </div>
                   )
                 })}
 
                 {/* Total */}
-                <div className="sm:col-span-2 bg-slate-900 text-white rounded-3xl md:rounded-[3rem] p-6 sm:p-12 flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-6">
+                <div className="col-span-1 sm:col-span-2 lg:col-span-4 bg-slate-900 text-white rounded-3xl md:rounded-[2.5rem] p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-xl">
                   <div className="flex items-center gap-4 sm:gap-6">
-                    <div className="p-4 sm:p-6 bg-white/10 rounded-full">
-                      <Calculator size={36} className="sm:w-16 sm:h-16" />
+                    <div className="p-3.5 sm:p-5 bg-white/10 rounded-2xl">
+                      <Calculator size={32} className="sm:w-12 sm:h-12 text-indigo-400" />
                     </div>
                     <div className="text-center sm:text-left">
-                      <h3 className="text-lg sm:text-2xl font-black uppercase tracking-widest text-slate-400">Total Producción Comida</h3>
-                      <p className="text-xs sm:text-sm font-bold text-indigo-400">Suma de Todas las Empresas del Evento</p>
+                      <h3 className="text-base sm:text-xl font-black uppercase tracking-widest text-slate-300">Total Producción Comida</h3>
+                      <p className="text-xs sm:text-sm font-semibold text-indigo-300">Suma consolidada de todas las viandas para el evento</p>
                     </div>
                   </div>
-                  <span className="text-6xl sm:text-8xl md:text-9xl font-black tracking-tighter">{consolidado.total}</span>
+                  <div className="text-center sm:text-right">
+                    <span className="text-6xl sm:text-7xl md:text-8xl font-black tracking-tighter tabular-nums text-white">{consolidado.total}</span>
+                    <span className="text-xs font-black uppercase tracking-wider text-slate-400 block -mt-1">sándwiches en total</span>
+                  </div>
                 </div>
               </div>
 
