@@ -27,9 +27,14 @@ export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: S
   const gmailPass = (process.env.EMAIL_PASS || process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "")
   const fromEmail = from || process.env.EMAIL_FROM || `Al Paso y Al Galope <${gmailUser}>`
   const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || gmailUser
-  const adminNotify = process.env.ADMIN_NOTIFY_EMAIL || gmailUser
+  const adminNotify = process.env.ADMIN_NOTIFY_EMAIL
   const toList = Array.isArray(to) ? to : [to]
-  const notifyBcc = bcc || (adminNotify && !toList.includes(adminNotify) ? [adminNotify] : [])
+  // Evitar auto-BCC a la misma cuenta de envío (alpaso.algalope@gmail.com):
+  // Gmail SMTP ya guarda automáticamente cada correo en la carpeta "Enviados".
+  // Mandar un BCC a sí mismo desde un servidor en la nube hace que los filtros de Google
+  // detecten un loop o sospechen suplantación interna, rebotando con error 69585.
+  const shouldBccAdmin = adminNotify && !toList.includes(adminNotify) && adminNotify.toLowerCase() !== gmailUser.toLowerCase()
+  const notifyBcc = bcc || (shouldBccAdmin ? [adminNotify] : [])
 
   if (!gmailPass) {
     console.error("[Email Error] No se encontró EMAIL_PASS ni SMTP_PASSWORD en las variables de entorno.")
