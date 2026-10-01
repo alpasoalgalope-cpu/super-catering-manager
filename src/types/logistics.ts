@@ -1,4 +1,4 @@
-﻿// Types for the Last-Mile Logistics, Coordinator Check-in, and Intelligent Dispatch module
+// Types for the Last-Mile Logistics, Coordinator Check-in, and Intelligent Dispatch module
 
 export type BusLogisticStatus = 'en_viaje' | 'estacionado' | 'entregado' | 'incidencia'
 
@@ -83,3 +83,46 @@ export interface DispatchLoadSheet {
   }
   stops: BusDeliveryItem[]
 }
+
+export type TransitModality = 'DESPACHO_PARALELO' | 'DEDICADA_SECUENCIAL_SERGIO'
+export type TransitTravelMode = 'DRIVE' | 'TWO_WHEELER'
+
+export interface TransitStop {
+  id: string
+  stop_order: number
+  company_name: string
+  coordinator_name: string
+  coordinator_phone: string
+  destination_name: string
+  destination_address: string
+  delivery_point: string
+  viandas_count: number
+  water_count: number
+  driver_name?: string
+  vehicle_info?: string
+  distance_meters?: number
+  duration_minutes?: number
+  exact_eta?: string // HH:MM
+  coordinator_range_start?: string // HH:MM
+  coordinator_range_end?: string // HH:MM
+  coordinator_range_formatted?: string // "20:00 a 20:30 hs"
+  departure_from_stop?: string // HH:MM (for sequential mode)
+  google_maps_url?: string
+}
+
+export interface EventTransitPlan {
+  id?: string
+  event_master_id: string
+  kitchen_address: string
+  kitchen_call_time: string // HH:MM
+  loading_time_minutes: number
+  kitchen_departure_time: string // HH:MM
+  modality: TransitModality
+  discharge_time_minutes: number
+  travel_mode: TransitTravelMode
+  stops_data: TransitStop[]
+  itinerary_notes?: string
+  created_at?: string
+  updated_at?: string
+}
+

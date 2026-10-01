@@ -56,10 +56,8 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
         const { createClient } = await import('@/lib/supabase/client')
         const sb = createClient()
         const { data: { user } } = await sb.auth.getUser()
-        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
-          setUserRole('cocina')
-        } else {
-          setUserRole(user?.app_metadata?.role || user?.user_metadata?.role || 'admin')
+        if (user) {
+          setUserRole('admin')
         }
       } catch (e) {
         console.error(e)
@@ -692,44 +690,28 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
     const currentStatus = store.is_active
     const newStatus = !currentStatus
 
-    let sendMode: 'test' | 'official' | 'none' = 'none'
+    let shouldSend = false
     if (currentStatus === true) {
       // Operator is turning store OFF (closing store)
-      const wantEmail = window.confirm(
-        "¿Deseas enviar el correo de 'Primer corte para producción' al cerrar esta tienda?\n\n" +
-        "• Aceptar: Seleccionar destinatario (Prueba personal o Graciela).\n" +
+      shouldSend = window.confirm(
+        "¿Deseas enviar el correo de 'Primer corte para producción' a tu casilla (fschottenfeld@gmail.com) al cerrar esta tienda?\n\n" +
+        "• Aceptar: Enviar a fschottenfeld@gmail.com.\n" +
         "• Cancelar: Cerrar la tienda SIN enviar correo."
       )
-
-      if (wantEmail) {
-        const isTest = window.confirm(
-          "¿Deseas que sea un envío de MODO PRUEBA únicamente a tu correo (fschottenfeld@gmail.com)?\n\n" +
-          "• Aceptar: MODO PRUEBA (SOLO a fschottenfeld@gmail.com, Graciela NO lo recibe).\n" +
-          "• Cancelar: Envío oficial a Graciela (graciel.ch@gmail.com) con copia a ti."
-        )
-        sendMode = isTest ? 'test' : 'official'
-      }
     }
 
     setLoadingAction(`toggle-${id}`)
     setStoresList(prev => prev.map(s => s.id === id ? { ...s, is_active: newStatus } : s))
     await toggleStoreActiveAction(id, newStatus)
 
-    if (sendMode !== 'none') {
+    if (shouldSend) {
       try {
-        const targetEmail = sendMode === 'test' ? 'fschottenfeld@gmail.com' : 'graciel.ch@gmail.com'
-        const ccEmail = sendMode === 'test' ? undefined : 'fschottenfeld@gmail.com'
         const res = await sendFirstCutProductionEmailAction({
           eventId: store.event_master_id,
-          targetEmail,
-          ccEmail
+          targetEmail: 'fschottenfeld@gmail.com'
         })
         if (res.success) {
-          if (sendMode === 'test') {
-            alert("¡Prueba enviada con éxito exclusivamente a tu casilla fschottenfeld@gmail.com!")
-          } else {
-            alert("¡Primer corte de producción enviado con éxito a graciel.ch@gmail.com (CC: fschottenfeld@gmail.com)!")
-          }
+          alert("¡Primer corte de producción enviado con éxito a tu casilla fschottenfeld@gmail.com!")
         } else {
           alert(`La tienda se desactivó, pero ocurrió un problema al enviar el correo: ${res.error || 'Error desconocido'}`)
         }
@@ -744,38 +726,19 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
 
   const handleSendFirstCutManual = async (store: any) => {
     const showTitle = store.events_master?.show_name || store.title
-    const isTest = window.confirm(
-      `¿Deseas enviar este 1° Corte en MODO PRUEBA únicamente a tu correo (fschottenfeld@gmail.com)?\n\n` +
-      `• Aceptar: MODO PRUEBA (solo a fschottenfeld@gmail.com, Graciela NO lo recibe).\n` +
-      `• Cancelar: Pasar a confirmación de envío oficial a Graciela.`
+    const confirmSend = window.confirm(
+      `¿Deseas enviar el 1° Corte de Producción a tu casilla (fschottenfeld@gmail.com)?\n\nShow: ${showTitle}`
     )
-
-    let targetEmail = "graciel.ch@gmail.com"
-    let ccEmail: string | undefined = "fschottenfeld@gmail.com"
-
-    if (isTest) {
-      targetEmail = "fschottenfeld@gmail.com"
-      ccEmail = undefined
-    } else {
-      const sendOfficial = window.confirm(
-        `¿Deseas enviar el 1° Corte OFICIAL a Graciela (graciel.ch@gmail.com) con copia a tu correo?\n\nShow: ${showTitle}`
-      )
-      if (!sendOfficial) return
-    }
+    if (!confirmSend) return
 
     setLoadingAction(`email-${store.id}`)
     try {
       const res = await sendFirstCutProductionEmailAction({
         eventId: store.event_master_id,
-        targetEmail,
-        ccEmail
+        targetEmail: "fschottenfeld@gmail.com"
       })
       if (res.success) {
-        if (isTest) {
-          alert("¡Prueba enviada con éxito! Revisa tu casilla fschottenfeld@gmail.com")
-        } else {
-          alert("¡Primer corte de producción enviado con éxito a graciel.ch@gmail.com (CC: fschottenfeld@gmail.com)!")
-        }
+        alert("¡1° Corte de producción enviado con éxito a tu casilla fschottenfeld@gmail.com!")
       } else {
         alert(`Error al enviar el correo: ${res.error || 'Error desconocido'}`)
       }
@@ -1273,7 +1236,7 @@ export default function OnlineSalesDashboard({ initialStores, initialOrders, ini
                   onClick={() => handleSendFirstCutManual(store)}
                   disabled={loadingAction === `email-${store.id}`}
                   className="w-full py-2 px-2.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/80 rounded-xl font-black text-xs uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-2xs cursor-pointer"
-                  title="Enviar manualmente el 1° corte de producción por email a Graciela (graciel.ch@gmail.com)"
+                  title="Enviar manualmente el 1° corte de producción por email a tu casilla (fschottenfeld@gmail.com)"
                 >
                   {loadingAction === `email-${store.id}` ? (
                     <Loader2 size={13} className="animate-spin text-indigo-600" />

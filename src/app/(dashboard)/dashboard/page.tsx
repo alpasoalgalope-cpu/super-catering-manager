@@ -228,17 +228,7 @@ export default function DashboardPage() {
      async function checkRole() {
        const { data: { user } } = await supabase.auth.getUser()
        if (user) {
-         if (user.email === 'alpaso.algalope@gmail.com' || user.email === 'cocina@supercatering.com') {
-           setRole('cocina')
-         } else {
-           const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-           if (profile?.role) {
-             setRole(profile.role)
-           } else {
-             const roleFromMeta = user.app_metadata?.role || user.user_metadata?.role || 'admin'
-             setRole(roleFromMeta)
-           }
-         }
+         setRole('admin')
        }
      }
      checkRole()
@@ -644,38 +634,19 @@ export default function DashboardPage() {
   }
 
   const handleSendFirstCut = async (show: any) => {
-    const isTest = window.confirm(
-      `¿Deseas enviar este 1° Corte en MODO PRUEBA únicamente a tu correo (fschottenfeld@gmail.com)?\n\n` +
-      `• Aceptar: MODO PRUEBA (solo a fschottenfeld@gmail.com, Graciela NO lo recibe).\n` +
-      `• Cancelar: Pasar a confirmación de envío oficial a Graciela.`
+    const confirmSend = window.confirm(
+      `¿Deseas enviar el 1° Corte de Producción a tu casilla (fschottenfeld@gmail.com)?\n\nShow: ${show.show}\nFecha: ${show.date}`
     )
-
-    let targetEmail = "graciel.ch@gmail.com"
-    let ccEmail: string | undefined = "fschottenfeld@gmail.com"
-
-    if (isTest) {
-      targetEmail = "fschottenfeld@gmail.com"
-      ccEmail = undefined
-    } else {
-      const sendOfficial = window.confirm(
-        `¿Deseas enviar el 1° Corte OFICIAL a Graciela (graciel.ch@gmail.com) con copia a tu correo?\n\nShow: ${show.show}\nFecha: ${show.date}`
-      )
-      if (!sendOfficial) return
-    }
+    if (!confirmSend) return
 
     setSendingFirstCutId(show.id)
     try {
       const res = await sendFirstCutProductionEmailAction({
         eventId: show.id,
-        targetEmail,
-        ccEmail
+        targetEmail: "fschottenfeld@gmail.com"
       })
       if (res.success) {
-        if (isTest) {
-          alert(`¡Prueba enviada con éxito para ${show.show}! Revisa tu casilla fschottenfeld@gmail.com`)
-        } else {
-          alert(`¡Primer corte de producción enviado con éxito para ${show.show}!\nDestinatario: graciel.ch@gmail.com\nCC: fschottenfeld@gmail.com`)
-        }
+        alert(`¡1° corte de producción enviado con éxito para ${show.show}!\nDestinatario: fschottenfeld@gmail.com`)
       } else {
         alert(`Error al enviar el correo: ${res.error || 'Error desconocido'}`)
       }
@@ -732,7 +703,8 @@ export default function DashboardPage() {
     }
 
     let grandTotalViandas = 0
-    let totalTrad = 0
+    let totalTradCiabatta = 0
+    let totalTradPbt = 0
     let totalVeg = 0
     let totalSintacc = 0
     let totalWater = 0
@@ -757,7 +729,8 @@ export default function DashboardPage() {
       const dateName = evDate.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long' }).toUpperCase()
 
       let dayTotalViandas = 0
-      let dayTrad = 0
+      let dayTradCiabatta = 0
+      let dayTradPbt = 0
       let dayVeg = 0
       let daySintacc = 0
       let dayWater = 0
@@ -766,35 +739,72 @@ export default function DashboardPage() {
         const totalViandas = Math.max(show.projected || 0, show.sold || 0)
         if (totalViandas === 0) return
 
-        const trad = Math.round(totalViandas * 0.90)
-        const veg = Math.round(totalViandas * 0.05)
-        const sintacc = totalViandas - trad - veg
-
+        let showTradCiabatta = 0
+        let showTradPbt = 0
+        let showVeg = 0
+        let showSintacc = 0
         let showWater = 0
+
         if (show.projections && show.projections.length > 0) {
-          show.projections.forEach((p: any) => {
+          const totalProjSum = show.projections.reduce((sum: number, p: any) => sum + (p.adjusted || p.pax || 0), 0)
+          let allocatedViandas = 0
+
+          show.projections.forEach((p: any, idx: number) => {
             const compClean = (p.company || '').toLowerCase().trim()
+            const isPbt = compClean.includes('terco') || compClean.includes('pbt') || compClean.includes('pebete')
             const noWaterCompanies = ['circus', 'terco', 'terco tour', 'circus tours']
             const hasNoWater = noWaterCompanies.some(nw => compClean.includes(nw))
+
+            let compViandas = 0
+            if (idx === show.projections.length - 1) {
+              compViandas = totalViandas - allocatedViandas
+            } else {
+              compViandas = totalProjSum > 0 
+                ? Math.round(totalViandas * ((p.adjusted || p.pax || 0) / totalProjSum))
+                : Math.round(totalViandas / show.projections.length)
+              allocatedViandas += compViandas
+            }
+
+            const compTrad = Math.round(compViandas * 0.90)
+            const compVeg = Math.round(compViandas * 0.05)
+            const compSintacc = compViandas - compTrad - compVeg
+
+            if (isPbt) {
+              showTradPbt += compTrad
+            } else {
+              showTradCiabatta += compTrad
+            }
+            showVeg += compVeg
+            showSintacc += compSintacc
+
             if (!hasNoWater) {
-              showWater += (p.adjusted || 0)
+              showWater += compViandas
             }
           })
         } else {
+          const trad = Math.round(totalViandas * 0.90)
+          const veg = Math.round(totalViandas * 0.05)
+          const sintacc = totalViandas - trad - veg
+
+          showTradCiabatta = trad
+          showVeg = veg
+          showSintacc = sintacc
           showWater = totalViandas
         }
 
         dayTotalViandas += totalViandas
-        dayTrad += trad
-        dayVeg += veg
-        daySintacc += sintacc
+        dayTradCiabatta += showTradCiabatta
+        dayTradPbt += showTradPbt
+        dayVeg += showVeg
+        daySintacc += showSintacc
         dayWater += showWater
       })
 
       if (dayTotalViandas === 0) return
 
       grandTotalViandas += dayTotalViandas
-      totalTrad += dayTrad
+      totalTradCiabatta += dayTradCiabatta
+      totalTradPbt += dayTradPbt
       totalVeg += dayVeg
       totalSintacc += daySintacc
       totalWater += dayWater
@@ -808,7 +818,14 @@ export default function DashboardPage() {
         text += `🎤 *Shows del día:* ${showsList}\n`
       }
       text += `🥪 *Total Viandas:* ${dayTotalViandas} u.\n`
-      text += `  • 🥖 Tradicional: ${dayTrad} u.\n`
+      if (dayTradPbt > 0 && dayTradCiabatta > 0) {
+        text += `  • 🥖 Tradicional (Ciabatta): ${dayTradCiabatta} u.\n`
+        text += `  • 🥯 Pebete: ${dayTradPbt} u.\n`
+      } else if (dayTradPbt > 0) {
+        text += `  • 🥯 Pebete: ${dayTradPbt} u.\n`
+      } else {
+        text += `  • 🥖 Tradicional: ${dayTradCiabatta} u.\n`
+      }
       text += `  • 🥑 Vegetariano: ${dayVeg} u.\n`
       text += `  • 🌾 Sin TACC: ${daySintacc} u.\n`
       text += `  • 💧 Aguas 500ml: ${dayWater} u.\n\n`
@@ -816,7 +833,10 @@ export default function DashboardPage() {
 
     text += `━━━━━━━━━━━━━━━━━━━━\n`
     text += `📊 *CONSOLIDADO SEMANAL PARA PROVEEDORES Y PANADERÍA*\n`
-    text += `🥖 Total Pan Tradicional (Ciabatta): ${totalTrad} u.\n`
+    text += `🥖 Total Pan Ciabatta: ${totalTradCiabatta} u.\n`
+    if (totalTradPbt > 0) {
+      text += `🥯 Total Pan Pebete: ${totalTradPbt} u.\n`
+    }
     text += `🥑 Total Pan Vegetariano: ${totalVeg} u.\n`
     text += `🌾 Total Pan Árabe Sin TACC: ${totalSintacc} u.\n`
     text += `🥪 *TOTAL VIANDAS SEMANA:* ${grandTotalViandas} u.\n`
@@ -1365,15 +1385,23 @@ function EffectivenessCard({ show, role, onOpenPlan, onSendFirstCut, sendingFirs
   }
   const cls = statusColors[show.status?.toLowerCase()] || 'bg-slate-50 text-slate-600'
 
-  const buildWhatsAppMessage = (coordUrl: string, storeUrl: string, coordinatorName?: string) => {
+  const buildWhatsAppMessage = (coordUrl: string, storeUrl: string, coordinatorName?: string, companyName?: string) => {
     const nameFirst = coordinatorName?.trim() ? coordinatorName.trim().split(' ')[0] : ''
     const greeting = nameFirst ? `Hola ${nameFirst}! Como estás?` : `Hola! Como estás?`
 
-    return `${greeting}\nTe dejo para que tengas a mano el link de gestión para el día de hoy. Acá vas a encontrar el detalle de pasajeros que van pidiendo, y podés además declarar la ubicación una vez que estacionan: ${coordUrl}\n\nAdemás, para que puedas copiar y pegar, te dejo la propuesta armada!\n\n*🥪 ¡Cená en el micro a la vuelta del show!*\n\nPara que no pierdas tiempo buscando comida a la salida ni hagas filas eternas, ya podés reservar tu vianda fresca para el regreso. Te subís al micro y ya tenés tu cena lista.\n\n*Elegí tu combo:*\n\n🥖 Tradicional: Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.\n🥑 Vegetariano: Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.\n🌾 Sin TACC: Pan árabe de jamón y queso (envasado al vacío certificado) + Agua mineral 500ml.\n\n*💳 Precios:*\nMenú Tradicional / Vegetariano: $12.000\nMenú Sin TACC: $15.000 (Pagás directo con Mercado Pago: tarjetas, débito o dinero en cuenta)\n⚠️ Cupos limitados por viaje. Los pedidos se reciben hasta las 12:30 hs.\n\n👉 Hacé tu reserva online acá: ${storeUrl}`
+    const compClean = (companyName || '').toLowerCase()
+    const isExcluded = compClean.includes('terco') || compClean.includes('circus') || compClean.includes('proxima') || compClean.includes('rock') || compClean.includes('valbus')
+    const isRV = !isExcluded && (compClean.includes('rvtraslados') || compClean.includes('rv traslados') || compClean === 'rv' || compClean.startsWith('rv'))
+
+    const sinTaccLine = isRV
+      ? '🌾 Sin TACC: Sándwich individual certificado libre de gluten (envasado en origen, formato estándar por certificación) + Agua mineral 500ml.'
+      : '🌾 Sin TACC: Pan árabe de jamón y queso (envasado al vacío certificado) + Agua mineral 500ml.'
+
+    return `${greeting}\nTe dejo para que tengas a mano el link de gestión para el día de hoy. Acá vas a encontrar el detalle de pasajeros que van pidiendo, y podés además declarar la ubicación una vez que estacionan: ${coordUrl}\n\nAdemás, para que puedas copiar y pegar, te dejo la propuesta armada!\n\n*🥪 ¡Cená en el micro a la vuelta del show!*\n\nPara que no pierdas tiempo buscando comida a la salida ni hagas filas eternas, ya podés reservar tu vianda fresca para el regreso. Te subís al micro y ya tenés tu cena lista.\n\n*Elegí tu combo:*\n\n🥖 Tradicional: Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.\n🥑 Vegetariano: Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.\n${sinTaccLine}\n\n*💳 Precios:*\nMenú Tradicional / Vegetariano: $12.000\nMenú Sin TACC: $15.000 (Pagás directo con Mercado Pago: tarjetas, débito o dinero en cuenta)\n⚠️ Cupos limitados por viaje. Los pedidos se reciben hasta las 12:30 hs.\n\n👉 Hacé tu reserva online acá: ${storeUrl}`
   }
 
-  const handleCopyMessagePack = (coordUrl: string, storeUrl: string, key: string, coordinatorName?: string) => {
-    const text = buildWhatsAppMessage(coordUrl, storeUrl, coordinatorName)
+  const handleCopyMessagePack = (coordUrl: string, storeUrl: string, key: string, coordinatorName?: string, companyName?: string) => {
+    const text = buildWhatsAppMessage(coordUrl, storeUrl, coordinatorName, companyName)
     navigator.clipboard.writeText(text)
     setCopiedKey(key)
     setTimeout(() => setCopiedKey(null), 2500)
@@ -1526,7 +1554,7 @@ function EffectivenessCard({ show, role, onOpenPlan, onSendFirstCut, sendingFirs
                     <div className="flex items-center gap-1.5">
                       <button
                         type="button"
-                        onClick={() => handleCopyMessagePack(coordUrl, storeUrl, `pack-${p.company}`, coordName)}
+                        onClick={() => handleCopyMessagePack(coordUrl, storeUrl, `pack-${p.company}`, coordName, p.company)}
                         className={`flex-1 py-2 px-3 rounded-xl text-[10px] font-black uppercase tracking-wider flex items-center justify-center gap-1.5 transition shadow-xs cursor-pointer active:scale-95 ${
                           isPackCopied
                             ? 'bg-emerald-600 text-white'
@@ -1586,7 +1614,7 @@ function EffectivenessCard({ show, role, onOpenPlan, onSendFirstCut, sendingFirs
             onClick={() => onSendFirstCut(show)}
             disabled={sendingFirstCutId === show.id}
             className="w-full text-center text-[9px] font-black bg-indigo-50 hover:bg-indigo-100 text-indigo-700 py-2 rounded-xl uppercase tracking-wider transition-all border border-indigo-200/80 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
-            title="Enviar 1° Corte de Producción por email a Graciela (graciel.ch@gmail.com)"
+            title="Enviar 1° Corte de Producción por email a tu casilla (fschottenfeld@gmail.com)"
           >
             {sendingFirstCutId === show.id ? (
               <Loader2 size={12} className="animate-spin text-indigo-600" />

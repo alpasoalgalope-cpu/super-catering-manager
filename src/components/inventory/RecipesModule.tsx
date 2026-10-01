@@ -63,10 +63,8 @@ export default function RecipesModule({ initialRubros, initialRecetas, productos
         const { createClient } = await import('@/lib/supabase/client')
         const sb = createClient()
         const { data: { user } } = await sb.auth.getUser()
-        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
-          setUserRole('cocina')
-        } else {
-          setUserRole(user?.app_metadata?.role || user?.user_metadata?.role || 'admin')
+        if (user) {
+          setUserRole('admin')
         }
       } catch (e) {
         console.error(e)

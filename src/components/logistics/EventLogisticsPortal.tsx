@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import Link from 'next/link'
 import { updateBusStatusAction } from '@/app/actions/logistics'
+import LogisticTransitPlanner from '@/components/logistics/LogisticTransitPlanner'
 
 interface Props {
   event: any
@@ -250,7 +251,12 @@ export default function EventLogisticsPortal({ event, summaryData, initialBuses 
           </div>
         </div>
 
-        {/* 3. Centro de Mensajes Concentrados para WhatsApp */}
+        {/* 3. Planificación y Estimación de Tránsito Logístico (Google Maps) */}
+        {event?.id && (
+          <LogisticTransitPlanner eventId={event.id} />
+        )}
+
+        {/* 4. Centro de Mensajes Concentrados para WhatsApp */}
         <div className="bg-white border border-slate-200/90 rounded-[2.5rem] p-6 space-y-4 shadow-xl shadow-slate-200/60">
           <span className="text-[10px] font-black uppercase tracking-wider text-emerald-600 block">
             Comunicaciones Rápidas

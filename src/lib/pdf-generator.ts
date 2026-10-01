@@ -13,6 +13,53 @@ interface ExportPdfOptions {
   onlineOrders: any[];
 }
 
+/**
+ * Convierte un horario inicial de descarga (ej: "22:00")
+ * en un rango estimado de 1 hora hacia adelante (ej: "22:00 a 23:00 hs")
+ */
+export function formatDeliveryTimeRange(timeStr?: string): string {
+  if (!timeStr || !timeStr.trim()) {
+    return '22:00 a 23:00 hs';
+  }
+  const clean = timeStr.trim();
+
+  // Si ya tiene formato de rango explícito
+  if (clean.includes(' a ') || clean.includes(' - ')) {
+    return clean.endsWith('hs') ? clean : `${clean} hs`;
+  }
+
+  let hours = 22;
+  let minutes = 0;
+
+  const match12 = clean.match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM)?$/i);
+  if (match12) {
+    hours = parseInt(match12[1], 10);
+    minutes = parseInt(match12[2], 10);
+    const ampm = match12[3]?.toUpperCase();
+    if (ampm === 'PM' && hours < 12) hours += 12;
+    if (ampm === 'AM' && hours === 12) hours = 0;
+  } else {
+    const parts = clean.split(':');
+    if (parts.length >= 2) {
+      const parsedH = parseInt(parts[0], 10);
+      const parsedM = parseInt(parts[1], 10);
+      if (!isNaN(parsedH) && !isNaN(parsedM)) {
+        hours = parsedH;
+        minutes = parsedM;
+      }
+    }
+  }
+
+  const startHStr = String(hours % 24).padStart(2, '0');
+  const startMStr = String(minutes % 60).padStart(2, '0');
+
+  const endHours = (hours + 1) % 24;
+  const endHStr = String(endHours).padStart(2, '0');
+  const endMStr = startMStr;
+
+  return `${startHStr}:${startMStr} a ${endHStr}:${endMStr} hs`;
+}
+
 export function generateAndDownloadSalesPdf({
   mode,
   selectedEvent,
@@ -69,6 +116,7 @@ export function generateAndDownloadSalesPdf({
 
     const isCircus = selectedCompany?.toLowerCase().includes('circus');
     const isTerco = selectedCompany?.toLowerCase().includes('terco');
+    const isPbt = isTerco || selectedCompany?.toLowerCase().includes('pbt') || selectedCompany?.toLowerCase().includes('pebete');
     const isNoWater = isCircus || isTerco || liquidsTotal === 0;
 
     // --- RENDER REMITO PAGE ---
@@ -128,10 +176,10 @@ export function generateAndDownloadSalesPdf({
 
       doc.setFontSize(7);
       doc.setTextColor(100, 116, 139);
-      doc.text('FECHA Y HORARIO DE DESCARGA', 105, 47);
-      doc.setFontSize(10);
+      doc.text('FECHA Y HORARIO DE DESCARGA (RANGO ESTIMADO)', 105, 47);
+      doc.setFontSize(9.5);
       doc.setTextColor(15, 23, 42);
-      doc.text(`${eventDateStr} — ${deliveryTime || '22:00'} hs`, 105, 52);
+      doc.text(`${eventDateStr} — ${formatDeliveryTimeRange(deliveryTime)}`, 105, 52);
 
       doc.setFontSize(7);
       doc.setTextColor(100, 116, 139);
@@ -145,17 +193,23 @@ export function generateAndDownloadSalesPdf({
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(10);
       doc.setTextColor(0, 0, 0);
-      doc.text(isCircus ? '1. DETALLE DE SÁNDWICHES' : '1. DETALLE DE VIANDAS (SÓLIDOS)', 14, 76);
+      doc.text(
+        isPbt 
+          ? '1. DETALLE DE VIANDAS — PEBETES (PBT)' 
+          : (isCircus ? '1. DETALLE DE SÁNDWICHES' : '1. DETALLE DE VIANDAS (SÓLIDOS)'), 
+        14, 
+        76
+      );
 
       autoTable(doc, {
         startY: 79,
-        head: [[isCircus ? 'TIPO DE SÁNDWICH' : 'TIPO DE MENÚ', 'CANTIDAD']],
+        head: [[isPbt ? 'TIPO DE PEBETE (PBT)' : (isCircus ? 'TIPO DE SÁNDWICH' : 'TIPO DE MENÚ'), 'CANTIDAD']],
         body: [
-          [isCircus ? 'Sándwich Tradicional' : 'Menú Tradicional', String(u.traditional || 0)],
-          [isCircus ? 'Sándwich Vegetariano' : 'Menú Vegetariano', String(u.vegetarian || 0)],
-          [isCircus ? 'Sándwich Vegano' : 'Menú Vegano', String(u.vegana || 0)],
-          [isCircus ? 'Sándwich Sin TACC' : 'Menú Sin TACC', String(u.sin_tacc || 0)],
-          [isCircus ? 'TOTAL SÁNDWICHES' : 'TOTAL VIANDAS', String(solidsTotal)]
+          [isPbt ? 'Pebete Tradicional Jamón y Queso (PBT)' : (isCircus ? 'Sándwich Tradicional' : 'Menú Tradicional'), String(u.traditional || 0)],
+          [isPbt ? 'Pebete Vegetariano (PBT)' : (isCircus ? 'Sándwich Vegetariano' : 'Menú Vegetariano'), String(u.vegetarian || 0)],
+          [isPbt ? 'Pebete Vegano (PBT)' : (isCircus ? 'Sándwich Vegano' : 'Menú Vegano'), String(u.vegana || 0)],
+          ['Menú Sin TACC (Apto Celíaco)', String(u.sin_tacc || 0)],
+          [isPbt ? 'TOTAL PEBETES (PBT)' : (isCircus ? 'TOTAL SÁNDWICHES' : 'TOTAL VIANDAS'), String(solidsTotal)]
         ],
         theme: 'grid',
         headStyles: { fillColor: primaryColor, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 9, cellPadding: 3 },
@@ -278,11 +332,11 @@ export function generateAndDownloadSalesPdf({
 
       const tableRows = unitOrders.map((ord: any, ordIdx: number) => {
         const items = [];
-        if (ord.qty_tradicional > 0) items.push(`${ord.qty_tradicional}x ${isCircus ? 'Sándwich Trad' : 'Trad'}`);
-        if (ord.qty_vegetariano > 0) items.push(`${ord.qty_vegetariano}x ${isCircus ? 'Sándwich Veg' : 'Veg'}`);
-        if (ord.qty_sintacc > 0) items.push(`${ord.qty_sintacc}x ${isCircus ? 'Sándwich Sin TACC' : 'Sin TACC'}`);
-        if (ord.qty_vegano > 0) items.push(`${ord.qty_vegano}x ${isCircus ? 'Sándwich Vegano' : 'Vegano'}`);
-        const comboText = items.join(', ') || (isCircus ? '1x Sándwich' : '1x Vianda');
+        if (ord.qty_tradicional > 0) items.push(`${ord.qty_tradicional}x ${isPbt ? 'Pebete Trad' : (isCircus ? 'Sándwich Trad' : 'Trad')}`);
+        if (ord.qty_vegetariano > 0) items.push(`${ord.qty_vegetariano}x ${isPbt ? 'Pebete Veg' : (isCircus ? 'Sándwich Veg' : 'Veg')}`);
+        if (ord.qty_sintacc > 0) items.push(`${ord.qty_sintacc}x Sin TACC`);
+        if (ord.qty_vegano > 0) items.push(`${ord.qty_vegano}x ${isPbt ? 'Pebete Vegano' : (isCircus ? 'Sándwich Vegano' : 'Vegano')}`);
+        const comboText = items.join(', ') || (isPbt ? '1x Pebete (PBT)' : (isCircus ? '1x Sándwich' : '1x Vianda'));
         const name = (ord.online_customers?.full_name || ord.full_name || 'PASAJERO ONLINE').toUpperCase();
         const phone = ord.online_customers?.phone || ord.phone || 'S/D';
 
@@ -297,7 +351,7 @@ export function generateAndDownloadSalesPdf({
 
       autoTable(doc, {
         startY: 51,
-        head: [['#', 'NOMBRE Y APELLIDO', 'TELÉFONO', isCircus ? 'DETALLE DE SÁNDWICHES' : 'DETALLE DE COMBOS', 'ENTREGADO']],
+        head: [['#', 'NOMBRE Y APELLIDO', 'TELÉFONO', isPbt ? 'DETALLE DE PEBETES (PBT)' : (isCircus ? 'DETALLE DE SÁNDWICHES' : 'DETALLE DE COMBOS'), 'ENTREGADO']],
         body: tableRows.length > 0 ? tableRows : [['-', 'SIN PASAJEROS REGISTRADOS', '-', '-', '-']],
         theme: 'grid',
         headStyles: { fillColor: accentColor, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8, cellPadding: 2.5 },

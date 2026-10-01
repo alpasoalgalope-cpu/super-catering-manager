@@ -4,3 +4,9 @@
 
 [build.environment]
   NODE_OPTIONS = "--max-old-space-size=4096"
+
+[functions]
+  directory = "netlify/functions"
+
+[functions."daily-production-cut"]
+  schedule = "15 2 * * *"

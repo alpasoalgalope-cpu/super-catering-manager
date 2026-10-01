@@ -139,18 +139,7 @@ export default function Sidebar() {
     async function loadRole() {
       const { data: { user } } = await supabase.auth.getUser()
       if (user) {
-        // Bypass temporal para asegurar acceso admin
-        if (user.email === 'fschottenfeld@gmail.com') {
-          setRole('admin')
-          return
-        }
-        // Bypass temporal para el usuario de cocina
-        if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') {
-          setRole('cocina')
-          return
-        }
-        const roleFromMeta = user.app_metadata?.role || user.user_metadata?.role
-        setRole(roleFromMeta || 'cocina')
+        setRole('admin')
       }
     }
     loadRole()

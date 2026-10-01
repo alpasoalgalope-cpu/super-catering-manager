@@ -1,5 +1,5 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js"
-import nodemailer from "nodemailer"
+import { Resend } from "resend"
 
 function getEmailSupabaseClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
@@ -22,61 +22,66 @@ interface SendEmailParams {
   bcc?: string[]
 }
 
-export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: SendEmailParams) {
-  const gmailUser = process.env.EMAIL_USER || process.env.SMTP_USER || process.env.GMAIL_USER || "alpaso.algalope@gmail.com"
-  const gmailPass = (process.env.EMAIL_PASS || process.env.SMTP_PASSWORD || process.env.GMAIL_APP_PASSWORD || "").replace(/\s+/g, "")
-  const fromEmail = from || process.env.EMAIL_FROM || `Al Paso y Al Galope <${gmailUser}>`
-  const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || gmailUser
-  const adminNotify = process.env.ADMIN_NOTIFY_EMAIL
-  const toList = Array.isArray(to) ? to : [to]
-  // Evitar auto-BCC a la misma cuenta de envío (alpaso.algalope@gmail.com):
-  // Gmail SMTP ya guarda automáticamente cada correo en la carpeta "Enviados".
-  // Mandar un BCC a sí mismo desde un servidor en la nube hace que los filtros de Google
-  // detecten un loop o sospechen suplantación interna, rebotando con error 69585.
-  const shouldBccAdmin = adminNotify && !toList.includes(adminNotify) && adminNotify.toLowerCase() !== gmailUser.toLowerCase()
-  const notifyBcc = bcc || (shouldBccAdmin ? [adminNotify] : [])
+export function resolveSender(fromArg?: string): string {
+  const verifiedEmail = "ventas@viandas-regreso.com.ar"
+  const defaultDisplayName = "Viandas Regreso"
+  const defaultSender = `${defaultDisplayName} <${verifiedEmail}>`
 
-  if (!gmailPass) {
-    console.error("[Email Error] No se encontró EMAIL_PASS ni SMTP_PASSWORD en las variables de entorno.")
-    return { success: false, error: "Credenciales de correo no configuradas (EMAIL_PASS / SMTP_PASSWORD)" }
+  const envFrom = (process.env.EMAIL_FROM || "").trim().replace(/^['"]|['"]$/g, "")
+  let chosen = fromArg && !fromArg.includes("alpaso.algalope@gmail.com") ? fromArg : (envFrom || defaultSender)
+
+  if (!chosen.includes("@")) {
+    const displayName = chosen || defaultDisplayName
+    chosen = `${displayName} <${verifiedEmail}>`
+  } else if (!chosen.includes("<")) {
+    chosen = `${defaultDisplayName} <${chosen}>`
   }
 
-  try {
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      host: "smtp.gmail.com",
-      port: 465,
-      secure: true,
-      auth: {
-        user: gmailUser,
-        pass: gmailPass
-      },
-      connectionTimeout: 5000, // Timeout de 5s para establecer conexión
-      greetingTimeout: 5000,   // Timeout de 5s para saludo SMTP
-      socketTimeout: 5000       // Timeout de 5s de inactividad de socket
-    })
+  if (chosen.includes("@gmail.com")) {
+    chosen = defaultSender
+  }
 
-    const mailOptions: any = {
+  return chosen
+}
+
+export async function sendEmail({ to, subject, html, replyTo, from, cc, bcc }: SendEmailParams) {
+  const apiKey = (process.env.RESEND_API_KEY || "").trim()
+
+  if (!apiKey) {
+    console.error("[Email Error] No se encontró RESEND_API_KEY en las variables de entorno.")
+    return { success: false, error: "Credenciales de Resend no configuradas (RESEND_API_KEY)" }
+  }
+
+  const fromEmail = resolveSender(from)
+  const replyToEmail = replyTo || process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "alpaso.algalope@gmail.com"
+  const toList = Array.isArray(to) ? to : [to]
+
+  const cleanCc = cc && cc.length > 0 ? cc : undefined
+  const cleanBcc = bcc && bcc.length > 0 ? bcc : undefined
+
+  try {
+    const resend = new Resend(apiKey)
+
+    const { data, error } = await resend.emails.send({
       from: fromEmail,
       to: toList,
       subject,
       html,
-      replyTo: replyToEmail
+      replyTo: replyToEmail,
+      cc: cleanCc,
+      bcc: cleanBcc
+    })
+
+    if (error) {
+      console.error("[Resend API Error]", error)
+      return { success: false, error: error.message || "Error al enviar correo vía Resend" }
     }
 
-    if (cc && cc.length > 0) {
-      mailOptions.cc = cc
-    }
-    if (notifyBcc && notifyBcc.length > 0) {
-      mailOptions.bcc = notifyBcc
-    }
-
-    const info = await transporter.sendMail(mailOptions)
-    console.log(`[Gmail Success] Email enviado a ${toList.join(', ')} (ID: ${info.messageId})`)
-    return { success: true, provider: "gmail", id: info.messageId }
-  } catch (gmailErr: any) {
-    console.error("[Gmail Error]", gmailErr)
-    return { success: false, error: gmailErr?.message || "Error al enviar correo por Gmail" }
+    console.log(`[Resend Success] Email enviado a ${toList.join(', ')} (ID: ${data?.id})`)
+    return { success: true, provider: "resend", id: data?.id }
+  } catch (resendErr: any) {
+    console.error("[Resend Error]", resendErr)
+    return { success: false, error: resendErr?.message || "Error al enviar correo por Resend" }
   }
 }
 
@@ -326,6 +331,7 @@ export async function sendOrderConfirmationEmail(orderId: string, options?: { fo
     // 4. Send email
     const sendResult = await sendEmail({
       to: customerEmail,
+      bcc: ["fschottenfeld@gmail.com"],
       subject,
       html,
       replyTo: process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "alpaso.algalope@gmail.com"
@@ -586,6 +592,7 @@ export async function sendOrderPendingEmail(orderId: string) {
 
     const sendResult = await sendEmail({
       to: customerEmail,
+      bcc: ["fschottenfeld@gmail.com"],
       subject,
       html,
       replyTo: process.env.SUPPORT_EMAIL || process.env.EMAIL_REPLY_TO || "alpaso.algalope@gmail.com"
@@ -972,8 +979,8 @@ export function generateFirstCutProductionHtml(data: FirstCutItemSummary): strin
 export async function sendFirstCutProductionEmail({
   eventId,
   eventDate,
-  targetEmail = "graciel.ch@gmail.com",
-  ccEmail = "fschottenfeld@gmail.com",
+  targetEmail = "fschottenfeld@gmail.com",
+  ccEmail,
   dryRun = false
 }: {
   eventId?: string
@@ -1471,7 +1478,7 @@ export async function sendFirstCutProductionEmail({
     }
 
     // 7. Send email
-    const fromAddress = "Al Paso y Al Galope <alpaso.algalope@gmail.com>"
+    const fromAddress = resolveSender()
     const toRecipients = [targetEmail]
     const ccRecipients = ccEmail ? [ccEmail] : []
 
@@ -1573,16 +1580,14 @@ export function generateNoOrderProductionHtml(params: {
   `
 }
 
-export async function sendDailyProductionCutSchedule({
+export async function sendConsolidatedProductionCutEmail({
   targetDate,
-  targetEmail = "graciel.ch@gmail.com",
-  ccEmail = "fschottenfeld@gmail.com",
+  targetEmail = "fschottenfeld@gmail.com",
   dryRun = false,
   force = false
 }: {
   targetDate?: string
   targetEmail?: string
-  ccEmail?: string
   dryRun?: boolean
   force?: boolean
 } = {}) {
@@ -1631,51 +1636,58 @@ export async function sendDailyProductionCutSchedule({
           const diffMinutes = Math.floor(diffMs / 60000)
 
           if (diffMinutes < 60) {
-            console.log(`[sendDailyProductionCutSchedule] Bloqueo anti-duplicados activo para ${serviceDateStr}. Enviado hace ${diffMinutes} min.`)
+            console.log(`[sendConsolidatedProductionCutEmail] Bloqueo anti-duplicados activo para ${serviceDateStr}. Enviado hace ${diffMinutes} min.`)
             return {
               success: true,
               skipped: true,
-              message: `El corte diario para ${serviceDateStr} ya fue procesado hace ${diffMinutes} minutos. Se bloqueó el reenvío duplicado. Para forzar reenvío use ?force=true.`,
+              message: `El corte consolidado diario para ${serviceDateStr} ya fue procesado hace ${diffMinutes} minutos. Para forzar use ?force=true.`,
               lastSentAt: lockEntry.value
             }
           }
         }
       } catch (lockErr) {
-        console.warn("[sendDailyProductionCutSchedule] Error consultando lock anti-duplicados:", lockErr)
+        console.warn("[sendConsolidatedProductionCutEmail] Error consultando lock anti-duplicados:", lockErr)
       }
     }
 
     // 2. Consultar eventos para esta fecha
     const { data: events, error: eventsErr } = await supabase
       .from("events_master")
-      .select("id, event_date, show_name, venues ( name )")
+      .select("id, event_date, show_name, venues ( name ), event_projections ( id, company_name, projected_pax )")
       .eq("event_date", serviceDateStr)
 
     if (eventsErr) {
-      console.error("[sendDailyProductionCutSchedule] Error querying events:", eventsErr)
+      console.error("[sendConsolidatedProductionCutEmail] Error querying events:", eventsErr)
       throw eventsErr
     }
 
-    // 3. Caso A: Hay eventos cargados
-    if (events && events.length > 0) {
-      console.log(`[sendDailyProductionCutSchedule] Encontrados ${events.length} evento(s) para ${serviceDateStr}`)
-      const results = []
-      for (const ev of events) {
-        const res = await sendFirstCutProductionEmail({
-          eventId: ev.id,
-          targetEmail,
-          ccEmail,
-          dryRun
-        })
-        results.push({
-          eventId: ev.id,
-          showName: ev.show_name,
-          res
-        })
+    // 3. Caso B: Sin eventos cargados -> Enviar "Sin pedido"
+    if (!events || events.length === 0) {
+      if (dryRun) {
+        return {
+          success: true,
+          dryRun: true,
+          type: "no_order_simulation",
+          date: serviceDateStr,
+          dateFormatted: formattedDate,
+          message: "Simulación: Sin eventos cargados para esta fecha. Correspondería correo 'Sin pedido'."
+        }
       }
 
-      const anySuccess = results.some(r => r.res?.success)
-      if (!dryRun && anySuccess) {
+      console.log(`[sendConsolidatedProductionCutEmail] Sin eventos cargados para ${serviceDateStr}. Enviando correo 'Sin pedido'.`)
+      const html = generateNoOrderProductionHtml({ serviceDateFormatted: formattedDate })
+      const subject = `ORDEN DE PRODUCCIÓN CONSOLIDADA — PRIMER CORTE — SIN PEDIDO — ${formattedDate}`
+      const fromAddress = resolveSender()
+
+      const sendRes = await sendEmail({
+        to: [targetEmail],
+        subject,
+        html,
+        from: fromAddress,
+        replyTo: "alpaso.algalope@gmail.com"
+      })
+
+      if (!dryRun && sendRes.success) {
         try {
           const lockKey = `daily_cut_lock_${serviceDateStr}`
           await supabase
@@ -1686,47 +1698,456 @@ export async function sendDailyProductionCutSchedule({
               updated_at: new Date().toISOString()
             })
         } catch (saveLockErr) {
-          console.warn("[sendDailyProductionCutSchedule] Error guardando lock anti-duplicados:", saveLockErr)
+          console.warn("[sendConsolidatedProductionCutEmail] Error guardando lock anti-duplicados:", saveLockErr)
         }
       }
 
       return {
-        success: true,
-        type: "events_sent",
-        dryRun,
+        success: sendRes.success,
+        type: "no_order_sent",
         date: serviceDateStr,
-        eventsCount: events.length,
-        results
+        dateFormatted: formattedDate,
+        error: sendRes.error
       }
     }
 
-    // 4. Caso B: Sin eventos cargados -> Enviar "Sin pedido"
+    // 4. Caso A: Hay eventos cargados -> CONSOLIDAR TODOS EN UN ÚNICO REPORTE
+    console.log(`[sendConsolidatedProductionCutEmail] Consolidando ${events.length} evento(s) para ${serviceDateStr}`)
+    const eventIds = events.map(e => e.id)
+    const distinctShowNames = Array.from(new Set(events.map(e => e.show_name).filter(Boolean)))
+    const showsCombined = distinctShowNames.join(" + ") || "Eventos del Día"
+
+    const distinctVenues = Array.from(new Set(events.map(e => (e.venues as any)?.name || (e.venues as any)?.[0]?.name).filter(Boolean)))
+    const venuesCombined = distinctVenues.join(" / ") || "Sedes Varias"
+
+    // Factores de conversión, reglas y recetas
+    const [{ data: clients }, { data: rules }, { data: recetasList }] = await Promise.all([
+      supabase.from("clients").select("name, company, sale_type, conversion_factor"),
+      supabase.from("commercial_rules").select("company_name, includes_water, recipe_trad_id, recipe_veg_id, recipe_vegan_id, recipe_sintacc_id"),
+      supabase.from("recetas").select("id, nombre")
+    ])
+
+    const normalizeStr = (str: string) => {
+      return (str || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim()
+    }
+
+    const recipeNameMap: Record<string, string> = {}
+    recetasList?.forEach((r: any) => {
+      if (r.id && r.nombre) recipeNameMap[r.id] = r.nombre
+    })
+
+    const ruleMap: Record<string, any> = {}
+    rules?.forEach((r: any) => {
+      if (r.company_name) ruleMap[normalizeStr(r.company_name)] = r
+    })
+
+    const getFactor = (companyName: string): number => {
+      const clean = normalizeStr(companyName)
+      if (!clean) return 1.0
+      const found = clients?.find((c: any) => {
+        const cn = normalizeStr(c.name)
+        const cc = normalizeStr(c.company)
+        return cn === clean || cc === clean || (cn && (clean.includes(cn) || cn.includes(clean)))
+      })
+      if (found) {
+        if (found.sale_type === 'mayorista') return 1.0
+        return Number(found.conversion_factor) ?? 1.0
+      }
+      return 1.0
+    }
+
+    const waterRuleMap: Record<string, boolean> = {}
+    rules?.forEach(r => {
+      if (r.company_name) waterRuleMap[normalizeStr(r.company_name)] = r.includes_water ?? true
+    })
+
+    // Consultar ventas por evento de TODOS los eventos del día
+    const { data: salesHeaders } = await supabase
+      .from("event_sales_headers")
+      .select(`
+        id,
+        event_master_id,
+        company_name,
+        event_sales_units (
+          traditional,
+          vegetarian,
+          vegana,
+          sin_tacc,
+          water_qty,
+          water,
+          recipe_trad_id,
+          recipe_veg_id,
+          recipe_vegan_id,
+          recipe_sintacc_id
+        )
+      `)
+      .in("event_master_id", eventIds)
+
+    // Consultar tiendas online y pedidos de TODOS los eventos del día
+    const { data: stores } = await supabase
+      .from("online_store_events")
+      .select("id, event_master_id, title, slug, is_active")
+      .in("event_master_id", eventIds)
+
+    const storeIds = (stores || []).map(s => s.id)
+    let onlineOrders: any[] = []
+    if (storeIds.length > 0) {
+      const { data: orders } = await supabase
+        .from("online_orders")
+        .select("store_event_id, status, qty_tradicional, qty_vegetariano, qty_sintacc, qty_vegano, bus_identifier")
+        .in("store_event_id", storeIds)
+        .eq("status", "paid")
+      onlineOrders = orders || []
+    }
+
+    const confirmedCompanies = new Set<string>()
+    const soldSources: FirstCutItemSummary["soldSources"] = []
+
+    let soldTrad = 0
+    let soldVeg = 0
+    let soldSintacc = 0
+    let soldVegan = 0
+    let soldWater = 0
+
+    const breakdownMap: Record<string, Record<string, { recipeName: string; qty: number; companies: Set<string> }>> = {
+      traditional: {},
+      vegetarian: {},
+      vegana: {},
+      sin_tacc: {}
+    }
+
+    // Procesar ventas mayoristas / planillas
+    if (salesHeaders && salesHeaders.length > 0) {
+      salesHeaders.forEach(sh => {
+        const comp = (sh.company_name || "").trim()
+        const compClean = normalizeStr(comp)
+        const rule = ruleMap[compClean]
+        if (comp) confirmedCompanies.add(comp.toLowerCase())
+
+        let hTrad = 0
+        let hVeg = 0
+        let hSin = 0
+        let hVegana = 0
+        let hWater = 0
+
+        sh.event_sales_units?.forEach((u: any) => {
+          const tradQty = Number(u.traditional) || 0
+          const vegQty = Number(u.vegetarian) || 0
+          const sinQty = Number(u.sin_tacc) || 0
+          const veganQty = Number(u.vegana) || 0
+          const waterQty = Number(u.water_qty) || Number(u.water) || 0
+
+          hTrad += tradQty
+          hVeg += vegQty
+          hSin += sinQty
+          hVegana += veganQty
+          hWater += waterQty
+
+          if (tradQty > 0) {
+            const rId = u.recipe_trad_id || rule?.recipe_trad_id
+            const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+            const rName = isPbtRecipe(rawRName) ? "Pebete Jamón y Queso (PBT)" : "Ciabatta Tradicional"
+            if (!breakdownMap.traditional[rName]) {
+              breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.traditional[rName].qty += tradQty
+            if (comp) breakdownMap.traditional[rName].companies.add(comp)
+          }
+
+          if (vegQty > 0) {
+            const rId = u.recipe_veg_id || rule?.recipe_veg_id
+            const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+            const rName = isPbtRecipe(rawRName) ? "Pebete Veggie (PBT)" : "Ciabatta Vegetariana"
+            if (!breakdownMap.vegetarian[rName]) {
+              breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.vegetarian[rName].qty += vegQty
+            if (comp) breakdownMap.vegetarian[rName].companies.add(comp)
+          }
+
+          if (veganQty > 0) {
+            const rId = u.recipe_vegan_id || rule?.recipe_vegan_id
+            const rawRName = (rId && recipeNameMap[rId]) || "Sándwich Vegano"
+            const rName = isPbtRecipe(rawRName) ? "Pebete Vegano (PBT)" : "Sándwich Vegano"
+            if (!breakdownMap.vegana[rName]) {
+              breakdownMap.vegana[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.vegana[rName].qty += veganQty
+            if (comp) breakdownMap.vegana[rName].companies.add(comp)
+          }
+
+          if (sinQty > 0) {
+            const rId = u.recipe_sintacc_id || rule?.recipe_sintacc_id
+            const rName = (rId && recipeNameMap[rId]) || "Sándwich Sin TACC"
+            if (!breakdownMap.sin_tacc[rName]) {
+              breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+            }
+            breakdownMap.sin_tacc[rName].qty += sinQty
+            if (comp) breakdownMap.sin_tacc[rName].companies.add(comp)
+          }
+        })
+
+        const hTotal = hTrad + hVeg + hSin + hVegana
+        soldTrad += hTrad
+        soldVeg += hVeg
+        soldSintacc += hSin
+        soldVegan += hVegana
+        soldWater += hWater
+
+        const compTradRecipe = rule?.recipe_trad_id && recipeNameMap[rule.recipe_trad_id]
+        const isPbtWholesale = isPbtRecipe(compTradRecipe || "")
+        const sourceLabel = comp
+          ? (isPbtWholesale ? `Mayorista: ${comp} (Pebete PBT)` : `Mayorista: ${comp}`)
+          : "Ventas por Evento"
+
+        soldSources.push({
+          name: sourceLabel,
+          qty: hTotal,
+          trad: hTrad,
+          veg: hVeg,
+          sintacc: hSin,
+          vegan: hVegana,
+          water: hWater
+        })
+      })
+    }
+
+    // Tiendas online
+    const hasOnlineStore = Boolean(stores && stores.length > 0)
+    if (hasOnlineStore) {
+      events.forEach(ev => {
+        (ev.event_projections || []).forEach((p: any) => {
+          const comp = (p.company_name || "").trim().toLowerCase()
+          if (comp) confirmedCompanies.add(comp)
+        })
+      })
+    }
+
+    if (onlineOrders.length > 0) {
+      let oTrad = 0
+      let oVeg = 0
+      let oSin = 0
+      let oVegana = 0
+
+      onlineOrders.forEach(o => {
+        oTrad += Number(o.qty_tradicional) || 0
+        oVeg += Number(o.qty_vegetariano) || 0
+        oSin += Number(o.qty_sintacc) || 0
+        oVegana += Number(o.qty_vegano) || 0
+      })
+
+      const oTotal = oTrad + oVeg + oSin + oVegana
+      const oWater = oTotal
+
+      soldTrad += oTrad
+      soldVeg += oVeg
+      soldSintacc += oSin
+      soldVegan += oVegana
+      soldWater += oWater
+
+      if (oTrad > 0) {
+        const rName = "Ciabatta Tradicional"
+        if (!breakdownMap.traditional[rName]) {
+          breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.traditional[rName].qty += oTrad
+        breakdownMap.traditional[rName].companies.add("Tienda Online")
+      }
+      if (oVeg > 0) {
+        const rName = "Ciabatta Vegetariana"
+        if (!breakdownMap.vegetarian[rName]) {
+          breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.vegetarian[rName].qty += oVeg
+        breakdownMap.vegetarian[rName].companies.add("Tienda Online")
+      }
+      if (oSin > 0) {
+        const rName = "Sándwich Sin TACC"
+        if (!breakdownMap.sin_tacc[rName]) {
+          breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.sin_tacc[rName].qty += oSin
+        breakdownMap.sin_tacc[rName].companies.add("Tienda Online")
+      }
+      if (oVegana > 0) {
+        const rName = "Sándwich Vegano"
+        if (!breakdownMap.vegana[rName]) {
+          breakdownMap.vegana[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.vegana[rName].qty += oVegana
+        breakdownMap.vegana[rName].companies.add("Tienda Online")
+      }
+
+      soldSources.push({
+        name: "Tienda Online (Pasajeros Pagados)",
+        qty: oTotal,
+        trad: oTrad,
+        veg: oVeg,
+        sintacc: oSin,
+        vegan: oVegana,
+        water: oWater
+      })
+    }
+
+    const soldTotal = soldTrad + soldVeg + soldSintacc + soldVegan
+
+    // Procesar proyecciones de empresas pendientes
+    const allProjections = events.flatMap(e => e.event_projections || [])
+    const pendingProjections = allProjections.filter((p: any) => {
+      const comp = (p.company_name || "").trim().toLowerCase()
+      return comp && !confirmedCompanies.has(comp)
+    })
+
+    const projBreakdown: FirstCutItemSummary["projBreakdown"] = []
+    let projTotalTrad = 0
+    let projTotalVeg = 0
+    let projTotalSintacc = 0
+    let projTotalWater = 0
+
+    pendingProjections.forEach((p: any) => {
+      const compName = (p.company_name || "").trim()
+      const compClean = normalizeStr(compName)
+      const basePax = Number(p.projected_pax) || 0
+      const factor = getFactor(compName)
+      const viandas = Math.round(basePax * factor)
+      if (viandas <= 0) return
+
+      const trad = Math.round(viandas * 0.90)
+      const vegRaw = Math.round(viandas * 0.08)
+      const sinRaw = Math.max(0, viandas - trad - vegRaw)
+      const water = (waterRuleMap[compClean] ?? true) ? viandas : 0
+
+      projTotalTrad += trad
+      projTotalVeg += vegRaw
+      projTotalSintacc += sinRaw
+      projTotalWater += water
+
+      if (trad > 0) {
+        const rule = ruleMap[compClean]
+        const rId = rule?.recipe_trad_id
+        const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Tradicional"
+        const rName = isPbtRecipe(rawRName) ? "Pebete Jamón y Queso (PBT)" : "Ciabatta Tradicional"
+        if (!breakdownMap.traditional[rName]) {
+          breakdownMap.traditional[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.traditional[rName].qty += trad
+        breakdownMap.traditional[rName].companies.add(compName)
+      }
+      if (vegRaw > 0) {
+        const rule = ruleMap[compClean]
+        const rId = rule?.recipe_veg_id
+        const rawRName = (rId && recipeNameMap[rId]) || "Ciabatta Vegetariana"
+        const rName = isPbtRecipe(rawRName) ? "Pebete Veggie (PBT)" : "Ciabatta Vegetariana"
+        if (!breakdownMap.vegetarian[rName]) {
+          breakdownMap.vegetarian[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.vegetarian[rName].qty += vegRaw
+        breakdownMap.vegetarian[rName].companies.add(compName)
+      }
+      if (sinRaw > 0) {
+        const rule = ruleMap[compClean]
+        const rId = rule?.recipe_sintacc_id
+        const rName = (rId && recipeNameMap[rId]) || "Sándwich Sin TACC"
+        if (!breakdownMap.sin_tacc[rName]) {
+          breakdownMap.sin_tacc[rName] = { recipeName: rName, qty: 0, companies: new Set() }
+        }
+        breakdownMap.sin_tacc[rName].qty += sinRaw
+        breakdownMap.sin_tacc[rName].companies.add(compName)
+      }
+
+      projBreakdown.push({
+        company: compName,
+        pax: basePax,
+        viandas,
+        trad,
+        veg: vegRaw,
+        sintacc: sinRaw,
+        water
+      })
+    })
+
+    const projTotal = projTotalTrad + projTotalVeg + projTotalSintacc
+    const grandTotal = soldTotal + projTotal
+    const grandTrad = soldTrad + projTotalTrad
+    const grandVeg = soldVeg + projTotalVeg
+    const grandSintacc = soldSintacc + projTotalSintacc
+    const grandVegan = soldVegan
+    const grandWater = soldWater + projTotalWater
+
+    const recipeBreakdown = {
+      traditional: Object.values(breakdownMap.traditional).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      })),
+      vegetarian: Object.values(breakdownMap.vegetarian).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      })),
+      vegana: Object.values(breakdownMap.vegana).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      })),
+      sin_tacc: Object.values(breakdownMap.sin_tacc).map(b => ({
+        recipeName: b.recipeName,
+        qty: b.qty,
+        companies: Array.from(b.companies)
+      }))
+    }
+
+    const summaryData: FirstCutItemSummary = {
+      showName: showsCombined,
+      venueName: venuesCombined,
+      eventDate: serviceDateStr,
+      eventDateFormatted: formattedDate,
+      soldTotal,
+      soldTrad,
+      soldVeg,
+      soldSintacc,
+      soldVegan,
+      soldWater,
+      soldSources,
+      projTotal,
+      projTrad: projTotalTrad,
+      projVeg: projTotalVeg,
+      projSintacc: projTotalSintacc,
+      projVegan: 0,
+      projWater: projTotalWater,
+      projBreakdown,
+      recipeBreakdown,
+      grandTotal,
+      grandTrad,
+      grandVeg,
+      grandSintacc,
+      grandVegan,
+      grandWater
+    }
+
+    const html = generateFirstCutProductionHtml(summaryData)
+    const subject = `ORDEN DE PRODUCCIÓN CONSOLIDADA — PRIMER CORTE — ${formattedDate}`
+
     if (dryRun) {
       return {
         success: true,
         dryRun: true,
-        type: "no_order_simulation",
-        date: serviceDateStr,
-        dateFormatted: formattedDate,
-        message: "Simulación: Sin eventos cargados para esta fecha. Correspondería correo 'Sin pedido'."
+        summary: summaryData,
+        message: "Simulación exitosa: no se envió ningún correo."
       }
     }
 
-    console.log(`[sendDailyProductionCutSchedule] Sin eventos cargados para ${serviceDateStr}. Enviando correo 'Sin pedido'.`)
-    const html = generateNoOrderProductionHtml({ serviceDateFormatted: formattedDate })
-    const subject = `ORDEN DE PRODUCCIÓN — PRIMER CORTE — SIN PEDIDO — ${formattedDate}`
-    const fromAddress = "Al Paso y Al Galope <alpaso.algalope@gmail.com>"
-
-    const sendRes = await sendEmail({
+    // Enviar correo CONSOLIDADO ÚNICO a Fernando (fschottenfeld@gmail.com)
+    const fromAddress = resolveSender()
+    const sendResult = await sendEmail({
       to: [targetEmail],
-      cc: ccEmail ? [ccEmail] : [],
       subject,
       html,
       from: fromAddress,
-      replyTo: ccEmail || "fschottenfeld@gmail.com"
+      replyTo: "alpaso.algalope@gmail.com"
     })
 
-    if (!dryRun && sendRes.success) {
+    if (!dryRun && sendResult.success) {
       try {
         const lockKey = `daily_cut_lock_${serviceDateStr}`
         await supabase
@@ -1737,21 +2158,40 @@ export async function sendDailyProductionCutSchedule({
             updated_at: new Date().toISOString()
           })
       } catch (saveLockErr) {
-        console.warn("[sendDailyProductionCutSchedule] Error guardando lock anti-duplicados:", saveLockErr)
+        console.warn("[sendConsolidatedProductionCutEmail] Error guardando lock anti-duplicados:", saveLockErr)
       }
     }
 
     return {
-      success: sendRes.success,
-      type: "no_order_sent",
+      success: sendResult.success,
+      type: "consolidated_sent",
       date: serviceDateStr,
       dateFormatted: formattedDate,
-      error: sendRes.error
+      eventsCount: events.length,
+      shows: showsCombined,
+      error: sendResult.error,
+      summary: summaryData
     }
   } catch (err: any) {
-    console.error("[sendDailyProductionCutSchedule Error]", err)
+    console.error("[sendConsolidatedProductionCutEmail Error]", err)
     return { success: false, error: err.message }
   }
+}
+
+export async function sendDailyProductionCutSchedule(params: {
+  targetDate?: string
+  targetEmail?: string
+  ccEmail?: string
+  dryRun?: boolean
+  force?: boolean
+} = {}) {
+  // Delega en el generador consolidado único para enviar 1 solo correo por fecha a Fernando
+  return sendConsolidatedProductionCutEmail({
+    targetDate: params.targetDate,
+    targetEmail: params.targetEmail || "fschottenfeld@gmail.com",
+    dryRun: params.dryRun,
+    force: params.force
+  })
 }
 
 

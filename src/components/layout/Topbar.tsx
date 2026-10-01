@@ -15,13 +15,7 @@ export default function Topbar() {
     async function loadUser() {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        if (user.email === 'fschottenfeld@gmail.com') {
-          setRole('admin');
-        } else if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') {
-          setRole('cocina');
-        } else {
-          setRole(user.app_metadata?.role || user.user_metadata?.role || 'cocina');
-        }
+        setRole('admin');
       }
     }
     loadUser();

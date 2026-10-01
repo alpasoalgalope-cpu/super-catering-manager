@@ -48,11 +48,7 @@ export default function MonthlyScheduleCalendar({ events = [], role = null }: Pr
       // 1. Role
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
-        if (user.email === 'alpaso.algalope@gmail.com' || user.email === 'cocina@supercatering.com') {
-          setUserRole('cocina');
-        } else {
-          setUserRole(user.app_metadata?.role || user.user_metadata?.role || 'admin');
-        }
+        setUserRole('admin');
       }
 
       // 2. Fetch full events data if not passed or empty

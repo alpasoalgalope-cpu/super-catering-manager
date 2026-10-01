@@ -1,25 +1,39 @@
 "use client"
 
-import React, { useState } from "react"
+import React, { useState, useEffect, Suspense } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 import { Lock, Mail, Loader2, ChefHat, ShieldCheck } from "lucide-react"
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const searchParams = useSearchParams()
   const supabase = createClient()
+
+  useEffect(() => {
+    if (searchParams.get("error") === "disabled") {
+      setError("El usuario cocina ha sido desactivado. Solo el usuario administrador (fschottenfeld) se encuentra habilitado.")
+    }
+  }, [searchParams])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
 
+    const cleanEmail = email.toLowerCase().trim()
+    if (cleanEmail !== "fschottenfeld@gmail.com") {
+      setError("Usuario desactivado. Solo el usuario administrador (fschottenfeld) está activo.")
+      setLoading(false)
+      return
+    }
+
     const { error: authError } = await supabase.auth.signInWithPassword({
-      email,
+      email: cleanEmail,
       password,
     })
 
@@ -62,7 +76,7 @@ export default function LoginPage() {
                   type="email" 
                   required
                   className="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-100 rounded-2xl outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400 transition-all font-bold text-slate-700"
-                  placeholder="admin@supercatering.com"
+                  placeholder="fschottenfeld@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                 />
@@ -118,5 +132,19 @@ export default function LoginPage() {
         </p>
       </div>
     </div>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+          <Loader2 className="animate-spin text-indigo-600" size={32} />
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   )
 }

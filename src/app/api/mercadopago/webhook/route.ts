@@ -1,7 +1,18 @@
 import { NextRequest, NextResponse } from "next/server"
 import { paymentClient } from "@/lib/mercadopago"
-import { createClient } from "@/lib/supabase/server"
+import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 import { sendOrderConfirmationEmail, sendOrderPendingEmail } from "@/lib/email"
+
+function getWebhookSupabaseClient() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
+  return createSupabaseClient(url, key, {
+    auth: { persistSession: false },
+    global: {
+      fetch: (u, options) => fetch(u, { ...options, cache: "no-store" })
+    }
+  })
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,7 +57,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Update order in database
-      const supabase = await createClient()
+      const supabase = getWebhookSupabaseClient()
       const { error } = await supabase
         .from("online_orders")
         .update({

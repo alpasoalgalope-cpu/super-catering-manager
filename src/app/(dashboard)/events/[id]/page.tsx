@@ -7,6 +7,7 @@ import DashboardCard from '@/components/ui/DashboardCard'
 import { Users, Clock, ChefHat, Calendar, Link as LinkIcon, Building2, Truck, Activity, ArrowLeft, Trash2, Save, Loader2 } from 'lucide-react'
 import Link from "next/link"
 import { syncStockForSaleAction } from "@/app/actions/stock"
+import LogisticTransitPlanner from "@/components/logistics/LogisticTransitPlanner"
 
 export default function EventDetailPage() {
   const { id } = useParams()
@@ -302,6 +303,13 @@ export default function EventDetailPage() {
             )}
          </div>
       </div>
+
+      {/* PLANIFICACIÓN DE TRÁNSITO LOGÍSTICO */}
+      {id && (
+        <div className="mt-8">
+          <LogisticTransitPlanner eventId={id as string} />
+        </div>
+      )}
 
       {/* Floating Save Button */}
       {hasEdits && (

@@ -310,6 +310,10 @@ export async function autoSyncStoresForConfirmedEventsAction() {
 
         const prices = getPricesForCompany(company)
 
+        const compClean = (company || '').toLowerCase()
+        const isExcluded = compClean.includes('terco') || compClean.includes('circus') || compClean.includes('proxima') || compClean.includes('rock') || compClean.includes('valbus')
+        const isRV = !isExcluded && (compClean.includes('rvtraslados') || compClean.includes('rv traslados') || compClean === 'rv' || compClean.startsWith('rv'))
+
         const isWater = prices.includesWater
         const deadline = getDefaultSalesDeadline(eventDate)
         const storeData = {
@@ -326,21 +330,29 @@ export async function autoSyncStoresForConfirmedEventsAction() {
           combo_trad_enabled: true,
           combo_trad_price: prices.trad,
           combo_trad_name: isWater ? "Combo Tradicional + Agua sin Gas" : "Sándwich Tradicional",
-          combo_trad_desc: isWater
-            ? "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral."
-            : "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día.",
+          combo_trad_desc: isRV
+            ? "Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml."
+            : (isWater
+              ? "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día + Agua Mineral."
+              : "Sándwich Gigante de Jamón y Queso en pan Ciabatta de manteca fresco del día."),
           combo_veg_enabled: true,
           combo_veg_price: prices.veg,
           combo_veg_name: isWater ? "Combo Vegetariano + Agua sin Gas" : "Sándwich Vegetariano",
-          combo_veg_desc: isWater
-            ? "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral."
-            : "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate.",
+          combo_veg_desc: isRV
+            ? "Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml."
+            : (isWater
+              ? "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate + Agua Mineral."
+              : "Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate."),
           combo_sintacc_enabled: true,
           combo_sintacc_price: prices.sintacc,
-          combo_sintacc_name: isWater ? "Combo Sin TACC + Agua sin Gas" : "Sándwich Sin TACC",
-          combo_sintacc_desc: isWater
-            ? "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral."
-            : "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).",
+          combo_sintacc_name: isRV
+            ? "Combo Sin TACC (Apto Celíacos) + Agua sin Gas"
+            : (isWater ? "Combo Sin TACC + Agua sin Gas" : "Sándwich Sin TACC"),
+          combo_sintacc_desc: isRV
+            ? "Sándwich individual certificado en pan libre de gluten + Agua mineral 500ml. Elaborado en planta especializada para garantizar 0% contaminación cruzada."
+            : (isWater
+              ? "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral."
+              : "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos)."),
           combo_vegan_enabled: true,
           combo_vegan_price: prices.vegan,
           combo_vegan_name: isWater ? "Combo Vegano + Agua sin Gas" : "Sándwich Vegano",

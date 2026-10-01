@@ -1,6 +1,6 @@
 "use client";
 
-import { generateAndDownloadSalesPdf } from '@/lib/pdf-generator';
+import { generateAndDownloadSalesPdf, formatDeliveryTimeRange } from '@/lib/pdf-generator';
 import React, { useState, useMemo, useEffect, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { supabase as defaultSupabase } from "@/lib/supabase"
@@ -8,10 +8,11 @@ import {
   Calculator, Truck, Users, Plus, Trash2, Calendar,
   ClipboardList, MapPin, AlertCircle, CheckCircle2,
   Save, Printer, Loader2, Building2, ChevronDown, ChevronUp,
-  ShieldAlert, Unlock
+  ShieldAlert, Unlock, Navigation, ExternalLink
 } from "lucide-react"
 import FleetModal from "@/components/forms/FleetModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
+import LogisticTransitPlanner from "@/components/logistics/LogisticTransitPlanner"
 import { syncStockForSaleAction } from "@/app/actions/stock"
 interface UnitRecord {
   id: string
@@ -64,11 +65,8 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
       try {
         const clientSupabase = createClient()
         const { data: { user } } = await clientSupabase.auth.getUser()
-        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
-          setUserRole('cocina')
-        } else {
-          const r = user?.app_metadata?.role || user?.user_metadata?.role || 'admin'
-          setUserRole(r)
+        if (user) {
+          setUserRole('admin')
         }
       } catch (e) {
         console.error("Error loading role in EventSalesForm:", e)
@@ -143,6 +141,7 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
   const [deliveryTime, setDeliveryTime] = useState("22:00")
   const [deliveryPoint, setDeliveryPoint] = useState("")
   const [deliveryAddress, setDeliveryAddress] = useState("")
+  const [showTransitPlanner, setShowTransitPlanner] = useState(false)
   const [units, setUnits] = useState<UnitRecord[]>([newUnit("Micro 1")])
   const [paxOverride, setPaxOverride] = useState<number | null>(null)
   const [allowCommercialOverride, setAllowCommercialOverride] = useState(false)
@@ -1375,28 +1374,71 @@ export default function EventSalesForm({ initialEventId, initialCompany, commerc
 
         {/* Delivery */}
         {selectedEvent && selectedCompany && (
-          <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase">Horario Entrega (HH:MM)</label>
-              <input type="time"
-                className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none font-bold text-indigo-600"
-                value={deliveryTime}
-                onChange={e => setDeliveryTime(e.target.value)} />
+          <div className="mt-6 space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-1">
+                <div className="flex justify-between items-center">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase">Horario Entrega (Inicio)</label>
+                  <span className="text-[9px] font-semibold text-indigo-600 bg-indigo-50 border border-indigo-100 px-1.5 py-0.5 rounded-full">
+                    Rango 1 hs
+                  </span>
+                </div>
+                <input type="time"
+                  className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none font-bold text-indigo-600 focus:border-indigo-400 transition-colors"
+                  value={deliveryTime}
+                  onChange={e => setDeliveryTime(e.target.value)} />
+                <p className="text-[11px] font-medium text-slate-500 pl-1">
+                  Remito: <span className="font-bold text-indigo-600">{formatDeliveryTimeRange(deliveryTime)}</span>
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1"><MapPin size={10} /> Punto de Encuentro</label>
+                <input className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none"
+                  placeholder="Ej: Portón 4"
+                  value={deliveryPoint}
+                  onChange={e => setDeliveryPoint(e.target.value)} />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold text-slate-400 uppercase">Dirección / Referencia</label>
+                <input className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none"
+                  placeholder="Ej: Av. Figueroa Alcorta..."
+                  value={deliveryAddress}
+                  onChange={e => setDeliveryAddress(e.target.value)} />
+              </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1"><MapPin size={10} /> Punto de Encuentro</label>
-              <input className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none"
-                placeholder="Ej: Portón 4"
-                value={deliveryPoint}
-                onChange={e => setDeliveryPoint(e.target.value)} />
+
+            {/* ACCESO Y VISUALIZADOR DEL PLANIFICADOR DE TRÁNSITO */}
+            <div className="pt-4 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Logística de Tránsito:</span>
+                <span className="text-xs font-bold text-slate-600">Estimación en tiempo real con Google Maps Routes API.</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowTransitPlanner(!showTransitPlanner)}
+                  className="px-3.5 py-1.5 rounded-xl bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 text-xs font-black flex items-center gap-1.5 transition shadow-2xs cursor-pointer"
+                >
+                  <Navigation size={13} className="text-indigo-600" />
+                  {showTransitPlanner ? "Ocultar Planificador de Tránsito" : "🗺️ Abrir Planificador de Tránsito Google Maps"}
+                </button>
+                <a
+                  href={`/logistica-evento?eventId=${selectedEventId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold flex items-center gap-1 transition"
+                  title="Abrir Portal de Monitoreo GPS"
+                >
+                  <ExternalLink size={13} /> Portal en Vivo
+                </a>
+              </div>
             </div>
-            <div className="space-y-1">
-              <label className="text-[10px] font-bold text-slate-400 uppercase">Dirección / Referencia</label>
-              <input className="w-full p-3 border border-slate-200 rounded-2xl bg-white outline-none"
-                placeholder="Ej: Av. Figueroa Alcorta..."
-                value={deliveryAddress}
-                onChange={e => setDeliveryAddress(e.target.value)} />
-            </div>
+
+            {showTransitPlanner && selectedEventId && (
+              <div className="pt-4 border-t border-indigo-100 animate-in fade-in slide-in-from-top-2">
+                <LogisticTransitPlanner eventId={selectedEventId} />
+              </div>
+            )}
           </div>
         )}
       </div>

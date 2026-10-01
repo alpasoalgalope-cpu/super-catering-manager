@@ -1,8 +1,9 @@
 "use server"
 
 import { createClient } from "@/lib/supabase/server"
-import { BusLogistic, DispatchLoadSheet, BusDeliveryItem } from "@/types/logistics"
+import { BusLogistic, DispatchLoadSheet, BusDeliveryItem, EventTransitPlan, TransitModality, TransitStop, TransitTravelMode } from "@/types/logistics"
 import { optimizeRouteSequence } from "@/lib/routing-engine"
+import { calculateTransitPlan, ORIGIN_KITCHEN_ADDRESS, calculateKitchenLoadingTime, addMinutesToTimeString } from "@/lib/transit-engine"
 import { revalidatePath } from "next/cache"
 
 const DEFAULT_ORIGIN = { lat: -34.6037, lng: -58.3816 }
@@ -747,3 +748,328 @@ export async function updateBusStatusAction(busId: string, status: 'en_viaje' | 
     return { success: false, error: err.message || 'Error al actualizar estado del micro.' }
   }
 }
+
+/**
+ * Obtiene el plan de tránsito guardado para el evento, o genera uno inicial
+ * a partir de las empresas, ventas y sedes cargadas en events_master.
+ */
+export async function getEventTransitPlanAction(eventId: string): Promise<{
+  success: boolean
+  data?: {
+    event: any
+    plan: EventTransitPlan
+    isSaved: boolean
+  }
+  error?: string
+}> {
+  try {
+    const supabase = await createClient()
+
+    // 1. Fetch Event Master info
+    const { data: event, error: eErr } = await supabase
+      .from("events_master")
+      .select("id, event_date, show_name, venues(name, address, meeting_point), coordinators(name, phone)")
+      .eq("id", eventId)
+      .single()
+
+    if (eErr || !event) {
+      return { success: false, error: "Evento no encontrado." }
+    }
+
+    // 2. Fetch saved transit plan if table exists
+    let savedPlan: any = null
+    try {
+      const { data: tp } = await supabase
+        .from("event_transit_plans")
+        .select("*")
+        .eq("event_master_id", eventId)
+        .maybeSingle()
+      savedPlan = tp
+    } catch (e) {
+      // Table might not exist yet
+    }
+
+    if (savedPlan && savedPlan.stops_data && Array.isArray(savedPlan.stops_data) && savedPlan.stops_data.length > 0) {
+      return {
+        success: true,
+        data: {
+          event,
+          plan: savedPlan,
+          isSaved: true
+        }
+      }
+    }
+
+    // 3. Construct default plan from Event Sales, Projections & Bus Logistics
+    const venueName = (event.venues as any)?.name || "S/D"
+    const venueAddress = (event.venues as any)?.address || ""
+    const venueMeetingPoint = (event.venues as any)?.meeting_point || ""
+
+    // Fetch sales headers
+    const { data: salesHeaders } = await supabase
+      .from("event_sales_headers")
+      .select("id, company_name, delivery_point, delivery_time, coordinator_name, event_sales_units(*)")
+      .or(`event_master_id.eq.${eventId},event_id.eq.${eventId}`)
+
+    // Fetch projections
+    const { data: projections } = await supabase
+      .from("event_projections")
+      .select("company_name, projected_pax")
+      .or(`event_master_id.eq.${eventId},event_id.eq.${eventId}`)
+
+    // Fetch bus assignments for coordinators
+    const { data: busAssignments } = await supabase
+      .from("event_bus_assignments")
+      .select("clients(name), coordinators(name, phone), vehicles(internal_name, plate)")
+      .eq("event_id", eventId)
+
+    // Build unique stops per company
+    const companyMap: Record<string, TransitStop> = {}
+
+    // Seed from projections
+    projections?.forEach((p: any) => {
+      const cName = p.company_name?.trim() || "Empresa"
+      if (!companyMap[cName]) {
+        companyMap[cName] = {
+          id: `stop_${cName}`,
+          stop_order: 1,
+          company_name: cName,
+          coordinator_name: "",
+          coordinator_phone: "",
+          destination_name: venueName,
+          destination_address: venueAddress,
+          delivery_point: venueMeetingPoint,
+          viandas_count: Number(p.projected_pax) || 0,
+          water_count: 0
+        }
+      }
+    })
+
+    // Seed/update from sales headers (real counts)
+    salesHeaders?.forEach((h: any) => {
+      const cName = h.company_name?.trim() || "Empresa"
+      let vCount = 0
+      let wCount = 0
+      h.event_sales_units?.forEach((u: any) => {
+        vCount += (Number(u.traditional) || 0) + (Number(u.vegetarian) || 0) + (Number(u.vegana) || 0) + (Number(u.sin_tacc) || 0)
+        wCount += (Number(u.water) || 0)
+      })
+
+      if (!companyMap[cName]) {
+        companyMap[cName] = {
+          id: `stop_${cName}`,
+          stop_order: 1,
+          company_name: cName,
+          coordinator_name: h.coordinator_name || "",
+          coordinator_phone: "",
+          destination_name: venueName,
+          destination_address: venueAddress,
+          delivery_point: h.delivery_point || venueMeetingPoint,
+          viandas_count: vCount,
+          water_count: wCount
+        }
+      } else {
+        if (vCount > 0) companyMap[cName].viandas_count = vCount
+        companyMap[cName].water_count = wCount
+        if (h.delivery_point) companyMap[cName].delivery_point = h.delivery_point
+        if (h.coordinator_name) companyMap[cName].coordinator_name = h.coordinator_name
+      }
+    })
+
+    // Attach coordinators from bus assignments
+    busAssignments?.forEach((ba: any) => {
+      const cName = ba.clients?.name?.trim()
+      if (cName && companyMap[cName]) {
+        if (ba.coordinators?.name && !companyMap[cName].coordinator_name) {
+          companyMap[cName].coordinator_name = ba.coordinators.name
+        }
+        if (ba.coordinators?.phone && !companyMap[cName].coordinator_phone) {
+          companyMap[cName].coordinator_phone = ba.coordinators.phone
+        }
+        if (ba.vehicles?.internal_name && !companyMap[cName].vehicle_info) {
+          companyMap[cName].vehicle_info = `${ba.vehicles.internal_name} (${ba.vehicles.plate || 'S/D'})`
+        }
+      }
+    })
+
+    const rawStopsList = Object.values(companyMap)
+    if (rawStopsList.length === 0) {
+      rawStopsList.push({
+        id: "stop_1",
+        stop_order: 1,
+        company_name: "Empresa 1",
+        coordinator_name: (event.coordinators as any)?.name || "",
+        coordinator_phone: (event.coordinators as any)?.phone || "",
+        destination_name: venueName,
+        destination_address: venueAddress,
+        delivery_point: venueMeetingPoint,
+        viandas_count: 100,
+        water_count: 50
+      })
+    }
+
+    const defaultKitchenCall = "19:00"
+    const totalViandas = rawStopsList.reduce((acc, s) => acc + s.viandas_count, 0)
+    const loadingMins = calculateKitchenLoadingTime(totalViandas)
+    const departureTime = addMinutesToTimeString(defaultKitchenCall, loadingMins)
+
+    // Calculate initial preview
+    const calcResult = await calculateTransitPlan(
+      rawStopsList,
+      defaultKitchenCall,
+      "DESPACHO_PARALELO",
+      12,
+      "DRIVE",
+      event.event_date
+    )
+
+    const initialPlan: EventTransitPlan = {
+      event_master_id: eventId,
+      kitchen_address: ORIGIN_KITCHEN_ADDRESS,
+      kitchen_call_time: defaultKitchenCall,
+      loading_time_minutes: loadingMins,
+      kitchen_departure_time: departureTime,
+      modality: "DESPACHO_PARALELO",
+      discharge_time_minutes: 12,
+      travel_mode: "DRIVE",
+      stops_data: calcResult.calculatedStops
+    }
+
+    return {
+      success: true,
+      data: {
+        event,
+        plan: initialPlan,
+        isSaved: false
+      }
+    }
+  } catch (err: any) {
+    console.error("Error in getEventTransitPlanAction:", err)
+    return { success: false, error: err.message || "Error al obtener el plan de tránsito." }
+  }
+}
+
+/**
+ * Recalcula el plan de tránsito completo según la modalidad elegida
+ */
+export async function calculateTransitPlanAction(payload: {
+  stops: TransitStop[]
+  kitchenCallTime: string
+  modality: TransitModality
+  dischargeMarginMinutes: number
+  travelMode: TransitTravelMode
+  eventDateIso: string
+}): Promise<{
+  success: boolean
+  data?: {
+    loadingTimeMinutes: number
+    kitchenDepartureTime: string
+    totalViandas: number
+    totalWater: number
+    calculatedStops: TransitStop[]
+  }
+  error?: string
+}> {
+  try {
+    const result = await calculateTransitPlan(
+      payload.stops,
+      payload.kitchenCallTime,
+      payload.modality,
+      payload.dischargeMarginMinutes,
+      payload.travelMode,
+      payload.eventDateIso
+    )
+    return { success: true, data: result }
+  } catch (err: any) {
+    console.error("Error in calculateTransitPlanAction:", err)
+    return { success: false, error: err.message || "Error al calcular tránsito." }
+  }
+}
+
+/**
+ * Guarda o actualiza el plan logístico en Supabase
+ */
+export async function saveEventTransitPlanAction(plan: EventTransitPlan): Promise<{
+  success: boolean
+  data?: any
+  error?: string
+}> {
+  try {
+    const supabase = await createClient()
+
+    const recordToSave = {
+      event_master_id: plan.event_master_id,
+      kitchen_address: plan.kitchen_address || ORIGIN_KITCHEN_ADDRESS,
+      kitchen_call_time: plan.kitchen_call_time,
+      loading_time_minutes: plan.loading_time_minutes,
+      kitchen_departure_time: plan.kitchen_departure_time,
+      modality: plan.modality,
+      discharge_time_minutes: plan.discharge_time_minutes,
+      travel_mode: plan.travel_mode,
+      stops_data: plan.stops_data,
+      itinerary_notes: plan.itinerary_notes || null,
+      updated_at: new Date().toISOString()
+    }
+
+    const { data, error } = await supabase
+      .from("event_transit_plans")
+      .upsert(recordToSave, { onConflict: "event_master_id" })
+      .select()
+      .single()
+
+    if (error) {
+      console.warn("Could not save to event_transit_plans table:", error.message)
+      return { success: true, data: plan }
+    }
+
+    revalidatePath("/events")
+    revalidatePath("/logistica-evento")
+
+    return { success: true, data }
+  } catch (err: any) {
+    console.error("Error in saveEventTransitPlanAction:", err)
+    return { success: false, error: err.message || "Error al guardar el plan de tránsito." }
+  }
+}
+
+/**
+ * Sincroniza los horarios calculados con los remitos de ventas (event_sales_headers)
+ */
+export async function syncTransitPlanToRemitosAction(
+  eventId: string,
+  stops: TransitStop[]
+): Promise<{
+  success: boolean
+  updatedCount: number
+  error?: string
+}> {
+  try {
+    const supabase = await createClient()
+    let updatedCount = 0
+
+    for (const stop of stops) {
+      if (stop.company_name && stop.coordinator_range_start) {
+        const { error } = await supabase
+          .from("event_sales_headers")
+          .update({
+            delivery_time: stop.coordinator_range_start,
+            delivery_point: stop.delivery_point || undefined,
+            updated_at: new Date().toISOString()
+          })
+          .or(`event_master_id.eq.${eventId},event_id.eq.${eventId}`)
+          .ilike("company_name", stop.company_name.trim())
+
+        if (!error) {
+          updatedCount++
+        }
+      }
+    }
+
+    revalidatePath("/ventas-evento")
+    return { success: true, updatedCount }
+  } catch (err: any) {
+    console.error("Error in syncTransitPlanToRemitosAction:", err)
+    return { success: false, updatedCount: 0, error: err.message }
+  }
+}
+

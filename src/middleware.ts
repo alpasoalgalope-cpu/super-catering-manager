@@ -2,98 +2,90 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
 export async function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // 1. FAST-PATH BYPASS para rutas públicas y APIs:
+  // Cero llamadas de red a Supabase para evitar congelamiento de Netlify Edge Function
+  const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/register')
+  const isLandingPage = pathname === '/'
+  const isStoreOrCoordi = pathname.startsWith('/tienda') || pathname.startsWith('/coordi')
+  const isApiRoute = pathname.startsWith('/api/')
+
+  // Si es landing, tienda, coordi o API pública, responder de inmediato sin tocar Supabase
+  if (isLandingPage || isStoreOrCoordi || isApiRoute) {
+    return NextResponse.next()
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   })
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
+  try {
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll()
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+            supabaseResponse = NextResponse.next({
+              request,
+            })
+            cookiesToSet.forEach(({ name, value, options }) =>
+              supabaseResponse.cookies.set(name, value, options)
+            )
+          },
         },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({
-            request,
-          })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
+      }
+    )
 
-  const { data: { user } } = await supabase.auth.getUser()
+    // Protección anti-timeout para Edge Functions: máximo 2500ms
+    const userPromise = supabase.auth.getUser()
+    const timeoutPromise = new Promise<{ data: { user: any }; error: any }>((_, reject) =>
+      setTimeout(() => reject(new Error('Edge Auth Timeout')), 2500)
+    )
 
-  // 1. Public and Auth paths
-  const isAuthPage = request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register')
-  const isLandingPage = request.nextUrl.pathname === '/'
-  const isPublicRoute = isAuthPage || 
-                        isLandingPage ||
-                        request.nextUrl.pathname.startsWith('/tienda') || 
-                        request.nextUrl.pathname.startsWith('/api/mercadopago') ||
-                        request.nextUrl.pathname.startsWith('/api/cron') ||
-                        request.nextUrl.pathname.startsWith('/api/auth') ||
-                        request.nextUrl.pathname.startsWith('/coordi')
+    const { data: { user } } = await Promise.race([userPromise, timeoutPromise])
 
-  if (!user && !isPublicRoute) {
-    return NextResponse.redirect(new URL('/login', request.url))
-  }
-
-  // 2. If user is logged in and tries to access login or register -> redirect to dashboard
-  if (user && isAuthPage) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-
-  // 3. RBAC Check
-  if (user) {
-    let role = user.app_metadata?.role || user.user_metadata?.role || 'cocina'
-    
-    // Bypass temporal para el admin principal
-    if (user.email === 'fschottenfeld@gmail.com') {
-      role = 'admin'
-    }
-    // Bypass temporal para el usuario de cocina
-    if (user.email === 'cocina@supercatering.com' || user.email === 'alpaso.algalope@gmail.com') {
-      role = 'cocina'
+    // Si no está logueado y no está en página de auth -> redirigir a login
+    if (!user && !isAuthPage) {
+      return NextResponse.redirect(new URL('/login', request.url))
     }
 
-    if (role === 'cocina') {
-      const isSettingsEventos = request.nextUrl.pathname.startsWith('/settings/eventos')
-      
-      const restrictedPaths = [
-        '/informes',
-        '/clients',
-        '/coordinadores',
-        '/crm',
-        '/settings/reglas-precios',
-        '/reglas-liberados',
-        '/buses',
-        '/finanzas',
-        '/rrhh',
-        '/ventas-evento',
-        '/ventas-online'
-      ]
-      
-      const isRestricted = (restrictedPaths.some(path => request.nextUrl.pathname.startsWith(path)) || 
-        (request.nextUrl.pathname.startsWith('/settings') && !isSettingsEventos))
-      
-      if (isRestricted) {
-        // Redirect to a safe page for cocina
-        return NextResponse.redirect(new URL('/produccion', request.url))
+    // Si ya está logueado e intenta entrar a login -> mandar a dashboard
+    if (user && isAuthPage) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+
+    // RBAC Check: Solo fschottenfeld@gmail.com queda activo en la plataforma
+    if (user) {
+      const userEmail = (user.email || '').toLowerCase().trim()
+
+      // Desactivación de usuario cocina: solo fschottenfeld queda habilitado
+      if (userEmail !== 'fschottenfeld@gmail.com') {
+        const response = NextResponse.redirect(new URL('/login?error=disabled', request.url))
+        response.cookies.delete('sb-access-token')
+        response.cookies.delete('sb-refresh-token')
+        return response
       }
     }
-  }
 
-  return supabaseResponse
+    return supabaseResponse
+  } catch (err) {
+    console.warn('[Middleware Safe Catch]', err)
+    // Ante cualquier timeout de red o error de Deno/Edge, redirigir a login limpiamente en vez de crashear
+    if (!isAuthPage) {
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
+    return supabaseResponse
+  }
 }
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|.*\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }

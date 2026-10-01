@@ -6,13 +6,14 @@ import { supabase } from "@/lib/supabase"
 import {
   Plus, Save, Music, Calendar, MapPin, Building2, Users,
   Loader2, CheckCircle2, AlertCircle, Trash2, ChevronDown,
-  ChevronUp, Settings2, Search, X, Truck, DollarSign
+  ChevronUp, Settings2, Search, X, Truck, DollarSign, Navigation
 } from "lucide-react"
 import { useSearchParams } from "next/navigation"
 import VenueModal from "@/components/forms/VenueModal"
 import CompanyModal from "@/components/forms/CompanyModal"
 import CoordinatorModal from "@/components/forms/CoordinatorModal"
 import FleetModal from "@/components/forms/FleetModal"
+import LogisticTransitPlanner from "@/components/logistics/LogisticTransitPlanner"
 import { updateEventMasterAction } from "@/app/actions/events"
 import { getEventProfitability } from "@/app/actions/events"
 
@@ -101,10 +102,8 @@ export default function MasterEventForm() {
     async function loadRole() {
       try {
         const { data: { user } } = await supabase.auth.getUser()
-        if (user?.email === 'alpaso.algalope@gmail.com' || user?.email === 'cocina@supercatering.com') {
-          setUserRole('cocina')
-        } else {
-          setUserRole(user?.app_metadata?.role || user?.user_metadata?.role || 'admin')
+        if (user) {
+          setUserRole('admin')
         }
       } catch (e) {
         console.error(e)
@@ -1138,6 +1137,10 @@ export default function MasterEventForm() {
                        <Truck size={16} />
                        <span className="text-xs">Consolidado</span>
                     </Link>
+                    <Link href={`/logistica-evento?eventId=${ev.id}`} className="px-4 py-2 bg-amber-50 text-amber-800 border border-amber-200 font-black rounded-xl hover:bg-amber-100 transition shadow-sm flex items-center gap-2" title="Planificación de Tránsito & Portal GPS">
+                       <Navigation size={15} className="text-amber-600" />
+                       <span className="text-xs">Tránsito & GPS</span>
+                    </Link>
                     <button onClick={() => {
                       setExpandedIds(prev => {
                         const next = new Set(prev)
@@ -1318,6 +1321,11 @@ export default function MasterEventForm() {
                       </div>
                     )
                   })}
+
+                  {/* PLANIFICACIÓN DE TRÁNSITO LOGÍSTICO (GOOGLE MAPS) */}
+                  <div className="mt-8 pt-6 border-t border-slate-200">
+                    <LogisticTransitPlanner eventId={ev.id} />
+                  </div>
                 </div>
               )}
             </div>

@@ -237,6 +237,34 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     return t.includes('circustour') || s.includes('circustour')
   }, [store.title, store.slug])
 
+  const isRVTraslados = useMemo(() => {
+    const rawCompany = getStoreCompany(store.title, store.slug)
+    const cleanCompany = cleanNormalizedString(rawCompany)
+    const cleanTitle = cleanNormalizedString(store.title || '')
+    const cleanSlug = cleanNormalizedString(store.slug || '')
+
+    // Validación estricta: Excluir explícitamente otras empresas para no alterarlas
+    if (
+      cleanTitle.includes('terco') || cleanSlug.includes('terco') ||
+      cleanTitle.includes('circus') || cleanSlug.includes('circus') ||
+      cleanTitle.includes('proxima') || cleanSlug.includes('proxima') ||
+      cleanTitle.includes('rock') || cleanSlug.includes('rock') ||
+      cleanTitle.includes('valbus') || cleanSlug.includes('valbus')
+    ) {
+      return false
+    }
+
+    return (
+      cleanCompany.includes('rvtraslados') ||
+      cleanTitle.includes('rvtraslados') ||
+      cleanSlug.includes('rv-traslados') ||
+      cleanSlug.includes('rvtraslados') ||
+      /\brv\b/i.test(store.title || '') ||
+      cleanCompany === 'rv' ||
+      cleanCompany.startsWith('rv')
+    )
+  }, [store.title, store.slug])
+
   const isWaterIncluded = useMemo(() => {
     if (isCircus) return false
     const trad = (store.combo_trad_name || '').toLowerCase()
@@ -253,6 +281,58 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     }
     return text
   }
+
+  // Textos y descriptivos de productos adaptados condicionalmente para RV Traslados
+  const productTradName = useMemo(() => {
+    return formatProductTitle(store.combo_trad_name, isCircus ? "Sándwich Tradicional" : "Combo Tradicional")
+  }, [store.combo_trad_name, isCircus, isWaterIncluded])
+
+  const productTradDesc = useMemo(() => {
+    if (isRVTraslados) {
+      return "Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml."
+    }
+    return store.combo_trad_desc
+  }, [isRVTraslados, store.combo_trad_desc])
+
+  const productVegName = useMemo(() => {
+    return formatProductTitle(store.combo_veg_name, isCircus ? "Sándwich Vegetariano" : "Combo Vegetariano")
+  }, [store.combo_veg_name, isCircus, isWaterIncluded])
+
+  const productVegDesc = useMemo(() => {
+    if (isRVTraslados) {
+      return "Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml."
+    }
+    return store.combo_veg_desc
+  }, [isRVTraslados, store.combo_veg_desc])
+
+  const productSintaccName = useMemo(() => {
+    if (isRVTraslados) {
+      return "Combo Sin TACC (Apto Celíacos) + Agua sin Gas"
+    }
+    return formatProductTitle(store.combo_sintacc_name, isCircus ? "Sándwich Sin TACC" : "Combo Sin TACC")
+  }, [isRVTraslados, store.combo_sintacc_name, isCircus, isWaterIncluded])
+
+  const productSintaccDesc = useMemo(() => {
+    if (isRVTraslados) {
+      return "Sándwich individual certificado en pan libre de gluten + Agua mineral 500ml. Elaborado en planta especializada para garantizar 0% contaminación cruzada."
+    }
+    return store.combo_sintacc_desc
+  }, [isRVTraslados, store.combo_sintacc_desc])
+
+  const productSintaccDetailedDesc = useMemo(() => {
+    if (isRVTraslados) {
+      return "🌾 Opción 100% segura para celíacos. Elaborada y envasada en origen por cuadra certificada para garantizar la ausencia total de contaminación cruzada.\n\nNota sobre el producto: Por las características de elaboración del pan libre de gluten certificado, el sándwich tiene un formato individual estándar (a diferencia de nuestras ciabattas tradicionales de gran tamaño), priorizando la máxima seguridad bromatológica e higiene en el viaje."
+    }
+    return store.combo_sintacc_desc || undefined
+  }, [isRVTraslados, store.combo_sintacc_desc])
+
+  const productVeganName = useMemo(() => {
+    return formatProductTitle(store.combo_vegan_name, isCircus ? "Sándwich Vegano" : "Combo Vegano")
+  }, [store.combo_vegan_name, isCircus, isWaterIncluded])
+
+  const productVeganDesc = useMemo(() => {
+    return store.combo_vegan_desc
+  }, [store.combo_vegan_desc])
 
   const formatPrice = (amount: number) => {
     return new Intl.NumberFormat('es-AR', {
@@ -359,10 +439,10 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
           storeSlug: store.slug,
           storeTitle: store.title,
           items: [
-            ...(combos.tradicional > 0 ? [{ title: formatProductTitle(store.combo_trad_name, isCircus ? "Sándwich Tradicional" : "Combo Tradicional"), quantity: combos.tradicional, unit_price: store.combo_trad_price }] : []),
-            ...(combos.vegetariano > 0 ? [{ title: formatProductTitle(store.combo_veg_name, isCircus ? "Sándwich Vegetariano" : "Combo Vegetariano"), quantity: combos.vegetariano, unit_price: store.combo_veg_price }] : []),
-            ...(combos.sintacc > 0 ? [{ title: formatProductTitle(store.combo_sintacc_name, isCircus ? "Sándwich Sin TACC" : "Combo Sin TACC"), quantity: combos.sintacc, unit_price: store.combo_sintacc_price }] : []),
-            ...(combos.vegano > 0 ? [{ title: formatProductTitle(store.combo_vegan_name, isCircus ? "Sándwich Vegano" : "Combo Vegano"), quantity: combos.vegano, unit_price: store.combo_vegan_price }] : []),
+            ...(combos.tradicional > 0 ? [{ title: productTradName, quantity: combos.tradicional, unit_price: store.combo_trad_price }] : []),
+            ...(combos.vegetariano > 0 ? [{ title: productVegName, quantity: combos.vegetariano, unit_price: store.combo_veg_price }] : []),
+            ...(combos.sintacc > 0 ? [{ title: productSintaccName, quantity: combos.sintacc, unit_price: store.combo_sintacc_price }] : []),
+            ...(combos.vegano > 0 ? [{ title: productVeganName, quantity: combos.vegano, unit_price: store.combo_vegan_price }] : []),
           ],
           customer: {
             name: formData.fullName,
@@ -392,11 +472,13 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     enabled: boolean | undefined,
     name: string,
     desc: string | null | undefined,
-    price: number
+    price: number,
+    detailedDesc?: string
   ) => {
     const isOutOfStock = enabled === false
     const qty = combos[type]
     const iconMeta = COMBO_ICONS[type] || COMBO_ICONS.tradicional
+    const infoText = detailedDesc || desc
 
     return (
       <div 
@@ -409,11 +491,11 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
             <span className={`text-xl p-2.5 rounded-xl border ${iconMeta.bg}`}>
               {iconMeta.emoji}
             </span>
-            {desc && (
+            {infoText && (
               <button
                 type="button"
-                onClick={() => setShowInfoModal(desc)}
-                className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-slate-100"
+                onClick={() => setShowInfoModal(infoText)}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-slate-100 cursor-pointer transition"
                 title="Ver detalle de ingredientes"
               >
                 <Info className="w-4 h-4" />
@@ -422,7 +504,7 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
           </div>
 
           <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug line-clamp-2">{name}</h3>
-          {desc && <p className="text-[10px] sm:text-xs text-slate-400 mt-1 line-clamp-2 leading-tight">{desc}</p>}
+          {desc && <p className="text-[10px] sm:text-xs text-slate-500 mt-1 line-clamp-2 leading-tight">{desc}</p>}
         </div>
 
         <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
@@ -616,6 +698,38 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
               </div>
             </div>
 
+            {/* RESUMEN DE OPCIONES DE MENÚ (EXCLUSIVO RV TRASLADOS) */}
+            {isRVTraslados && (
+              <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-xs space-y-3">
+                <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
+                  <span className="text-base">📋</span>
+                  <h3 className="font-extrabold uppercase tracking-wider text-xs sm:text-sm text-slate-900">
+                    Resumen de Opciones de Menú
+                  </h3>
+                </div>
+                <div className="space-y-2 text-xs text-slate-700 leading-relaxed font-medium">
+                  <div className="flex items-start gap-2">
+                    <span className="text-sm shrink-0">🥖</span>
+                    <p>
+                      <strong className="text-slate-900 font-bold">Tradicional:</strong> Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-sm shrink-0">🥑</span>
+                    <p>
+                      <strong className="text-slate-900 font-bold">Vegetariano:</strong> Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <span className="text-sm shrink-0">🌾</span>
+                    <p>
+                      <strong className="text-slate-900 font-bold">Sin TACC:</strong> Sándwich individual certificado libre de gluten (envasado en origen, formato estándar por certificación) + Agua mineral 500ml.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 2x2 GRID PRODUCT CATALOG */}
             <section className="space-y-3">
               <div className="flex items-center justify-between px-1">
@@ -628,10 +742,10 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
               </div>
 
               <div className="grid grid-cols-2 gap-3.5">
-                {renderProductCard('tradicional', store.combo_trad_enabled, formatProductTitle(store.combo_trad_name, isCircus ? "Sándwich Tradicional" : "Combo Tradicional"), store.combo_trad_desc, store.combo_trad_price || 0)}
-                {renderProductCard('vegetariano', store.combo_veg_enabled, formatProductTitle(store.combo_veg_name, isCircus ? "Sándwich Vegetariano" : "Combo Vegetariano"), store.combo_veg_desc, store.combo_veg_price || 0)}
-                {renderProductCard('sintacc', store.combo_sintacc_enabled, formatProductTitle(store.combo_sintacc_name, isCircus ? "Sándwich Sin TACC" : "Combo Sin TACC"), store.combo_sintacc_desc, store.combo_sintacc_price || 0)}
-                {renderProductCard('vegano', store.combo_vegan_enabled, formatProductTitle(store.combo_vegan_name, isCircus ? "Sándwich Vegano" : "Combo Vegano"), store.combo_vegan_desc, store.combo_vegan_price || 0)}
+                {renderProductCard('tradicional', store.combo_trad_enabled, productTradName, productTradDesc, store.combo_trad_price || 0)}
+                {renderProductCard('vegetariano', store.combo_veg_enabled, productVegName, productVegDesc, store.combo_veg_price || 0)}
+                {renderProductCard('sintacc', store.combo_sintacc_enabled, productSintaccName, productSintaccDesc, store.combo_sintacc_price || 0, productSintaccDetailedDesc)}
+                {renderProductCard('vegano', store.combo_vegan_enabled, productVeganName, productVeganDesc, store.combo_vegan_price || 0)}
               </div>
             </section>
 
@@ -685,28 +799,28 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
 
                 {combos.tradicional > 0 && (
                   <div className="flex justify-between text-xs font-semibold text-slate-700">
-                    <span>{combos.tradicional}x {formatProductTitle(store.combo_trad_name, isCircus ? "Sándwich Tradicional" : "Combo Tradicional")}</span>
+                    <span>{combos.tradicional}x {productTradName}</span>
                     <span>{formatPrice(combos.tradicional * (store.combo_trad_price || 0))}</span>
                   </div>
                 )}
 
                 {combos.vegetariano > 0 && (
                   <div className="flex justify-between text-xs font-semibold text-slate-700">
-                    <span>{combos.vegetariano}x {formatProductTitle(store.combo_veg_name, isCircus ? "Sándwich Vegetariano" : "Combo Vegetariano")}</span>
+                    <span>{combos.vegetariano}x {productVegName}</span>
                     <span>{formatPrice(combos.vegetariano * (store.combo_veg_price || 0))}</span>
                   </div>
                 )}
 
                 {combos.sintacc > 0 && (
                   <div className="flex justify-between text-xs font-semibold text-slate-700">
-                    <span>{combos.sintacc}x {formatProductTitle(store.combo_sintacc_name, isCircus ? "Sándwich Sin TACC" : "Combo Sin TACC")}</span>
+                    <span>{combos.sintacc}x {productSintaccName}</span>
                     <span>{formatPrice(combos.sintacc * (store.combo_sintacc_price || 0))}</span>
                   </div>
                 )}
 
                 {combos.vegano > 0 && (
                   <div className="flex justify-between text-xs font-semibold text-slate-700">
-                    <span>{combos.vegano}x {formatProductTitle(store.combo_vegan_name, isCircus ? "Sándwich Vegano" : "Combo Vegano")}</span>
+                    <span>{combos.vegano}x {productVeganName}</span>
                     <span>{formatPrice(combos.vegano * (store.combo_vegan_price || 0))}</span>
                   </div>
                 )}
@@ -795,14 +909,15 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
       {/* INFO MODAL FOR PRODUCT DETAILS */}
       {showInfoModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-2xl p-6 max-w-xs w-full text-center space-y-4 shadow-2xl">
-            <h3 className="font-black text-slate-900 uppercase italic text-sm">
+          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full text-left space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+            <h3 className="font-black text-slate-900 uppercase italic text-sm border-b border-slate-100 pb-2">
               {isCircus ? "Detalle del Sándwich" : "Detalle del Menú"}
             </h3>
-            <p className="text-slate-600 text-xs leading-relaxed">{showInfoModal}</p>
+            <p className="text-slate-700 text-xs sm:text-sm leading-relaxed whitespace-pre-line">{showInfoModal}</p>
             <button
+              type="button"
               onClick={() => setShowInfoModal(null)}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider py-2.5 rounded-xl transition"
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs uppercase tracking-wider py-3 rounded-xl transition cursor-pointer"
             >
               Entendido
             </button>
