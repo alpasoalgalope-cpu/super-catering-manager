@@ -176,12 +176,16 @@ export default function StoreConfigModal({ events, rules = [], existingStores = 
           : 'Sándwich en Ciabatta de Manteca de Queso, Huevo, Lechuga y Tomate.'),
       combo_sintacc_name: isRV
         ? 'Combo Sin TACC (Apto Celíacos) + Agua sin Gas'
-        : (includesWater ? 'Combo Sin TACC + Agua sin Gas' : 'Sándwich Sin TACC'),
+        : (isCircus
+          ? 'Sándwich Sin TACC (Apto Celíacos)'
+          : (includesWater ? 'Combo Sin TACC + Agua sin Gas' : 'Sándwich Sin TACC')),
       combo_sintacc_desc: isRV
-        ? 'Sándwich individual certificado en pan libre de gluten + Agua mineral 500ml. Elaborado en planta especializada para garantizar 0% contaminación cruzada.'
-        : (includesWater
-          ? 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.'
-          : 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).'),
+        ? 'Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten + Agua mineral 500ml. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada).'
+        : (isCircus
+          ? 'Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada). No incluye bebida.'
+          : (includesWater
+            ? 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.'
+            : 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).')),
       combo_vegan_name: includesWater ? 'Combo Vegano + Agua sin Gas' : 'Sándwich Vegano',
       combo_vegan_desc: includesWater
         ? 'Sándwich en Ciabatta de Manteca de Lechuga, Tomate y Zanahoria rallada + Agua Mineral.'

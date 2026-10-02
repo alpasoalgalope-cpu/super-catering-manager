@@ -86,7 +86,6 @@ async function resolveStoreBySlug(slug: string) {
 
     const cleanSlug = cleanNormalizedString(slug)
     const isExcluded = cleanComp.includes('terco') || cleanSlug.includes('terco') ||
-                       cleanComp.includes('circus') || cleanSlug.includes('circus') ||
                        cleanComp.includes('proxima') || cleanSlug.includes('proxima') ||
                        cleanComp.includes('rock') || cleanSlug.includes('rock') ||
                        cleanComp.includes('valbus') || cleanSlug.includes('valbus')
@@ -96,6 +95,10 @@ async function resolveStoreBySlug(slug: string) {
       cleanSlug.includes('rvtraslados') ||
       cleanComp === 'rv' ||
       cleanComp.startsWith('rv')
+    )
+    const isCircus = !isExcluded && !isRV && (
+      cleanComp.includes('circus') ||
+      cleanSlug.includes('circus')
     )
 
     const storeData = {
@@ -127,12 +130,16 @@ async function resolveStoreBySlug(slug: string) {
       combo_sintacc_price: stPrice,
       combo_sintacc_name: isRV
         ? 'Combo Sin TACC (Apto Celíacos) + Agua sin Gas'
-        : (includesWater ? 'Combo Sin TACC + Agua sin Gas' : 'Sándwich Sin TACC'),
+        : (isCircus
+          ? 'Sándwich Sin TACC (Apto Celíacos)'
+          : (includesWater ? 'Combo Sin TACC + Agua sin Gas' : 'Sándwich Sin TACC')),
       combo_sintacc_desc: isRV
-        ? 'Sándwich individual certificado en pan libre de gluten + Agua mineral 500ml. Elaborado en planta especializada para garantizar 0% contaminación cruzada.'
-        : (includesWater
-          ? 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.'
-          : 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).'),
+        ? 'Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten + Agua mineral 500ml. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada).'
+        : (isCircus
+          ? 'Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada). No incluye bebida.'
+          : (includesWater
+            ? 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral.'
+            : 'Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).')),
       combo_vegan_enabled: true,
       combo_vegan_price: basePrice,
       combo_vegan_name: includesWater ? 'Combo Vegano + Agua sin Gas' : 'Sándwich Vegano',

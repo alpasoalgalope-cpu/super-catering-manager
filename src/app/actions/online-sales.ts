@@ -311,8 +311,9 @@ export async function autoSyncStoresForConfirmedEventsAction() {
         const prices = getPricesForCompany(company)
 
         const compClean = (company || '').toLowerCase()
-        const isExcluded = compClean.includes('terco') || compClean.includes('circus') || compClean.includes('proxima') || compClean.includes('rock') || compClean.includes('valbus')
+        const isExcluded = compClean.includes('terco') || compClean.includes('proxima') || compClean.includes('rock') || compClean.includes('valbus')
         const isRV = !isExcluded && (compClean.includes('rvtraslados') || compClean.includes('rv traslados') || compClean === 'rv' || compClean.startsWith('rv'))
+        const isCircus = !isExcluded && !isRV && compClean.includes('circus')
 
         const isWater = prices.includesWater
         const deadline = getDefaultSalesDeadline(eventDate)
@@ -347,12 +348,16 @@ export async function autoSyncStoresForConfirmedEventsAction() {
           combo_sintacc_price: prices.sintacc,
           combo_sintacc_name: isRV
             ? "Combo Sin TACC (Apto Celíacos) + Agua sin Gas"
-            : (isWater ? "Combo Sin TACC + Agua sin Gas" : "Sándwich Sin TACC"),
+            : (isCircus
+              ? "Sándwich Sin TACC (Apto Celíacos)"
+              : (isWater ? "Combo Sin TACC + Agua sin Gas" : "Sándwich Sin TACC")),
           combo_sintacc_desc: isRV
-            ? "Sándwich individual certificado en pan libre de gluten + Agua mineral 500ml. Elaborado en planta especializada para garantizar 0% contaminación cruzada."
-            : (isWater
-              ? "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral."
-              : "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos)."),
+            ? "Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten + Agua mineral 500ml. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada)."
+            : (isCircus
+              ? "Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada). No incluye bebida."
+              : (isWater
+                ? "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos) + Agua Mineral."
+                : "Árabe de Jamón y Queso envasado al vacío (Apto Celíacos).")),
           combo_vegan_enabled: true,
           combo_vegan_price: prices.vegan,
           combo_vegan_name: isWater ? "Combo Vegano + Agua sin Gas" : "Sándwich Vegano",

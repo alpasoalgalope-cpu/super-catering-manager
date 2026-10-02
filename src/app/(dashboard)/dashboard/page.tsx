@@ -1390,14 +1390,29 @@ function EffectivenessCard({ show, role, onOpenPlan, onSendFirstCut, sendingFirs
     const greeting = nameFirst ? `Hola ${nameFirst}! Como estás?` : `Hola! Como estás?`
 
     const compClean = (companyName || '').toLowerCase()
-    const isExcluded = compClean.includes('terco') || compClean.includes('circus') || compClean.includes('proxima') || compClean.includes('rock') || compClean.includes('valbus')
+    const isExcluded = compClean.includes('terco') || compClean.includes('proxima') || compClean.includes('rock') || compClean.includes('valbus')
     const isRV = !isExcluded && (compClean.includes('rvtraslados') || compClean.includes('rv traslados') || compClean === 'rv' || compClean.startsWith('rv'))
+    const isCircus = !isExcluded && !isRV && compClean.includes('circus')
+
+    const tradLine = isCircus
+      ? '🥖 Tradicional: Sándwich gigante en ciabatta artesanal con jamón cocido, queso y vegetales frescos.'
+      : '🥖 Tradicional: Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.'
+
+    const vegLine = isCircus
+      ? '🥑 Vegetariano: Sándwich en ciabatta artesanal con huevo, queso y vegetales frescos.'
+      : '🥑 Vegetariano: Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.'
 
     const sinTaccLine = isRV
-      ? '🌾 Sin TACC: Sándwich individual certificado libre de gluten (envasado en origen, formato estándar por certificación) + Agua mineral 500ml.'
+      ? '🌾 Sin TACC: Sándwich individual en pan tipo brioche libre de gluten (sellado en origen con certificación) + Agua mineral 500ml.'
+      : isCircus
+      ? '🌾 Sin TACC: Sándwich individual en pan tipo brioche libre de gluten (sellado en origen con certificación). No incluye bebida.'
       : '🌾 Sin TACC: Pan árabe de jamón y queso (envasado al vacío certificado) + Agua mineral 500ml.'
 
-    return `${greeting}\nTe dejo para que tengas a mano el link de gestión para el día de hoy. Acá vas a encontrar el detalle de pasajeros que van pidiendo, y podés además declarar la ubicación una vez que estacionan: ${coordUrl}\n\nAdemás, para que puedas copiar y pegar, te dejo la propuesta armada!\n\n*🥪 ¡Cená en el micro a la vuelta del show!*\n\nPara que no pierdas tiempo buscando comida a la salida ni hagas filas eternas, ya podés reservar tu vianda fresca para el regreso. Te subís al micro y ya tenés tu cena lista.\n\n*Elegí tu combo:*\n\n🥖 Tradicional: Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.\n🥑 Vegetariano: Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.\n${sinTaccLine}\n\n*💳 Precios:*\nMenú Tradicional / Vegetariano: $12.000\nMenú Sin TACC: $15.000 (Pagás directo con Mercado Pago: tarjetas, débito o dinero en cuenta)\n⚠️ Cupos limitados por viaje. Los pedidos se reciben hasta las 12:30 hs.\n\n👉 Hacé tu reserva online acá: ${storeUrl}`
+    const pricingInfo = isCircus
+      ? '*💳 Precios:*\nMenú Tradicional / Vegetariano: $10.000\nMenú Sin TACC: $14.000 (Pagás directo con Mercado Pago: tarjetas, débito o dinero en cuenta)\n_Nota: Las viandas de Circus Tours no incluyen bebida._\n⚠️ Cupos limitados por viaje. Los pedidos se reciben hasta las 12:30 hs.'
+      : '*💳 Precios:*\nMenú Tradicional / Vegetariano: $12.000\nMenú Sin TACC: $15.000 (Pagás directo con Mercado Pago: tarjetas, débito o dinero en cuenta)\n⚠️ Cupos limitados por viaje. Los pedidos se reciben hasta las 12:30 hs.'
+
+    return `${greeting}\nTe dejo para que tengas a mano el link de gestión para el día de hoy. Acá vas a encontrar el detalle de pasajeros que van pidiendo, y podés además declarar la ubicación una vez que estacionan: ${coordUrl}\n\nAdemás, para que puedas copiar y pegar, te dejo la propuesta armada!\n\n*🥪 ¡Cená en el micro a la vuelta del show!*\n\nPara que no pierdas tiempo buscando comida a la salida ni hagas filas eternas, ya podés reservar tu vianda fresca para el regreso. Te subís al micro y ya tenés tu cena lista.\n\n*Elegí tu combo:*\n\n${tradLine}\n${vegLine}\n${sinTaccLine}\n\n${pricingInfo}\n\n👉 Hacé tu reserva online acá: ${storeUrl}`
   }
 
   const handleCopyMessagePack = (coordUrl: string, storeUrl: string, key: string, coordinatorName?: string, companyName?: string) => {

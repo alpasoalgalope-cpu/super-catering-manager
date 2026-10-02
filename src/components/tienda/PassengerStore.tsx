@@ -18,7 +18,8 @@ import {
   Sparkles,
   ArrowRight,
   ShieldCheck,
-  ShoppingBag
+  ShoppingBag,
+  X
 } from 'lucide-react'
 
 interface PassengerStoreProps {
@@ -228,13 +229,40 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     }
   }, [busOptions])
 
+  interface ModalDetailState {
+    title: string
+    desc: string
+    primaryImage?: string
+    secondaryImage?: string
+    isSinTacc?: boolean
+  }
+
   const [isLoading, setIsLoading] = useState(false)
-  const [showInfoModal, setShowInfoModal] = useState<string | null>(null)
+  const [showInfoModal, setShowInfoModal] = useState<ModalDetailState | null>(null)
+  const [activeModalImageTab, setActiveModalImageTab] = useState<'packaged' | 'plate'>('packaged')
 
   const isCircus = useMemo(() => {
-    const t = cleanNormalizedString(store.title || '')
-    const s = cleanNormalizedString(store.slug || '')
-    return t.includes('circustour') || s.includes('circustour')
+    const rawCompany = getStoreCompany(store.title, store.slug)
+    const cleanCompany = cleanNormalizedString(rawCompany)
+    const cleanTitle = cleanNormalizedString(store.title || '')
+    const cleanSlug = cleanNormalizedString(store.slug || '')
+
+    // Validación estricta: Excluir explícitamente otras empresas para no alterarlas
+    if (
+      cleanTitle.includes('terco') || cleanSlug.includes('terco') ||
+      cleanTitle.includes('proxima') || cleanSlug.includes('proxima') ||
+      cleanTitle.includes('rock') || cleanSlug.includes('rock') ||
+      cleanTitle.includes('valbus') || cleanSlug.includes('valbus') ||
+      cleanTitle.includes('rvtraslados') || cleanSlug.includes('rvtraslados')
+    ) {
+      return false
+    }
+
+    return (
+      cleanCompany.includes('circus') ||
+      cleanTitle.includes('circus') ||
+      cleanSlug.includes('circus')
+    )
   }, [store.title, store.slug])
 
   const isRVTraslados = useMemo(() => {
@@ -282,7 +310,7 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     return text
   }
 
-  // Textos y descriptivos de productos adaptados condicionalmente para RV Traslados
+  // Textos y descriptivos de productos adaptados condicionalmente para RV Traslados y Circus Tours
   const productTradName = useMemo(() => {
     return formatProductTitle(store.combo_trad_name, isCircus ? "Sándwich Tradicional" : "Combo Tradicional")
   }, [store.combo_trad_name, isCircus, isWaterIncluded])
@@ -309,22 +337,41 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     if (isRVTraslados) {
       return "Combo Sin TACC (Apto Celíacos) + Agua sin Gas"
     }
+    if (isCircus) {
+      return "Sándwich Sin TACC (Apto Celíacos)"
+    }
     return formatProductTitle(store.combo_sintacc_name, isCircus ? "Sándwich Sin TACC" : "Combo Sin TACC")
-  }, [isRVTraslados, store.combo_sintacc_name, isCircus, isWaterIncluded])
+  }, [isRVTraslados, isCircus, store.combo_sintacc_name, isWaterIncluded])
 
   const productSintaccDesc = useMemo(() => {
     if (isRVTraslados) {
-      return "Sándwich individual certificado en pan libre de gluten + Agua mineral 500ml. Elaborado en planta especializada para garantizar 0% contaminación cruzada."
+      return "Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten + Agua mineral 500ml. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada)."
+    }
+    if (isCircus) {
+      return "Sándwich individual de jamón y queso en pan tipo brioche suave libre de gluten. Envasado y sellado en origen por cuadra certificada (garantía 100% libre de contaminación cruzada). No incluye bebida."
     }
     return store.combo_sintacc_desc
-  }, [isRVTraslados, store.combo_sintacc_desc])
+  }, [isRVTraslados, isCircus, store.combo_sintacc_desc])
 
   const productSintaccDetailedDesc = useMemo(() => {
     if (isRVTraslados) {
-      return "🌾 Opción 100% segura para celíacos. Elaborada y envasada en origen por cuadra certificada para garantizar la ausencia total de contaminación cruzada.\n\nNota sobre el producto: Por las características de elaboración del pan libre de gluten certificado, el sándwich tiene un formato individual estándar (a diferencia de nuestras ciabattas tradicionales de gran tamaño), priorizando la máxima seguridad bromatológica e higiene en el viaje."
+      return `🌾 Opción certificada 100% libre de gluten (Sin TACC):
+• Elaboración: Sándwich de jamón cocido y queso en pan tipo brioche sin TACC.
+• Bebida: Agua mineral sin gas 500ml.
+• Seguridad y Trazabilidad: El producto se entrega termosellado en su paquete original con sello de panadería certificada, garantizando la total ausencia de contaminación cruzada durante el traslado y la logística.
+
+Nota importante sobre el formato: Por estándares bromatológicos y de certificación celíaca, esta vianda cuenta con formato y gramaje individual estándar (a diferencia de nuestras ciabattas tradicionales de gran tamaño), priorizando la máxima seguridad e higiene para el pasajero.`
+    }
+    if (isCircus) {
+      return `🌾 Opción certificada 100% libre de gluten (Sin TACC):
+• Elaboración: Sándwich de jamón cocido y queso en pan tipo brioche sin TACC.
+• Bebida: Esta opción NO incluye bebida.
+• Seguridad y Trazabilidad: El producto se entrega termosellado en su paquete original con sello de panadería certificada, garantizando la total ausencia de contaminación cruzada durante el traslado y la logística.
+
+Nota importante sobre el formato: Por estándares bromatológicos y de certificación celíaca, esta vianda cuenta con formato y gramaje individual estándar (a diferencia de nuestras ciabattas tradicionales de gran tamaño), priorizando la máxima seguridad e higiene para el pasajero.`
     }
     return store.combo_sintacc_desc || undefined
-  }, [isRVTraslados, store.combo_sintacc_desc])
+  }, [isRVTraslados, isCircus, store.combo_sintacc_desc])
 
   const productVeganName = useMemo(() => {
     return formatProductTitle(store.combo_vegan_name, isCircus ? "Sándwich Vegano" : "Combo Vegano")
@@ -473,12 +520,26 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
     name: string,
     desc: string | null | undefined,
     price: number,
-    detailedDesc?: string
+    detailedDesc?: string,
+    primaryImage?: string,
+    secondaryImage?: string
   ) => {
     const isOutOfStock = enabled === false
     const qty = combos[type]
     const iconMeta = COMBO_ICONS[type] || COMBO_ICONS.tradicional
     const infoText = detailedDesc || desc
+
+    const openModal = () => {
+      if (!infoText) return
+      setActiveModalImageTab('packaged')
+      setShowInfoModal({
+        title: name,
+        desc: infoText,
+        primaryImage,
+        secondaryImage,
+        isSinTacc: type === 'sintacc'
+      })
+    }
 
     return (
       <div 
@@ -486,22 +547,49 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
         className={`bg-white rounded-2xl border p-4 transition-all duration-200 flex flex-col justify-between ${qty > 0 ? 'border-emerald-500 ring-2 ring-emerald-500/20 shadow-md' : 'border-slate-200 shadow-sm hover:shadow'}`}
       >
         <div>
-          {/* Header Badge + Info button */}
-          <div className="flex items-center justify-between gap-2 mb-2">
-            <span className={`text-xl p-2.5 rounded-xl border ${iconMeta.bg}`}>
-              {iconMeta.emoji}
-            </span>
-            {infoText && (
+          {primaryImage ? (
+            <div 
+              onClick={openModal}
+              className="relative w-full h-28 sm:h-32 rounded-xl overflow-hidden mb-2.5 border border-slate-200/90 bg-slate-50/70 group cursor-pointer shadow-2xs flex items-center justify-center"
+            >
+              <img
+                src={primaryImage}
+                alt={name}
+                className="w-full h-full object-contain p-1.5 group-hover:scale-105 transition-transform duration-300"
+              />
+              <span className="absolute bottom-1.5 left-1.5 text-[9px] font-black uppercase tracking-wider bg-white/95 text-slate-800 px-2 py-0.5 rounded-md border border-slate-200/80 shadow-2xs flex items-center gap-1">
+                🌾 Apto Celíacos
+              </span>
               <button
                 type="button"
-                onClick={() => setShowInfoModal(infoText)}
-                className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-slate-100 cursor-pointer transition"
-                title="Ver detalle de ingredientes"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  openModal()
+                }}
+                className="absolute top-1.5 right-1.5 bg-white/90 hover:bg-white text-slate-700 p-1 rounded-full shadow-xs border border-slate-200/60 transition cursor-pointer"
+                title="Ver fotos y detalle"
               >
-                <Info className="w-4 h-4" />
+                <Info className="w-3.5 h-3.5" />
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            /* Header Badge + Info button */
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <span className={`text-xl p-2.5 rounded-xl border ${iconMeta.bg}`}>
+                {iconMeta.emoji}
+              </span>
+              {infoText && (
+                <button
+                  type="button"
+                  onClick={openModal}
+                  className="text-slate-400 hover:text-slate-700 p-1 rounded-full hover:bg-slate-100 cursor-pointer transition"
+                  title="Ver detalle"
+                >
+                  <Info className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+          )}
 
           <h3 className="font-extrabold text-slate-900 text-xs sm:text-sm leading-snug line-clamp-2">{name}</h3>
           {desc && <p className="text-[10px] sm:text-xs text-slate-500 mt-1 line-clamp-2 leading-tight">{desc}</p>}
@@ -698,8 +786,8 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
               </div>
             </div>
 
-            {/* RESUMEN DE OPCIONES DE MENÚ (EXCLUSIVO RV TRASLADOS) */}
-            {isRVTraslados && (
+            {/* RESUMEN DE OPCIONES DE MENÚ (RV TRASLADOS Y CIRCUS TOURS) */}
+            {(isRVTraslados || isCircus) && (
               <div className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200/90 shadow-xs space-y-3">
                 <div className="flex items-center gap-2 border-b border-slate-100 pb-2">
                   <span className="text-base">📋</span>
@@ -711,19 +799,25 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
                   <div className="flex items-start gap-2">
                     <span className="text-sm shrink-0">🥖</span>
                     <p>
-                      <strong className="text-slate-900 font-bold">Tradicional:</strong> Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.
+                      <strong className="text-slate-900 font-bold">Tradicional:</strong> {isCircus 
+                        ? 'Sándwich individual en ciabatta artesanal con jamón cocido, queso y vegetales frescos. (No incluye bebida).' 
+                        : 'Ciabatta artesanal con jamón cocido, queso, mix de verdes frescos y tomate + Agua mineral 500ml.'}
                     </p>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-sm shrink-0">🥑</span>
                     <p>
-                      <strong className="text-slate-900 font-bold">Vegetariano:</strong> Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.
+                      <strong className="text-slate-900 font-bold">Vegetariano:</strong> {isCircus 
+                        ? 'Sándwich individual en ciabatta artesanal con huevo, queso y vegetales frescos. (No incluye bebida).' 
+                        : 'Ciabatta artesanal con huevo, queso, mix de verdes y tomate fresco + Agua mineral 500ml.'}
                     </p>
                   </div>
                   <div className="flex items-start gap-2">
                     <span className="text-sm shrink-0">🌾</span>
                     <p>
-                      <strong className="text-slate-900 font-bold">Sin TACC:</strong> Sándwich individual certificado libre de gluten (envasado en origen, formato estándar por certificación) + Agua mineral 500ml.
+                      <strong className="text-slate-900 font-bold">Sin TACC:</strong> {isCircus
+                        ? 'Sándwich individual en pan tipo brioche libre de gluten (sellado en origen con certificación). No incluye bebida.'
+                        : 'Sándwich individual en pan tipo brioche libre de gluten (sellado en origen con certificación) + Agua mineral 500ml.'}
                     </p>
                   </div>
                 </div>
@@ -744,7 +838,16 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
               <div className="grid grid-cols-2 gap-3.5">
                 {renderProductCard('tradicional', store.combo_trad_enabled, productTradName, productTradDesc, store.combo_trad_price || 0)}
                 {renderProductCard('vegetariano', store.combo_veg_enabled, productVegName, productVegDesc, store.combo_veg_price || 0)}
-                {renderProductCard('sintacc', store.combo_sintacc_enabled, productSintaccName, productSintaccDesc, store.combo_sintacc_price || 0, productSintaccDetailedDesc)}
+                {renderProductCard(
+                  'sintacc', 
+                  store.combo_sintacc_enabled, 
+                  productSintaccName, 
+                  productSintaccDesc, 
+                  store.combo_sintacc_price || 0, 
+                  productSintaccDetailedDesc,
+                  (isRVTraslados || isCircus) ? '/images/sintacc_packaged.jpg' : undefined,
+                  (isRVTraslados || isCircus) ? '/images/sintacc_plate.jpg' : undefined
+                )}
                 {renderProductCard('vegano', store.combo_vegan_enabled, productVeganName, productVeganDesc, store.combo_vegan_price || 0)}
               </div>
             </section>
@@ -906,14 +1009,78 @@ export default function PassengerStore({ store, busAssignments = [] }: Passenger
         </div>
       </div>
 
-      {/* INFO MODAL FOR PRODUCT DETAILS */}
+      {/* INFO MODAL FOR PRODUCT DETAILS WITH IMAGE GALLERY */}
       {showInfoModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 max-w-md w-full text-left space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <h3 className="font-black text-slate-900 uppercase italic text-sm border-b border-slate-100 pb-2">
-              {isCircus ? "Detalle del Sándwich" : "Detalle del Menú"}
-            </h3>
-            <p className="text-slate-700 text-xs sm:text-sm leading-relaxed whitespace-pre-line">{showInfoModal}</p>
+          <div className="bg-white border border-slate-200 rounded-3xl p-5 sm:p-6 max-w-lg w-full text-left space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-200 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-widest text-emerald-600 block">
+                  {showInfoModal.isSinTacc ? "Garantía Bromatológica Certificada" : isCircus ? "Detalle del Sándwich" : "Detalle del Menú"}
+                </span>
+                <h3 className="font-black text-slate-900 text-sm sm:text-base leading-snug">
+                  {showInfoModal.title}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowInfoModal(null)}
+                className="text-slate-400 hover:text-slate-600 p-1.5 rounded-full hover:bg-slate-100 transition cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* FOTOS DEL PRODUCTO (SI APLICA) */}
+            {showInfoModal.primaryImage && showInfoModal.secondaryImage && (
+              <div className="space-y-2">
+                {/* TABS DE SELECCIÓN DE VISTA */}
+                <div className="flex rounded-xl bg-slate-100 p-1 border border-slate-200/80">
+                  <button
+                    type="button"
+                    onClick={() => setActiveModalImageTab('packaged')}
+                    className={`flex-1 py-1.5 px-2 text-[10px] sm:text-[11px] font-black uppercase tracking-wider rounded-lg transition cursor-pointer ${
+                      activeModalImageTab === 'packaged'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    1. Envasado Sellado (Garantía)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveModalImageTab('plate')}
+                    className={`flex-1 py-1.5 px-2 text-[10px] sm:text-[11px] font-black uppercase tracking-wider rounded-lg transition cursor-pointer ${
+                      activeModalImageTab === 'plate'
+                        ? 'bg-white text-slate-900 shadow-xs'
+                        : 'text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    2. Servido en Plato (Textura)
+                  </button>
+                </div>
+
+                {/* VISOR DE FOTO */}
+                <div className="relative rounded-2xl overflow-hidden border border-slate-200 bg-slate-50 aspect-4/3 flex items-center justify-center">
+                  <img
+                    src={activeModalImageTab === 'packaged' ? showInfoModal.primaryImage : showInfoModal.secondaryImage}
+                    alt={showInfoModal.title}
+                    className="w-full h-full object-contain p-2 transition-all duration-300"
+                  />
+                  <div className="absolute bottom-2 left-2 right-2 bg-slate-950/80 backdrop-blur-xs text-white px-3 py-1.5 rounded-xl text-[10px] font-medium leading-tight shadow-md">
+                    {activeModalImageTab === 'packaged'
+                      ? '🔒 Foto Principal: Envasado y termosellado en origen con oblea "SIN GLUTEN" (0% contaminación cruzada).'
+                      : '🍽️ Foto Secundaria: Sándwich servido en pan tipo brioche suave libre de gluten con jamón cocido y queso.'}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TEXTO DESCRIPTIVO */}
+            <div className="text-slate-700 text-xs sm:text-sm leading-relaxed whitespace-pre-line bg-slate-50 p-4 rounded-2xl border border-slate-100 font-medium">
+              {showInfoModal.desc}
+            </div>
+
             <button
               type="button"
               onClick={() => setShowInfoModal(null)}
